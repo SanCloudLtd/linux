@@ -231,7 +231,7 @@ int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
 			res->flags |= IORESOURCE_ROM_ENABLE;
 		l64 = l & PCI_ROM_ADDRESS_MASK;
 		sz64 = sz & PCI_ROM_ADDRESS_MASK;
-		mask64 = (u32)PCI_ROM_ADDRESS_MASK;
+		mask64 = PCI_ROM_ADDRESS_MASK;
 	}
 
 	if (res->flags & IORESOURCE_MEM_64) {
@@ -932,7 +932,8 @@ int pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max, int pass)
 			child = pci_add_new_bus(bus, dev, max+1);
 			if (!child)
 				goto out;
-			pci_bus_insert_busn_res(child, max+1, 0xff);
+			pci_bus_insert_busn_res(child, max+1,
+						bus->busn_res.end);
 		}
 		max++;
 		buses = (buses & 0xff000000)
@@ -1360,6 +1361,10 @@ static void pci_configure_mps(struct pci_dev *dev)
 	int mps, p_mps, rc;
 
 	if (!pci_is_pcie(dev) || !bridge || !pci_is_pcie(bridge))
+		return;
+
+	/* MPS and MRRS fields are of type 'RsvdP' for VFs, short-circuit out */
+	if (dev->is_virtfn)
 		return;
 
 	mps = pcie_get_mps(dev);
@@ -2136,6 +2141,10 @@ unsigned int pci_scan_child_bus(struct pci_bus *bus)
 	if (bus->self && bus->self->is_hotplug_bridge && pci_hotplug_bus_size) {
 		if (max - bus->busn_res.start < pci_hotplug_bus_size - 1)
 			max = bus->busn_res.start + pci_hotplug_bus_size - 1;
+
+		/* Do not allocate more buses than we have room left */
+		if (max > bus->busn_res.end)
+			max = bus->busn_res.end;
 	}
 
 	/*
