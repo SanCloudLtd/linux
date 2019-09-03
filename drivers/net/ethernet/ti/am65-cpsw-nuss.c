@@ -6,6 +6,7 @@
  *
  */
 
+#include <linux/clk.h>
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
 #include <linux/interrupt.h>
@@ -26,6 +27,7 @@
 #include <linux/soc/ti/k3-navss-desc-pool.h>
 #include <linux/dma/ti-cppi5.h>
 #include <linux/dma/k3-navss-udma.h>
+#include <linux/net_switch_config.h>
 
 #include "cpsw_ale.h"
 #include "cpsw_sl.h"
@@ -797,7 +799,7 @@ static int am65_cpsw_nuss_rx_packets(struct am65_cpsw_common *common,
 		skb_put(skb, pkt_len);
 		skb->protocol = eth_type_trans(skb, ndev);
 		am65_cpsw_nuss_rx_csum(skb, csum_info);
-		netif_receive_skb(skb);
+		napi_gro_receive(&common->napi_rx, skb);
 
 		ndev_priv = netdev_priv(ndev);
 		stats = this_cpu_ptr(ndev_priv->stats);
@@ -852,10 +854,8 @@ static int am65_cpsw_nuss_rx_poll(struct napi_struct *napi_rx, int budget)
 
 	dev_dbg(common->dev, "%s num_rx:%d %d\n", __func__, num_rx, budget);
 
-	if (num_rx < budget) {
-		napi_complete(napi_rx);
+	if (num_rx < budget && napi_complete_done(napi_rx, num_rx))
 		enable_irq(common->rx_chns.irq);
-	}
 
 	return num_rx;
 }
@@ -1323,6 +1323,47 @@ static int am65_cpsw_nuss_hwtstamp_set(struct net_device *ndev,
 }
 #endif /* CONFIG_TI_AM65_CPTS */
 
+static int am65_cpsw_switch_config_ioctl(struct net_device *ndev,
+					 struct ifreq *ifrq, int cmd)
+{
+	struct am65_cpsw_common *common = am65_ndev_to_common(ndev);
+	struct net_switch_config config;
+	int ret = -EINVAL;
+
+	/* Only SIOCSWITCHCONFIG is used as cmd argument and hence, there is no
+	 * switch statement required.
+	 * Function calls are based on switch_config.cmd
+	 */
+
+	if (copy_from_user(&config, ifrq->ifr_data, sizeof(config)))
+		return -EFAULT;
+
+	switch (config.cmd) {
+	case CONFIG_SWITCH_RATELIMIT:
+	{
+		if (config.port > 1) {
+			dev_err(common->dev, "Invalid Port number\n");
+			break;
+		}
+
+		ret = cpsw_ale_set_ratelimit(common->ale,
+					     common->bus_freq_mhz * 1000000,
+					     config.port,
+					     config.bcast_rate_limit,
+					     config.mcast_rate_limit,
+					     !!config.direction);
+		if (ret)
+			dev_err(common->dev, "CPSW_ALE set ratelimit failed");
+		break;
+	}
+
+	default:
+		ret = -EOPNOTSUPP;
+	}
+
+	return ret;
+}
+
 static int am65_cpsw_nuss_ndo_slave_ioctl(struct net_device *ndev,
 					  struct ifreq *req, int cmd)
 {
@@ -1336,6 +1377,8 @@ static int am65_cpsw_nuss_ndo_slave_ioctl(struct net_device *ndev,
 		return am65_cpsw_nuss_hwtstamp_set(ndev, req);
 	case SIOCGHWTSTAMP:
 		return am65_cpsw_nuss_hwtstamp_get(ndev, req);
+	case SIOCSWITCHCONFIG:
+		return am65_cpsw_switch_config_ioctl(ndev, req, cmd);
 	}
 
 	if (!port->slave.phy)
@@ -1832,7 +1875,8 @@ static int am65_cpsw_nuss_init_slave_ports(struct am65_cpsw_common *common)
 		if (mac_addr && is_valid_ether_addr(mac_addr)) {
 			ether_addr_copy(port->slave.mac_addr, mac_addr);
 		} else if (am65_cpsw_am654_get_efuse_macid(
-				port_np, port->port_id, port->slave.mac_addr)) {
+				port_np, port->port_id, port->slave.mac_addr) ||
+			   !is_valid_ether_addr(port->slave.mac_addr)) {
 			random_ether_addr(port->slave.mac_addr);
 			dev_err(dev, "Use rundom MAC address\n");
 		}
@@ -1888,11 +1932,13 @@ static int am65_cpsw_nuss_init_ndev_2g(struct am65_cpsw_common *common)
 				  NETIF_F_HW_CSUM;
 	port->ndev->features = port->ndev->hw_features |
 			       NETIF_F_HW_VLAN_CTAG_FILTER;
-	/* Disable TX checksum offload by default due to HW bug */
-	port->ndev->features &= ~NETIF_F_HW_CSUM;
 	port->ndev->vlan_features |=  NETIF_F_SG;
 	port->ndev->netdev_ops = &am65_cpsw_nuss_netdev_ops_2g;
 	port->ndev->ethtool_ops = &am65_cpsw_ethtool_ops_slave;
+
+	/* Disable TX checksum offload by default due to HW bug */
+	if (common->pdata->quirks & AM65_CPSW_QUIRK_I2027_NO_TX_CSUM)
+		port->ndev->features &= ~NETIF_F_HW_CSUM;
 
 	ndev_priv->stats = netdev_alloc_pcpu_stats(struct am65_cpsw_ndev_stats);
 	if (!ndev_priv->stats)
@@ -1907,8 +1953,8 @@ static int am65_cpsw_nuss_init_ndev_2g(struct am65_cpsw_common *common)
 
 	netif_tx_napi_add(port->ndev, &common->napi_tx,
 			  am65_cpsw_nuss_tx_poll, NAPI_POLL_WEIGHT);
-	netif_tx_napi_add(port->ndev, &common->napi_rx,
-			  am65_cpsw_nuss_rx_poll, NAPI_POLL_WEIGHT);
+	netif_napi_add(port->ndev, &common->napi_rx,
+		       am65_cpsw_nuss_rx_poll, NAPI_POLL_WEIGHT);
 
 	common->pf_p0_rx_ptype_rrobin = true;
 	ret = register_netdev(port->ndev);
@@ -1934,19 +1980,41 @@ static void am65_cpsw_nuss_cleanup_ndev(struct am65_cpsw_common *common)
 	}
 }
 
+static const struct am65_cpsw_pdata am65x_sr1_0 = {
+	.quirks = AM65_CPSW_QUIRK_I2027_NO_TX_CSUM,
+};
+
+static const struct am65_cpsw_pdata j721e_sr1_0 = {
+	.quirks = 0,
+};
+
+static const struct of_device_id am65_cpsw_nuss_of_mtable[] = {
+	{ .compatible = "ti,am654-cpsw-nuss", .data = &am65x_sr1_0 },
+	{ .compatible = "ti,j721e-cpsw-nuss", .data = &j721e_sr1_0 },
+	{ /* sentinel */ },
+};
+MODULE_DEVICE_TABLE(of, am65_cpsw_nuss_of_mtable);
+
 static int am65_cpsw_nuss_probe(struct platform_device *pdev)
 {
+	const struct of_device_id *of_id;
 	struct cpsw_ale_params ale_params;
 	struct device *dev = &pdev->dev;
 	struct am65_cpsw_common *common;
 	struct device_node *node;
 	struct resource *res;
+	struct clk *clk;
 	int ret, i;
 
 	common = devm_kzalloc(dev, sizeof(struct am65_cpsw_common), GFP_KERNEL);
 	if (!common)
 		return -ENOMEM;
 	common->dev = dev;
+
+	of_id = of_match_device(am65_cpsw_nuss_of_mtable, dev);
+	if (!of_id)
+		return -EINVAL;
+	common->pdata = of_id->data;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cpsw_nuss");
 	common->ss_base = devm_ioremap_resource(&pdev->dev, res);
@@ -1967,6 +2035,16 @@ static int am65_cpsw_nuss_probe(struct platform_device *pdev)
 				   &common->rx_flow_id_base);
 	if (ret < 0)
 		dev_info(dev, "rx-flow-id-base is not set %d\n", ret);
+
+	clk = devm_clk_get(dev, "fck");
+	if (IS_ERR(clk)) {
+		ret = PTR_ERR(clk);
+
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "error getting fck clock %d\n", ret);
+		return ret;
+	}
+	common->bus_freq_mhz = clk_get_rate(clk) / 1000000;
 
 	pm_runtime_enable(dev);
 	ret = devm_add_action_or_reset(dev, (void(*)(void *))pm_runtime_disable,
@@ -2114,12 +2192,6 @@ static int am65_cpsw_nuss_remove(struct platform_device *pdev)
 
 	return 0;
 }
-
-static const struct of_device_id am65_cpsw_nuss_of_mtable[] = {
-	{ .compatible = "ti,am654-cpsw-nuss", .data = NULL },
-	{ /* sentinel */ },
-};
-MODULE_DEVICE_TABLE(of, am65_cpsw_nuss_of_mtable);
 
 static struct platform_driver am65_cpsw_nuss_driver = {
 	.driver = {
