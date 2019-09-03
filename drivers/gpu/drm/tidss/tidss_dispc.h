@@ -58,9 +58,12 @@ struct drm_crtc_state;
 
 #define DSS_IRQ_PLANE_FIFO_UNDERFLOW(plane)	DSS_IRQ_PLANE_BIT((plane), 0)
 
+enum tidss_gamma_type { TIDSS_GAMMA_8BIT, TIDSS_GAMMA_10BIT };
+
 struct tidss_vp_feat {
 	struct tidss_vp_color_feat {
 		u32 gamma_size;
+		enum tidss_gamma_type gamma_type;
 		bool has_ctm;
 	} color;
 };
@@ -131,6 +134,8 @@ struct tidss_dispc_ops {
 	void (*remove)(struct dispc_device *dispc);
 
 	int (*modeset_init)(struct dispc_device *dispc);
+
+	int (*get_irq)(struct dispc_device *dispc);
 };
 
 int dispc6_init(struct tidss_device *tidss);

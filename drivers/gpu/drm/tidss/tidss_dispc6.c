@@ -1129,6 +1129,7 @@ static const struct tidss_vp_feat *dispc6_vp_feat(struct dispc_device *dispc,
 	static const struct tidss_vp_feat vp_feat = {
 		.color = {
 			.gamma_size = DISPC6_GAMMA_TABLE_SIZE,
+			.gamma_type = TIDSS_GAMMA_8BIT,
 			.has_ctm = false, /* Driver implementation missing */
 		},
 	};
@@ -1367,6 +1368,11 @@ static int dispc6_modeset_init(struct dispc_device *dispc)
 	return 0;
 }
 
+static int dispc6_get_irq(struct dispc_device *dispc)
+{
+	return platform_get_irq(to_platform_device(dispc->tidss->dev), 0);
+}
+
 static void dispc6_remove(struct dispc_device *dispc);
 
 static const struct tidss_dispc_ops dispc6_ops = {
@@ -1404,6 +1410,8 @@ static const struct tidss_dispc_ops dispc6_ops = {
 	.remove = dispc6_remove,
 
 	.modeset_init = dispc6_modeset_init,
+
+	.get_irq = dispc6_get_irq,
 };
 
 static int dispc6_iomap_resource(struct platform_device *pdev, const char *name,
