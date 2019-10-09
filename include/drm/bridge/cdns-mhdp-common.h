@@ -514,6 +514,12 @@ struct cdns_mhdp_sink {
 	u8	enhanced;
 };
 
+struct cdns_mhdp_display_fmt {
+	u32 color_format;
+	u32 bpc;
+	bool y_only;
+};
+
 struct cdns_mhdp_bridge;
 struct cdns_mhdp_connector;
 
@@ -550,14 +556,13 @@ struct cdns_mhdp_device {
 	struct drm_dp_aux	aux;
 	struct cdns_mhdp_host	host;
 	struct cdns_mhdp_sink	sink;
+	struct cdns_mhdp_display_fmt display_fmt;
 	struct cdns_mhdp_bridge	bridge;
 	struct phy		*phy;
 
 	struct video_info	video_info;
 	struct drm_display_mode	mode;
 	unsigned int		fw_version;
-
-	struct delayed_work hotplug_work;
 
 	bool link_up;
 	bool plugged;
