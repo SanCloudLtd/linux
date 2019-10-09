@@ -134,6 +134,16 @@
 		vin-supply = <&vsys_3v3>;
 		gpio = <&exp2 2 GPIO_ACTIVE_HIGH>;
 	};
+
+	dp0: connector {
+		compatible = "dp-connector"; /* No such binding exists yet.. */
+
+		port {
+			dp_connector_in: endpoint {
+			remote-endpoint = <&dp_bridge_output>;
+			};
+		};
+	};
 };
 
 &wkup_pmx0 {
@@ -319,6 +329,29 @@
 			J721E_IOPAD(0x2ac, PIN_INPUT, 0)
 		>;
 	};
+
+	dp0_pins_default: dp0_pins_default {
+		pinctrl-single,pins = <
+			J721E_IOPAD(0x1c4, PIN_INPUT, 5) /* SPI0_CS1.DP0_HPD */
+		>;
+	};
+};
+
+&dss {
+	status = "ok";
+};
+
+&dss_ports {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	port@0 {
+		reg = <0>;
+
+		dpi_out_real0: endpoint {
+			remote-endpoint = <&dp_bridge_input>;
+		};
+	};
 };
 
 &main_i2c0 {
@@ -373,6 +406,14 @@
 		interrupts = <11 IRQ_TYPE_EDGE_FALLING>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
+
+		p0 {
+			/* P0 - DP0_PWR_SW_EN */
+			gpio-hog;
+			gpios = <0 GPIO_ACTIVE_HIGH>;
+			output-high;
+			line-name = "DP0_PWR_SW_EN";
+		};
 	};
 };
 
@@ -499,11 +540,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcasp10_pins_default>;
 
-	op-mode = <0>;          /* MCASP_IIS_MODE */
+	op-mode = <0>;		/* MCASP_IIS_MODE */
 	tdm-slots = <2>;
 	auxclk-fs-ratio = <256>;
 
-	serial-dir = <  /* 0: INACTIVE, 1: TX, 2: RX */
+	serial-dir = <	/* 0: INACTIVE, 1: TX, 2: RX */
 		2 2 2 1
 		1 1 1 0
 	>;
@@ -567,7 +608,6 @@
 	/* eMMC */
 	non-removable;
 	ti,driver-strength-ohm = <50>;
-	mmc-hs400-1_8v;
 };
 
 &main_sdhci1 {
@@ -644,4 +684,16 @@
 	reset-gpios = <&exp2 20 GPIO_ACTIVE_HIGH>;
 	phys = <&serdes2_pcie_link>;
 	phy-names = "pcie_phy";
+};
+
+&tscadc0 {
+	adc {
+		ti,adc-channels = <0 1 2 3 4 5 6 7>;
+	};
+};
+
+&tscadc1 {
+	adc {
+		ti,adc-channels = <0 1 2 3 4 5 6 7>;
+	};
 };
