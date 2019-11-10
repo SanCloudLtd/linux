@@ -66,7 +66,7 @@
 		};
 
 		rtos_ipc_memory_region: ipc-memories@a2000000 {
-			reg = <0x00 0xa2000000 0x00 0x00100000>;
+			reg = <0x00 0xa2000000 0x00 0x00200000>;
 			alignment = <0x1000>;
 			no-map;
 		};
@@ -418,12 +418,14 @@
 	bus-width = <8>;
 	non-removable;
 	ti,driver-strength-ohm = <50>;
+	disable-wp;
 };
 
 &sdhci1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mmc1_pins_default>;
 	ti,driver-strength-ohm = <50>;
+	disable-wp;
 };
 
 &gpu {

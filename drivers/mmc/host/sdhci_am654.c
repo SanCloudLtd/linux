@@ -47,6 +47,8 @@
 #define SEL100_MASK		BIT(SEL100_SHIFT)
 #define FREQSEL_SHIFT		8
 #define FREQSEL_MASK		GENMASK(10, 8)
+#define CLKBUFSEL_SHIFT		0
+#define CLKBUFSEL_MASK		GENMASK(2, 0)
 #define DLL_TRIM_ICP_SHIFT	4
 #define DLL_TRIM_ICP_MASK	GENMASK(7, 4)
 #define DR_TY_SHIFT		20
@@ -84,6 +86,7 @@ struct sdhci_am654_data {
 	struct regmap *base;
 	bool legacy_otapdly;
 	int otap_del_sel[11];
+	int clkbuf_sel;
 	int trm_icp;
 	int drv_strength;
 	bool dll_on;
@@ -231,7 +234,6 @@ void sdhci_j721e_4bit_set_clock(struct sdhci_host *host, unsigned int clock)
 	struct sdhci_am654_data *sdhci_am654 = sdhci_pltfm_priv(pltfm_host);
 	unsigned char timing = host->mmc->ios.timing;
 	u32 otap_del_sel;
-	u32 otap_del_ena;
 	u32 mask, val;
 
 	/* Setup DLL Output TAP delay */
@@ -240,11 +242,13 @@ void sdhci_j721e_4bit_set_clock(struct sdhci_host *host, unsigned int clock)
 	else
 		otap_del_sel = sdhci_am654->otap_del_sel[timing];
 
-	otap_del_ena = (timing > MMC_TIMING_UHS_SDR25) ? 1 : 0;
 	mask = OTAPDLYENA_MASK | OTAPDLYSEL_MASK;
-	val = (otap_del_ena << OTAPDLYENA_SHIFT) |
+	val = (0x1 << OTAPDLYENA_SHIFT) |
 	      (otap_del_sel << OTAPDLYSEL_SHIFT);
 	regmap_update_bits(sdhci_am654->base, PHY_CTRL4, mask, val);
+
+	regmap_update_bits(sdhci_am654->base, PHY_CTRL5, CLKBUFSEL_MASK,
+			   sdhci_am654->clkbuf_sel);
 
 	sdhci_set_clock(host, clock);
 }
@@ -294,8 +298,7 @@ struct sdhci_ops sdhci_am654_ops = {
 
 static const struct sdhci_pltfm_data sdhci_am654_pdata = {
 	.ops = &sdhci_am654_ops,
-	.quirks = SDHCI_QUIRK_INVERTED_WRITE_PROTECT |
-		  SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
+	.quirks = SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 };
 
@@ -331,8 +334,7 @@ struct sdhci_ops sdhci_j721e_8bit_ops = {
 
 static const struct sdhci_pltfm_data sdhci_j721e_8bit_pdata = {
 	.ops = &sdhci_j721e_8bit_ops,
-	.quirks = SDHCI_QUIRK_INVERTED_WRITE_PROTECT |
-		  SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
+	.quirks = SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 };
 
@@ -355,8 +357,7 @@ struct sdhci_ops sdhci_j721e_4bit_ops = {
 
 static const struct sdhci_pltfm_data sdhci_j721e_4bit_pdata = {
 	.ops = &sdhci_j721e_4bit_ops,
-	.quirks = SDHCI_QUIRK_INVERTED_WRITE_PROTECT |
-		  SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
+	.quirks = SDHCI_QUIRK_MULTIBLOCK_READ_ACMD12,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN,
 };
 
@@ -560,6 +561,8 @@ static int sdhci_am654_get_of_property(struct platform_device *pdev,
 	}
 
 	device_property_read_u32(dev, "ti,strobe-sel", &sdhci_am654->strb_sel);
+	device_property_read_u32(dev, "ti,clkbuf-sel",
+				 &sdhci_am654->clkbuf_sel);
 
 	sdhci_get_of_property(pdev);
 

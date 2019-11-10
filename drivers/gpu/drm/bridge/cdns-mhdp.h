@@ -11,6 +11,10 @@
 #ifndef CDNS_MHDP_H
 #define CDNS_MHDP_H
 
+#include <drm/drm_bridge.h>
+#include <drm/drm_connector.h>
+#include <drm/drm_dp_helper.h>
+
 #define CDNS_APB_CFG				0x00000
 #define CDNS_APB_CTRL				(CDNS_APB_CFG + 0x00)
 #define CDNS_CPU_STALL				BIT(3)
@@ -81,7 +85,6 @@
 #define CDNS_DP_DISABLE_PHY_RST			BIT(6)
 #define CDNS_DP_WR_FAILING_EDGE_VSYNC		BIT(7)
 
-#define CDNS_DP_SW_RESET			(CDNS_DPTX_FRAMER + 0x04)
 #define CDNS_DP_FRAMER_TU			(CDNS_DPTX_FRAMER + 0x08)
 #define CDNS_DP_FRAMER_TU_SIZE(x)		(((x) & GENMASK(6, 0)) << 8)
 #define CDNS_DP_FRAMER_TU_VS(x)			((x) & GENMASK(5, 0))
@@ -136,7 +139,7 @@
 #define CDNS_DP_FRAMER_YCBCR420			BIT(3)
 #define CDNS_DP_FRAMER_Y_ONLY			BIT(4)
 
-#define CDNS_DP_FRAMER_SP(s)			(CDNS_DPTX_STREAM(s) + 0x10)
+#define CDNS_DP_FRAMER_SP(s)			(CDNS_DPTX_STREAM(s) + 0x50)
 #define CDNS_DP_FRAMER_VSYNC_POL_LOW		BIT(0)
 #define CDNS_DP_FRAMER_HSYNC_POL_LOW		BIT(1)
 #define CDNS_DP_FRAMER_INTERLACE		BIT(2)
@@ -182,9 +185,82 @@
 #define CDNS_DP_LANE_EN_LANES(x)		GENMASK(x - 1, 0)
 #define CDNS_DP_ENHNCD				(CDNS_DPTX_GLOBAL + 0x04)
 
+struct cdns_mhdp_host {
+	unsigned int link_rate;
+	u8 lanes_cnt;
+	u8 volt_swing;
+	u8 pre_emphasis;
+	u8 pattern_supp;
+	u8 lane_mapping;
+	u8 fast_link : 1;
+	u8 enhanced : 1;
+	u8 scrambler : 1;
+	u8 ssc : 1;
+};
 
-#define to_mhdp_connector(x) container_of(x, struct cdns_mhdp_connector, base)
-#define to_mhdp_bridge(x) container_of(x, struct cdns_mhdp_bridge, base)
+struct cdns_mhdp_sink {
+	unsigned int link_rate;
+	u8 lanes_cnt;
+	u8 pattern_supp;
+	u8 fast_link;
+	u8 enhanced;
+};
+
+struct cdns_mhdp_display_fmt {
+	u32 color_format;
+	u32 bpc;
+	u8 y_only : 1;
+};
+
+/*
+ * These enums present MHDP hw initialization state
+ * Legal state transitions are:
+ * MHDP_HW_INACTIVE <-> MHDP_HW_LOADING -> MHDP_HW_READY
+ *        |                                     |
+ *        '----------> MHDP_HW_STOPPED <--------'
+ */
+enum mhdp_hw_state { MHDP_HW_INACTIVE = 0, /* HW not initialized */
+		     MHDP_HW_LOADING,	   /* HW initialization in progress */
+		     MHDP_HW_READY,	   /* HW ready, FW active*/
+		     MHDP_HW_STOPPED };	   /* Driver removal FW to be stopped */
+
+struct cdns_mhdp_device {
+	void __iomem *regs;
+	void __iomem *j721e_regs;
+
+	struct device *dev;
+	struct clk *clk;
+	struct phy *phy;
+
+	struct drm_connector connector;
+	struct drm_bridge bridge;
+
+	struct drm_dp_link link;
+	struct drm_dp_aux aux;
+
+	struct cdns_mhdp_host host;
+	struct cdns_mhdp_sink sink;
+	struct cdns_mhdp_display_fmt display_fmt;
+	s8 stream_id;
+
+	u8 link_up : 1;
+	u8 plugged : 1;
+
+	/*
+	 * "start_lock" protects the access to bridge_attached and
+	 * hw_state data members that control the delayed firmware
+	 * loading and attaching the bridge. They are accessed from
+	 * both the DRM core and mhdp_fw_cb(). In most cases just
+	 * protecting the data members is enough, but the irq mask
+	 * setting needs to be protected when enabling the FW.
+	 */
+	spinlock_t start_lock;
+	u8 bridge_attached : 1;
+	enum mhdp_hw_state hw_state;
+};
+
+#define connector_to_mhdp(x) container_of(x, struct cdns_mhdp_device, connector)
+#define bridge_to_mhdp(x) container_of(x, struct cdns_mhdp_device, bridge)
 
 #define CDNS_MHDP_MAX_STREAMS   4
 
