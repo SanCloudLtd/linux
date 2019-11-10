@@ -165,6 +165,9 @@ void am65_cpsw_nuss_adjust_link(struct net_device *ndev)
 
 		if (phy->speed == 1000)
 			mac_control |= CPSW_SL_CTL_GIG;
+		if (phy->speed == 10 && phy_interface_is_rgmii(phy))
+			/* Can be used with in band mode only */
+			mac_control |= CPSW_SL_CTL_EXT_EN;
 		if (phy->duplex)
 			mac_control |= CPSW_SL_CTL_FULLDUPLEX;
 
@@ -184,6 +187,7 @@ void am65_cpsw_nuss_adjust_link(struct net_device *ndev)
 				     ALE_PORT_STATE, ALE_PORT_STATE_FORWARD);
 
 		netif_tx_wake_all_queues(ndev);
+		netif_carrier_on(ndev);
 	} else {
 		int tmo;
 		/* disable forwarding */
@@ -199,6 +203,7 @@ void am65_cpsw_nuss_adjust_link(struct net_device *ndev)
 
 		cpsw_sl_ctl_reset(port->slave.mac_sl);
 
+		netif_carrier_off(ndev);
 		netif_tx_stop_all_queues(ndev);
 	}
 
@@ -941,8 +946,7 @@ static int am65_cpsw_nuss_tx_compl_packets(struct am65_cpsw_common *common,
 
 		ndev = skb->dev;
 
-		if (skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS)
-			am65_cpts_tx_timestamp(common->cpts, skb);
+		am65_cpts_tx_timestamp(common->cpts, skb);
 
 		ndev_priv = netdev_priv(ndev);
 		stats = this_cpu_ptr(ndev_priv->stats);
@@ -1056,8 +1060,8 @@ static netdev_tx_t am65_cpsw_nuss_ndo_slave_xmit(struct sk_buff *skb,
 	pkt_len = skb_headlen(skb);
 
 	/* SKB TX timestamp */
-	if (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP && port->tx_ts_enabled)
-		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
+	if (port->tx_ts_enabled)
+		am65_cpts_ask_tx_timestamp(common->cpts, skb);
 
 	q_idx = skb_get_queue_mapping(skb);
 	dev_dbg(dev, "%s skb_queue:%d\n", __func__, q_idx);
@@ -1242,10 +1246,21 @@ static int am65_cpsw_nuss_hwtstamp_set(struct net_device *ndev,
 	case HWTSTAMP_FILTER_NONE:
 		port->rx_ts_enabled = false;
 		break;
-	case HWTSTAMP_FILTER_PTP_V1_L4_EVENT:
-	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
-	case HWTSTAMP_FILTER_PTP_V2_EVENT:
 	case HWTSTAMP_FILTER_ALL:
+	case HWTSTAMP_FILTER_SOME:
+	case HWTSTAMP_FILTER_PTP_V1_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V1_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_L2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
+	case HWTSTAMP_FILTER_NTP_ALL:
 		port->rx_ts_enabled = true;
 		cfg.rx_filter = HWTSTAMP_FILTER_ALL;
 		break;
