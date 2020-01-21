@@ -202,8 +202,9 @@ struct cdns_mhdp_sink {
 	unsigned int link_rate;
 	u8 lanes_cnt;
 	u8 pattern_supp;
-	u8 fast_link;
-	u8 enhanced;
+	u8 fast_link : 1;
+	u8 enhanced : 1;
+	u8 ssc : 1;
 };
 
 struct cdns_mhdp_display_fmt {
@@ -224,6 +225,15 @@ enum mhdp_hw_state { MHDP_HW_INACTIVE = 0, /* HW not initialized */
 		     MHDP_HW_READY,	   /* HW ready, FW active*/
 		     MHDP_HW_STOPPED };	   /* Driver removal FW to be stopped */
 
+struct cdns_mhdp_device;
+
+struct mhdp_platform_ops {
+	int (*init)(struct cdns_mhdp_device *mhdp);
+	void (*exit)(struct cdns_mhdp_device *mhdp);
+	void (*enable)(struct cdns_mhdp_device *mhdp);
+	void (*disable)(struct cdns_mhdp_device *mhdp);
+};
+
 struct cdns_mhdp_device {
 	void __iomem *regs;
 	void __iomem *j721e_regs;
@@ -231,6 +241,11 @@ struct cdns_mhdp_device {
 	struct device *dev;
 	struct clk *clk;
 	struct phy *phy;
+
+	const struct mhdp_platform_ops *ops;
+
+	/* This is to protect mailbox communications with the firmware */
+	struct mutex mbox_mutex;
 
 	struct drm_connector connector;
 	struct drm_bridge bridge;
