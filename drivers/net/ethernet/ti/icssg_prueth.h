@@ -20,6 +20,7 @@
 #include <linux/of_net.h>
 #include <linux/of_platform.h>
 #include <linux/mfd/syscon.h>
+#include <linux/mutex.h>
 #include <linux/net_tstamp.h>
 #include <linux/phy.h>
 #include <linux/pruss.h>
@@ -135,12 +136,17 @@ struct prueth_emac {
 	int rx_mgm_flow_id_base;
 
 	spinlock_t lock;	/* serialize access */
-	unsigned int flags;
 
 	/* TX HW Timestamping */
 	u32 tx_ts_cookie;
 	struct sk_buff *tx_ts_skb;
 	unsigned long state;
+
+	/* shutdown related */
+	u32 cmd_data[4];
+	struct completion cmd_complete;
+	/* Mutex to serialize access to firmware command interface */
+	struct mutex cmd_lock;
 };
 
 /**
@@ -187,8 +193,11 @@ struct emac_tx_ts_response {
 /* Classifier helpers */
 void icssg_class_set_mac_addr(struct regmap *miig_rt, int slice, u8 *mac);
 void icssg_class_disable(struct regmap *miig_rt, int slice);
-void icssg_class_default(struct regmap *miig_rt, int slice);
+void icssg_class_default(struct regmap *miig_rt, int slice, bool allmulti);
 void icssg_class_promiscuous(struct regmap *miig_rt, int slice);
+void icssg_class_add_mcast(struct regmap *miig_rt, int slice,
+			   struct net_device *ndev);
+
 
 /* get PRUSS SLICE number from prueth_emac */
 static inline int prueth_emac_slice(struct prueth_emac *emac)

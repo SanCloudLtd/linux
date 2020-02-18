@@ -41,6 +41,7 @@
 
 #define MSMC_RAM_SIZE	(SZ_64K + SZ_32K + SZ_2K)	/* 0x1880 x 8 x 2 */
 
+#define PRUETH_PKT_TYPE_CMD	0x10
 #define PRUETH_NAV_PS_DATA_SIZE	16	/* Protocol specific data size */
 #define PRUETH_NAV_SW_DATA_SIZE	16	/* SW related data size */
 #define PRUETH_MAX_TX_DESC	512
@@ -387,7 +388,7 @@ static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id)
 	skb->dev = ndev;
 	if (!netif_running(skb->dev)) {
 		dev_kfree_skb_any(skb);
-		return -ENODEV;
+		return 0;
 	}
 
 	new_skb = netdev_alloc_skb_ip_align(ndev, PRUETH_MAX_PKT_SIZE);
@@ -408,8 +409,11 @@ static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id)
 
 	/* queue another RX DMA */
 	ret = prueth_dma_rx_push(emac, new_skb, &emac->rx_chns);
-	if (WARN_ON(ret < 0))
+	if (WARN_ON(ret < 0)) {
 		dev_kfree_skb_any(new_skb);
+		ndev->stats.rx_errors++;
+		ndev->stats.rx_dropped++;
+	}
 
 	return ret;
 }
@@ -468,6 +472,114 @@ static void prueth_xmit_free(struct prueth_tx_chn *tx_chn,
 	k3_knav_pool_free(tx_chn->desc_pool, first_desc);
 }
 
+/* TODO: Convert this to use worker/workqueue mechanism to serialize the
+ * request to firmware
+ */
+static int emac_send_command(struct prueth_emac *emac, u32 cmd)
+{
+	struct device *dev = emac->prueth->dev;
+	dma_addr_t desc_dma, buf_dma;
+	struct prueth_tx_chn *tx_chn;
+	struct cppi5_host_desc_t *first_desc;
+	int ret = 0;
+	u32 *epib;
+	u32 *data = emac->cmd_data;
+	u32 pkt_len = sizeof(emac->cmd_data);
+	void **swdata;
+
+	netdev_dbg(emac->ndev, "Sending cmd %x\n", cmd);
+
+	/* only one command at a time allowed to firmware */
+	mutex_lock(&emac->cmd_lock);
+	data[0] = cpu_to_le32(cmd);
+
+	/* Map the linear buffer */
+	buf_dma = dma_map_single(dev, data, pkt_len, DMA_TO_DEVICE);
+	if (dma_mapping_error(dev, buf_dma)) {
+		netdev_err(emac->ndev, "cmd %x: failed to map cmd buffer\n",
+			   cmd);
+		ret = -EINVAL;
+		goto err_unlock;
+	}
+
+	tx_chn = &emac->tx_chns;
+
+	first_desc = k3_knav_pool_alloc(tx_chn->desc_pool);
+	if (!first_desc) {
+		netdev_err(emac->ndev,
+			   "cmd %x: failed to allocate descriptor\n", cmd);
+		dma_unmap_single(dev, buf_dma, pkt_len, DMA_TO_DEVICE);
+		ret = -ENOMEM;
+		goto err_unlock;
+	}
+
+	cppi5_hdesc_init(first_desc, CPPI5_INFO0_HDESC_EPIB_PRESENT,
+			 PRUETH_NAV_PS_DATA_SIZE);
+	cppi5_hdesc_set_pkttype(first_desc, PRUETH_PKT_TYPE_CMD);
+	epib = first_desc->epib;
+	epib[0] = 0;
+	epib[1] = 0;
+
+	cppi5_hdesc_attach_buf(first_desc, buf_dma, pkt_len, buf_dma, pkt_len);
+	swdata = cppi5_hdesc_get_swdata(first_desc);
+	*swdata = data;
+
+	cppi5_hdesc_set_pktlen(first_desc, pkt_len);
+	desc_dma = k3_knav_pool_virt2dma(tx_chn->desc_pool, first_desc);
+
+	/* send command */
+	reinit_completion(&emac->cmd_complete);
+	ret = k3_nav_udmax_push_tx_chn(tx_chn->tx_chn, first_desc, desc_dma);
+	if (ret) {
+		netdev_err(emac->ndev, "cmd %x: push failed: %d\n", cmd, ret);
+		goto free_desc;
+	}
+	ret = wait_for_completion_timeout(&emac->cmd_complete,
+					  msecs_to_jiffies(100));
+	if (!ret)
+		netdev_err(emac->ndev, "cmd %x: completion timeout\n", cmd);
+
+	mutex_unlock(&emac->cmd_lock);
+
+	return ret;
+free_desc:
+	prueth_xmit_free(tx_chn, dev, first_desc);
+err_unlock:
+	mutex_unlock(&emac->cmd_lock);
+
+	return ret;
+}
+
+static void emac_change_port_speed_duplex(struct prueth_emac *emac,
+					  bool full_duplex, int speed)
+{
+	u32 cmd = ICSSG_PSTATE_SPEED_DUPLEX_CMD, val;
+	struct prueth *prueth = emac->prueth;
+	int slice = prueth_emac_slice(emac);
+
+	/* only 100M and 1G and full duplex supported for now */
+	if (!(full_duplex && (speed == SPEED_1000 || speed == SPEED_100)))
+		return;
+
+	val = icssg_rgmii_get_speed(prueth->miig_rt, slice);
+	/* firmware expects full duplex settings in bit 2-1 */
+	val <<= 1;
+	cmd |= val;
+
+	val = icssg_rgmii_get_fullduplex(prueth->miig_rt, slice);
+	/* firmware expects full duplex settings in bit 3 */
+	val <<= 3;
+	cmd |= val;
+	emac_send_command(emac, cmd);
+}
+
+static int emac_shutdown(struct net_device *ndev)
+{
+	struct prueth_emac *emac = netdev_priv(ndev);
+
+	return emac_send_command(emac, ICSSG_SHUTDOWN_CMD);
+}
+
 /**
  * emac_ndo_start_xmit - EMAC Transmit function
  * @skb: SKB pointer
@@ -514,14 +626,15 @@ static int emac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 	first_desc = k3_knav_pool_alloc(tx_chn->desc_pool);
 	if (!first_desc) {
-		dev_err(dev, "tx: failed to allocate descriptor\n");
+		netdev_dbg(ndev, "tx: failed to allocate descriptor\n");
 		dma_unmap_single(dev, buf_dma, pkt_len, DMA_TO_DEVICE);
 		ret = -ENOMEM;
-		goto drop_stop_q;
+		goto drop_stop_q_busy;
 	}
 
 	cppi5_hdesc_init(first_desc, CPPI5_INFO0_HDESC_EPIB_PRESENT,
 			 PRUETH_NAV_PS_DATA_SIZE);
+	cppi5_hdesc_set_pkttype(first_desc, 0);
 	epib = first_desc->epib;
 	epib[0] = 0;
 	epib[1] = 0;
@@ -623,6 +736,10 @@ drop_free_skb:
 	netdev_err(ndev, "tx: error: %d\n", ret);
 
 	return ret;
+
+drop_stop_q_busy:
+	netif_stop_queue(ndev);
+	return NETDEV_TX_BUSY;
 }
 
 /**
@@ -656,6 +773,14 @@ static int emac_tx_complete_packets(struct prueth_emac *emac, int budget)
 
 		desc_tx = k3_knav_pool_dma2virt(tx_chn->desc_pool, desc_dma);
 		swdata = cppi5_hdesc_get_swdata(desc_tx);
+
+		/* was this command's TX complete? */
+		if (*(swdata) == emac->cmd_data) {
+			prueth_xmit_free(tx_chn, dev, desc_tx);
+			budget++;	/* not a data packet */
+			continue;
+		}
+
 		skb = *(swdata);
 		prueth_xmit_free(tx_chn, dev, desc_tx);
 
@@ -811,6 +936,7 @@ static irqreturn_t prueth_rx_mgm_irq_thread(int irq, void *dev_id)
 	struct prueth_emac *emac = dev_id;
 	struct sk_buff *skb;
 	int flow = PRUETH_MAX_RX_MGM_FLOWS - 1;
+	u32 rsp;
 
 	while (flow--) {
 		skb = prueth_process_rx_mgm(emac, flow);
@@ -820,6 +946,21 @@ static irqreturn_t prueth_rx_mgm_irq_thread(int irq, void *dev_id)
 		switch (flow) {
 		case PRUETH_RX_MGM_FLOW_RESPONSE:
 			/* Process command response */
+			rsp = le32_to_cpu(*(u32 *)skb->data);
+			if ((rsp & 0xffff0000) == ICSSG_SHUTDOWN_CMD) {
+				netdev_dbg(emac->ndev,
+					   "f/w Shutdown cmd resp %x\n", rsp);
+				complete(&emac->cmd_complete);
+			} else if ((rsp & 0xffff0000) ==
+				ICSSG_PSTATE_SPEED_DUPLEX_CMD) {
+				netdev_dbg(emac->ndev,
+					   "f/w Speed/Duplex cmd rsp %x\n",
+					    rsp);
+				complete(&emac->cmd_complete);
+			} else {
+				netdev_err(emac->ndev, "Unknown f/w cmd rsp %x\n",
+					   rsp);
+			}
 			break;
 		case PRUETH_RX_MGM_FLOW_TIMESTAMP:
 			prueth_tx_ts(emac, (void *)skb->data);
@@ -943,8 +1084,6 @@ static void emac_adjust_link(struct net_device *ndev)
 	bool new_state = false;
 	unsigned long flags;
 
-	spin_lock_irqsave(&emac->lock, flags);
-
 	if (phydev->link) {
 		/* check the mode of operation - full/half duplex */
 		if (phydev->duplex != emac->duplex) {
@@ -977,6 +1116,7 @@ static void emac_adjust_link(struct net_device *ndev)
 		/* update RGMII and MII configuration based on PHY negotiated
 		 * values
 		 */
+		spin_lock_irqsave(&emac->lock, flags);
 		if (emac->link) {
 			if (phydev->speed == SPEED_1000)
 				gig_en = true;
@@ -992,10 +1132,18 @@ static void emac_adjust_link(struct net_device *ndev)
 						slice);
 		} else {
 			icssg_update_rgmii_cfg(prueth->miig_rt, true, true,
-					       emac->port_id);
+					       slice);
 			icssg_update_mii_rt_cfg(prueth->mii_rt, emac->speed,
 						slice);
 		}
+		spin_unlock_irqrestore(&emac->lock, flags);
+
+		/* send command to firmware to change speed and duplex
+		 * setting when link is up.
+		 */
+		if (emac->link)
+			emac_change_port_speed_duplex(emac, full_duplex,
+						      emac->speed);
 	}
 
 	if (emac->link) {
@@ -1008,8 +1156,6 @@ static void emac_adjust_link(struct net_device *ndev)
 		netif_carrier_off(ndev);
 		netif_tx_stop_all_queues(ndev);
 	}
-
-	spin_unlock_irqrestore(&emac->lock, flags);
 }
 
 static int emac_napi_rx_poll(struct napi_struct *napi_rx, int budget)
@@ -1081,10 +1227,11 @@ static int emac_ndo_open(struct net_device *ndev)
 	ether_addr_copy(emac->mac_addr, ndev->dev_addr);
 
 	icssg_class_set_mac_addr(prueth->miig_rt, slice, emac->mac_addr);
-	icssg_class_default(prueth->miig_rt, slice);
+	icssg_class_default(prueth->miig_rt, slice, 0);
 
 	netif_carrier_off(ndev);
 
+	init_completion(&emac->cmd_complete);
 	ret = prueth_init_tx_chns(emac);
 	if (ret) {
 		dev_err(dev, "failed to init tx channel: %d\n", ret);
@@ -1132,6 +1279,9 @@ static int emac_ndo_open(struct net_device *ndev)
 	ret = prueth_emac_start(prueth, emac);
 	if (ret)
 		goto free_rx_mgm_irq;
+
+	/* Get attached phy details */
+	phy_attached_info(emac->phydev);
 
 	/* start PHY */
 	phy_start(emac->phydev);
@@ -1225,6 +1375,9 @@ static int emac_ndo_stop(struct net_device *ndev)
 	phy_stop(emac->phydev);
 	icssg_class_disable(prueth->miig_rt, prueth_emac_slice(emac));
 
+	/* send shutdown command */
+	emac_shutdown(ndev);
+
 	/* tear down and disable UDMA channels */
 	reinit_completion(&emac->tdown_complete);
 	k3_nav_udmax_tdown_tx_chn(emac->tx_chns.tx_chn, false);
@@ -1237,8 +1390,6 @@ static int emac_ndo_stop(struct net_device *ndev)
 				  emac,
 				  prueth_tx_cleanup);
 	k3_nav_udmax_disable_tx_chn(emac->tx_chns.tx_chn);
-
-	/* TODO: send shutdown command */
 
 	k3_nav_udmax_tdown_rx_chn(emac->rx_chns.rx_chn, true);
 	for (i = 0; i < PRUETH_MAX_RX_FLOWS; i++)
@@ -1310,24 +1461,24 @@ static void emac_ndo_set_rx_mode(struct net_device *ndev)
 	struct prueth_emac *emac = netdev_priv(ndev);
 	struct prueth *prueth = emac->prueth;
 	int slice = prueth_emac_slice(emac);
+	bool promisc = ndev->flags & IFF_PROMISC;
+	bool allmulti = ndev->flags & IFF_ALLMULTI;
 
-	if (ndev->flags & IFF_PROMISC) {
-		/* enable promiscuous */
-		if (!(emac->flags & IFF_PROMISC)) {
-			icssg_class_promiscuous(prueth->miig_rt, slice);
-			emac->flags |= IFF_PROMISC;
-		}
+	if (promisc) {
+		icssg_class_promiscuous(prueth->miig_rt, slice);
 		return;
-	} else if (ndev->flags & IFF_ALLMULTI) {
-		/* TODO: enable all multicast */
-	} else {
-		if (emac->flags & IFF_PROMISC) {
-			/* local MAC + BC only */
-			icssg_class_default(prueth->miig_rt, slice);
-			emac->flags &= ~IFF_PROMISC;
-		}
+	}
 
-		/* TODO: specific multi */
+	if (allmulti) {
+		icssg_class_default(prueth->miig_rt, slice, 1);
+		return;
+	}
+
+	icssg_class_default(prueth->miig_rt, slice, 0);
+	if (!netdev_mc_empty(ndev)) {
+		/* program multicast address list into Classifier */
+		icssg_class_add_mcast(prueth->miig_rt, slice, ndev);
+		return;
 	}
 }
 
@@ -1490,6 +1641,7 @@ static int prueth_netdev_init(struct prueth *prueth,
 	emac->port_id = port;
 	emac->msg_enable = netif_msg_init(debug_level, PRUETH_EMAC_DEBUG);
 	spin_lock_init(&emac->lock);
+	mutex_init(&emac->cmd_lock);
 
 	emac->phy_node = of_parse_phandle(eth_node, "phy-handle", 0);
 	if (!emac->phy_node) {
