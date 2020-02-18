@@ -27,6 +27,7 @@
 #include "prueth.h"
 #include "icss_mii_rt.h"
 #include "icss_switch.h"
+#include "icss_vlan_mcast_filter_mmap.h"
 
 #define PRUETH_MODULE_VERSION "0.2"
 #define PRUETH_MODULE_DESCRIPTION "PRUSS Ethernet driver"
@@ -173,6 +174,7 @@ struct prueth_emac {
 	struct prueth_queue_desc __iomem *tx_queue_descs;
 
 	struct port_statistics stats; /* stats holder when i/f is down */
+	unsigned char mc_filter_mask[ETH_ALEN];	/* for multicast filtering */
 
 	spinlock_t lock;	/* serialize access */
 };
@@ -1022,21 +1024,6 @@ static int emac_ndo_open(struct net_device *ndev)
 	struct prueth_emac *emac = netdev_priv(ndev);
 	int ret;
 
-	ret = request_irq(emac->rx_irq, emac_rx_hardirq,
-			  IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-			  ndev->name, ndev);
-	if (ret) {
-		netdev_err(ndev, "unable to request RX IRQ\n");
-		return ret;
-	}
-	ret = request_irq(emac->tx_irq, emac_tx_hardirq,
-			  IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
-			  ndev->name, ndev);
-	if (ret) {
-		netdev_err(ndev, "unable to request TX IRQ\n");
-		goto free_rx_irq;
-	}
-
 	/* set h/w MAC as user might have re-configured */
 	ether_addr_copy(emac->mac_addr, ndev->dev_addr);
 
@@ -1052,7 +1039,22 @@ static int emac_ndo_open(struct net_device *ndev)
 	ret = rproc_boot(emac->pru);
 	if (ret) {
 		netdev_err(ndev, "failed to boot PRU: %d\n", ret);
-		goto free_irq;
+		return ret;
+	}
+
+	ret = request_irq(emac->rx_irq, emac_rx_hardirq,
+			  IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+			  ndev->name, ndev);
+	if (ret) {
+		netdev_err(ndev, "unable to request RX IRQ\n");
+		goto rproc_shutdown;
+	}
+	ret = request_irq(emac->tx_irq, emac_tx_hardirq,
+			  IRQF_TRIGGER_HIGH | IRQF_ONESHOT,
+			  ndev->name, ndev);
+	if (ret) {
+		netdev_err(ndev, "unable to request TX IRQ\n");
+		goto free_rx_irq;
 	}
 
 	/* start PHY */
@@ -1067,10 +1069,10 @@ static int emac_ndo_open(struct net_device *ndev)
 
 	return 0;
 
-free_irq:
-	free_irq(emac->tx_irq, ndev);
 free_rx_irq:
 	free_irq(emac->rx_irq, ndev);
+rproc_shutdown:
+	rproc_shutdown(emac->pru);
 
 	return ret;
 }
@@ -1205,6 +1207,70 @@ static struct net_device_stats *emac_ndo_get_stats(struct net_device *ndev)
 	return stats;
 }
 
+/* enable/disable MC filter */
+static void emac_mc_filter_ctrl(struct prueth_emac *emac, bool enable)
+{
+	struct prueth *prueth = emac->prueth;
+	void __iomem *mc_filter_ctrl;
+	u32 reg;
+
+	mc_filter_ctrl = prueth->mem[emac->dram].va +
+			 ICSS_EMAC_FW_MULTICAST_FILTER_CTRL_OFFSET;
+
+	if (enable)
+		reg = ICSS_EMAC_FW_MULTICAST_FILTER_CTRL_ENABLED;
+	else
+		reg = ICSS_EMAC_FW_MULTICAST_FILTER_CTRL_DISABLED;
+
+	writeb(reg, mc_filter_ctrl);
+}
+
+/* reset MC filter bins */
+static void emac_mc_filter_reset(struct prueth_emac *emac)
+{
+	struct prueth *prueth = emac->prueth;
+	void __iomem *mc_filter_tbl;
+
+	mc_filter_tbl = prueth->mem[emac->dram].va +
+			 ICSS_EMAC_FW_MULTICAST_FILTER_TABLE;
+	memset_io(mc_filter_tbl, 0, ICSS_EMAC_FW_MULTICAST_TABLE_SIZE_BYTES);
+}
+
+/* set MC filter hashmask */
+static void emac_mc_filter_hashmask(struct prueth_emac *emac,
+				    u8 mask[ICSS_EMAC_FW_MULTICAST_FILTER_MASK_SIZE_BYTES])
+{
+	struct prueth *prueth = emac->prueth;
+	void __iomem *mc_filter_mask;
+
+	mc_filter_mask = prueth->mem[emac->dram].va +
+			 ICSS_EMAC_FW_MULTICAST_FILTER_MASK_OFFSET;
+	memcpy_toio(mc_filter_mask, mask,
+		    ICSS_EMAC_FW_MULTICAST_FILTER_MASK_SIZE_BYTES);
+}
+
+static void emac_mc_filter_bin_allow(struct prueth_emac *emac, u8 hash)
+{
+	struct prueth *prueth = emac->prueth;
+	void __iomem *mc_filter_tbl;
+
+	mc_filter_tbl = prueth->mem[emac->dram].va +
+			 ICSS_EMAC_FW_MULTICAST_FILTER_TABLE;
+	writeb(ICSS_EMAC_FW_MULTICAST_FILTER_HOST_RCV_ALLOWED,
+	       mc_filter_tbl + hash);
+}
+
+static u8 emac_get_mc_hash(u8 *mac, u8 *mask)
+{
+	int j;
+	u8 hash;
+
+	for (j = 0, hash = 0; j < ETH_ALEN; j++)
+		hash ^= (mac[j] & mask[j]);
+
+	return hash;
+}
+
 /**
  * emac_ndo_set_rx_mode - EMAC set receive mode function
  * @ndev: The EMAC network adapter
@@ -1219,6 +1285,9 @@ static void emac_ndo_set_rx_mode(struct net_device *ndev)
 	void __iomem *sram = prueth->mem[PRUETH_MEM_SHARED_RAM].va;
 	u32 reg = readl(sram + EMAC_PROMISCUOUS_MODE_OFFSET);
 	u32 mask;
+	bool promisc = ndev->flags & IFF_PROMISC;
+	struct netdev_hw_addr *ha;
+	u8 hash;
 
 	switch (emac->port_id) {
 	case PRUETH_PORT_MII0:
@@ -1232,7 +1301,12 @@ static void emac_ndo_set_rx_mode(struct net_device *ndev)
 		return;
 	}
 
-	if (ndev->flags & IFF_PROMISC) {
+	/* Disable and reset multicast filter, allows allmulti */
+	emac_mc_filter_ctrl(emac, false);
+	emac_mc_filter_reset(emac);
+	emac_mc_filter_hashmask(emac, emac->mc_filter_mask);
+
+	if (promisc) {
 		/* Enable promiscuous mode */
 		reg |= mask;
 	} else {
@@ -1241,6 +1315,22 @@ static void emac_ndo_set_rx_mode(struct net_device *ndev)
 	}
 
 	writel(reg, sram + EMAC_PROMISCUOUS_MODE_OFFSET);
+
+	if (promisc)
+		return;
+
+	if (ndev->flags & IFF_ALLMULTI)
+		return;
+
+	emac_mc_filter_ctrl(emac, true);	/* all multicast blocked */
+
+	if (netdev_mc_empty(ndev))
+		return;
+
+	netdev_for_each_mc_addr(ha, ndev) {
+		hash = emac_get_mc_hash(ha->addr, emac->mc_filter_mask);
+		emac_mc_filter_bin_allow(emac, hash);
+	}
 }
 
 static int emac_ndo_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
@@ -1471,6 +1561,7 @@ static int prueth_netdev_init(struct prueth *prueth,
 	emac->prueth = prueth;
 	emac->ndev = ndev;
 	emac->port_id = port;
+	memset(&emac->mc_filter_mask[0], 0xff, ETH_ALEN); /* default mask */
 
 	switch (port) {
 	case PRUETH_PORT_MII0:

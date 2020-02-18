@@ -945,6 +945,7 @@ static bool dispc7_vp_go_busy(struct dispc_device *dispc,
 
 static void dispc7_vp_go(struct dispc_device *dispc, u32 hw_videoport)
 {
+	WARN_ON(VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5));
 	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 5, 5);
 }
 
@@ -2504,8 +2505,12 @@ static void dispc7_plane_init(struct dispc_device *dispc)
 
 		dispc7_vid_write(dispc, hw_plane, DISPC_VID_PRELOAD, preload);
 
-		/* Prefech up to PRELOAD value */
-		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 0, 19, 19);
+		/*
+		 * Prefech up to fifo high-threshold value to minimize the
+		 * possibility of underflows. Note that this means the PRELOAD
+		 * register is ignored.
+		 */
+		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 1, 19, 19);
 	}
 
 	if (dispc7_has_writeback(dispc)) {
@@ -3015,7 +3020,7 @@ static int dispc7_modeset_init(struct dispc_device *dispc)
 
 		tplane = tidss_plane_create(tidss, hw_plane_id,
 					    DRM_PLANE_TYPE_OVERLAY, crtc_mask,
-					    fourccs, ARRAY_SIZE(fourccs));
+					    fourccs, num_fourccs);
 
 		if (IS_ERR(tplane)) {
 			dev_err(tidss->dev, "plane create failed\n");
