@@ -1,0 +1,198 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (C) 2012 Texas Instruments Incorporated - http://www.ti.com/
+ */
+/dts-v1/;
+
+#include "am33xx.dtsi"
+#include "am335x-bone-common.dtsi"
+#include "am335x-boneblack-common.dtsi"
+#include "am335x-sancloud-bbe-common.dtsi"
+
+/ {
+	model = "SanCloud BeagleBone Enhanced + ICU4 Automotive Cape";
+	compatible = "sancloud,am335x-boneenhanced", "ti,am335x-bone-black", "ti,am335x-bone", "ti,am33xx";
+};
+
+/ {
+	icu_leds {
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&user_leds_s1>;
+		pinctrl-1 = <&user_leds_s1_sleep>;
+
+		compatible = "gpio-leds";
+
+		icu_led@2 {
+			label = "beaglebone:red:led1";
+			gpios = <&gpio1 14 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "mmc0";
+			default-state = "off";
+		};
+
+		icu_led@3 {
+			label = "beaglebone:green:led2";
+			gpios = <&gpio3 21 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			default-state = "off";
+		};
+
+		icu_led@1 {
+			label = "beaglebone:red:led3";
+			gpios = <&gpio1 16 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+		};
+
+		icu_led@6 {
+			label = "beaglebone:green:led4";
+			gpios = <&gpio1 17 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+		};
+
+		icu_led@5 {
+			label = "beaglebone:red:led5";
+			gpios = <&gpio3 19 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none"; //"cpu0";
+			default-state = "off";
+		};
+
+		icu_led@4 { /*CANNOT USE ON V1*/
+			label = "beaglebone:green:led6";
+			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "none";
+			default-state = "off";
+		};
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_buttons_s0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* 17 -> 18 BBE SK7000*/
+		switch1 {
+			label = "ignition";
+			linux,code = <0x8f>;  /*KEY_WAKEUP*/
+			gpios = <&gpio2 1 GPIO_ACTIVE_LOW>;
+			gpio-key;
+			debounce-interval = <10>;
+		};
+
+		/* 18 -> 17 BBE SK7000*/
+		switch2 {
+			label = "power_on";
+			linux,code = <0x3b>;  /*KEY_F1*/
+			gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
+			gpio-key;
+			debounce-interval = <10>;
+		};
+	};
+};
+
+&am33xx_pinmux {
+	pinctrl-0 = <&usb_hub_ctrl>;
+
+	user_leds_default: user_leds_default {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A5, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a5.gpio1_21 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A6, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpmc_a6.gpio1_22 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A7, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a7.gpio1_23 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A8, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpmc_a8.gpio1_24 */
+		>;
+	};
+
+	user_leds_sleep: user_leds_sleep {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A5, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a5.gpio1_21 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A6, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a6.gpio1_22 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A7, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a7.gpio1_23 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A8, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a8.gpio1_24 */
+		>;
+	};
+
+	dcan0_pins_s0: dcan0_pins_s0 {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART1_RTSN, PIN_INPUT_PULLUP, MUX_MODE2) /* d_can0_rx, SLEWCTRL_FAST | RECV_ENABLE | INPUT_PULLUP | MODE2 */
+			AM33XX_PADCONF(AM335X_PIN_UART1_CTSN, PIN_OUTPUT_PULLUP, MUX_MODE2) /* d_can0_tx, SLEWCTRL_FAST | OUTPUT_PULLUP | MODE2 */
+		>;
+	};
+
+	dcan0_pins_s0_sleep: dcan0_pins_s0_sleep {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_UART1_RTSN, PIN_INPUT_PULLDOWN, MUX_MODE7)  /* d_can0_rx, SLEWCTRL_FAST | RECV_ENABLE | INPUT_PULLUP | MODE2 */
+			AM33XX_PADCONF(AM335X_PIN_UART1_CTSN, PIN_INPUT_PULLDOWN, MUX_MODE7)  /* d_can0_tx, SLEWCTRL_FAST | OUTPUT_PULLUP | MODE2 */
+		>;
+	};
+
+	user_leds_s1: user_leds_s1 {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MCASP0_FSR, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* mcasp0_fsr.gpio3_19LED1*/
+			AM33XX_PADCONF(AM335X_PIN_MCASP0_AHCLKX, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* mcasp0_ahclkx.gpio3_21 LED2 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A1, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a1.gpio1_17 LED3*/
+			AM33XX_PADCONF(AM335X_PIN_ECAP0_IN_PWM0_OUT, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* eCAP0_in_PWM0_out.gpio0_7 LED4*/
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A0, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a0.gpio1_16 LED5*/
+			AM33XX_PADCONF(AM335X_PIN_UART1_TXD, PIN_OUTPUT_PULLDOWN, MUX_MODE7)	/* uart1_txd.gpio0_15   LED6*/
+		>;
+	};
+
+	user_leds_s1_sleep: user_leds_s1_sleep {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_MCASP0_FSR, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* mcasp0_fsr.gpio3_19LED1*/
+			AM33XX_PADCONF(AM335X_PIN_MCASP0_AHCLKX, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* mcasp0_ahclkx.gpio3_21 LED2 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A1, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a1.gpio1_17 LED3*/
+			AM33XX_PADCONF(AM335X_PIN_ECAP0_IN_PWM0_OUT, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* eCAP0_in_PWM0_out.gpio0_7 LED4*/
+			AM33XX_PADCONF(AM335X_PIN_GPMC_A0, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* gpmc_a0.gpio1_16 LED5*/
+			AM33XX_PADCONF(AM335X_PIN_UART1_TXD, PIN_INPUT_PULLDOWN, MUX_MODE7)	/* uart1_txd.gpio0_15   LED6*/
+		>;
+	};
+
+	gpio_buttons_s0: gpio_buttons_s0 {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_GPMC_AD11, PIN_INPUT_PULLDOWN, MUX_MODE7)   /*gpmc_ad11.gpio0_27 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_CLK, PIN_INPUT_PULLDOWN, MUX_MODE7)   /*gpmc_clk.gpio2_1 */
+			AM33XX_PADCONF(AM335X_PIN_GPMC_BEN1, PIN_OUTPUT_PULLDOWN, MUX_MODE7)   /*gpmc_ben1.gpio1_28 */
+		>;
+	};
+
+	i2c1_pins: pinmux_i2c1_pins {
+		pinctrl-single,pins = <
+			AM33XX_PADCONF(AM335X_PIN_SPI0_D1, PIN_INPUT, MUX_MODE2)	/* i2c1_sca */
+			AM33XX_PADCONF(AM335X_PIN_SPI0_CS0, PIN_INPUT, MUX_MODE2)	/* i2c1_scl */
+		>;
+	};
+};
+
+&dcan0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	pinctrl-names = "default", "sleep"; /* Apply default pinmuxing */
+	pinctrl-0 = <&dcan0_pins_s0>;
+	pinctrl-1 = <&dcan0_pins_s0_sleep>;
+	status = "okay";  /* Switch on DCAN0 */
+};
+
+&i2c0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mpu6050_pins &lps3331ap_pins>;
+};
+
+&i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c1_pins>;
+	status = "okay";
+	clock-frequency = <400000>;
+
+	rtc@68 {
+		device_type = "rtc";
+		reg = <0x68>;
+		compatible = "ds1337";
+	};
+};
+
+/* Prevent i2c2 working as we need it for DCAN0 interface */
+&i2c2 {
+	status = "disabled";
+};

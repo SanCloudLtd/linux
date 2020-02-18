@@ -1,0 +1,21 @@
+stages:
+  - build
+
+build:
+  stage: build
+  image: registry.gitlab.com/archaea/build-images/buildimg-yocto:latest
+  script:
+    - export ARCH=arm
+    - export CROSS_COMPILE=arm-linux-gnueabihf-
+    - export PATH=/opt/gcc-arm-8.3-2019.03-x86_64-arm-linux-gnueabihf/bin:$PATH
+    - make sancloud_bbe_defconfig
+    - make -j8 zImage modules am335x-sancloud-bbe.dtb am335x-sancloud-bbe-icu4.dtb am335x-sancloud-bbei-wifi.dtb
+    - mv arch/arm/boot/zImage arch/arm/boot/dts/am335x-sancloud-bbe.dtb arch/arm/boot/dts/am335x-sancloud-bbe-icu4.dtb arch/arm/boot/dts/am335x-sancloud-bbei-wifi.dtb .
+    - INSTALL_MOD_PATH=`pwd`/modules make modules_install
+    - tar czf modules.tar.gz -C modules/ .
+  artifacts:
+    paths:
+      - zImage
+      - modules.tar.gz
+      - '*.dtb'
+    expire_in: 1 month
