@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 4
-SUBLEVEL = 17
+SUBLEVEL = 20
 EXTRAVERSION =
 NAME = Kleptomaniac Octopus
 
@@ -618,7 +618,6 @@ ifeq ($(KBUILD_EXTMOD),)
 init-y		:= init/
 drivers-y	:= drivers/ sound/
 drivers-$(CONFIG_SAMPLES) += samples/
-drivers-$(CONFIG_KERNEL_HEADER_TEST) += include/
 net-y		:= net/
 libs-y		:= lib/
 core-y		:= usr/
