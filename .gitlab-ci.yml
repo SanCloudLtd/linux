@@ -3,7 +3,7 @@ stages:
 
 build:
   stage: build
-  image: registry.gitlab.com/archaea/build-images/buildimg-yocto:latest
+  image: registry.gitlab.com/sancloudltd/buildimg/gcc-arm-8.3:latest
   script:
     - export ARCH=arm
     - export CROSS_COMPILE=arm-linux-gnueabihf-
