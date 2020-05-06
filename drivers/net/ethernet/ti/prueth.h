@@ -8,8 +8,19 @@
 #ifndef __NET_TI_PRUETH_H
 #define __NET_TI_PRUETH_H
 
+#include <linux/types.h>
+#include <linux/pruss.h>
+
 #define PRUETH_NUMQUEUES	5
 
+/* PRUSS local memory map */
+#define ICSS_LOCAL_SHARED_RAM   0x00010000
+
+#define EMAC_POLL_WEIGHT	(64) /* Default NAPI poll weight */
+#define EMAC_MAX_PKTLEN		(ETH_HLEN + VLAN_HLEN + ETH_DATA_LEN)
+#define EMAC_MIN_PKTLEN		(60)
+
+#define PRUETH_NSP_TIMER_MS	(100) /* Refresh NSP counters every 100ms */
 /**
  * struct prueth_queue_desc - Queue descriptor
  * @rd_ptr:	Read pointer, points to a buffer descriptor in Shared PRU RAM.
@@ -58,6 +69,8 @@ struct prueth_queue_info {
  * @length: length of packet
  * @broadcast: this packet is a broadcast packet
  * @error: this packet has an error
+ * @lookup_success: src mac found in FDB
+ * @flood: packet is to be flooded
  */
 struct prueth_packet_info {
 	bool shadow;
@@ -65,6 +78,8 @@ struct prueth_packet_info {
 	unsigned int length;
 	bool broadcast;
 	bool error;
+	bool lookup_success;
+	bool flood;
 };
 
 /**
@@ -118,9 +133,12 @@ struct prueth_packet_info {
  * @u32 cs_error: Number of carrier sense errors
  * @sqe_test_error: Number of MAC receive errors
  *
- * The fields here are aligned here so that it's consistent
+ * Above fields are aligned so that it's consistent
  * with the memory layout in PRU DRAM, this is to facilitate easy
  * memcpy. Don't change the order of the fields.
+ *
+ * @vlan_dropped: Number of VLAN tagged packets dropped
+ * @multicast_dropped: Number of multicast packets dropped
  */
 struct port_statistics {
 	u32 tx_bcast;
@@ -155,7 +173,9 @@ struct port_statistics {
 	u32 excess_coll;
 
 	u32 rx_misalignment_frames;
-	u32 stormprev_counter;
+	u32 stormprev_counter_bc;
+	u32 stormprev_counter_mc;
+	u32 stormprev_counter_uc;
 	u32 mac_rxerror;
 	u32 sfd_error;
 	u32 def_tx;
@@ -170,6 +190,177 @@ struct port_statistics {
 
 	u32 cs_error;
 	u32 sqe_test_error;
+
+	u32 vlan_dropped;
+	u32 multicast_dropped;
 } __packed;
+
+/* In switch mode there are 3 real ports i.e. 3 mac addrs.
+ * however Linux sees only the host side port. The other 2 ports
+ * are the switch ports.
+ * In emac mode there are 2 real ports i.e. 2 mac addrs.
+ * Linux sees both the ports.
+ */
+enum prueth_port {
+	PRUETH_PORT_HOST = 0,	/* host side port */
+	PRUETH_PORT_MII0,	/* physical port MII 0 */
+	PRUETH_PORT_MII1,	/* physical port MII 1 */
+};
+
+enum prueth_mac {
+	PRUETH_MAC0 = 0,
+	PRUETH_MAC1,
+	PRUETH_NUM_MACS,
+};
+
+/* In both switch & emac modes there are 3 port queues
+ * EMAC mode:
+ *	RX packets for both MII0 & MII1 ports come on
+ *	QUEUE_HOST.
+ *	TX packets for MII0 go on QUEUE_MII0, TX packets
+ *	for MII1 go on QUEUE_MII1.
+ * Switch mode:
+ *	Host port RX packets come on QUEUE_HOST
+ *	TX packets might have to go on MII0 or MII1 or both.
+ *	MII0 TX queue is QUEUE_MII0 and MII1 TX queue is
+ *	QUEUE_MII1.
+ */
+enum prueth_port_queue_id {
+	PRUETH_PORT_QUEUE_HOST = 0,
+	PRUETH_PORT_QUEUE_MII0,
+	PRUETH_PORT_QUEUE_MII1,
+	PRUETH_PORT_QUEUE_MAX,
+};
+
+/* Each port queue has 4 queues and 1 collision queue */
+enum prueth_queue_id {
+	PRUETH_QUEUE1 = 0,
+	PRUETH_QUEUE2,
+	PRUETH_QUEUE3,
+	PRUETH_QUEUE4,
+	PRUETH_COLQUEUE,	/* collision queue */
+};
+
+/* PRUeth memory range identifiers */
+enum prueth_mem {
+	PRUETH_MEM_DRAM0 = 0,
+	PRUETH_MEM_DRAM1,
+	PRUETH_MEM_SHARED_RAM,
+	PRUETH_MEM_OCMC,
+	PRUETH_MEM_MAX,
+};
+
+/**
+ * struct prueth_private_data - PRU Ethernet private data
+ * @fw_names: firmware names to be used for PRUSS ethernet usecases
+ */
+struct prueth_private_data {
+	const char *fw_names[PRUSS_NUM_PRUS];
+};
+
+struct nsp_counter {
+	unsigned long cookie;
+	u16 credit;
+};
+
+/* data for each emac port */
+struct prueth_emac {
+	struct prueth *prueth;
+	struct net_device *ndev;
+	u8 mac_addr[6];
+	struct napi_struct napi;
+	u32 msg_enable;
+
+	int link;
+	int speed;
+	int duplex;
+
+	const char *phy_id;
+	struct device_node *phy_node;
+	int phy_if;
+	struct phy_device *phydev;
+	struct rproc *pru;
+
+	enum prueth_port port_id;
+	enum prueth_port_queue_id tx_port_queue;
+
+	enum prueth_queue_id rx_queue_start;
+	enum prueth_queue_id rx_queue_end;
+
+	enum prueth_mem dram;
+
+	int rx_irq;
+	int tx_irq;
+
+	struct prueth_queue_desc __iomem *rx_queue_descs;
+	struct prueth_queue_desc __iomem *tx_queue_descs;
+
+	struct port_statistics stats; /* stats holder when i/f is down */
+	unsigned char mc_filter_mask[ETH_ALEN];	/* for multicast filtering */
+
+	spinlock_t lock;	/* serialize access */
+	spinlock_t nsp_lock;	/* serialize access to nsp_counters */
+
+	struct nsp_counter nsp_bc;
+	struct nsp_counter nsp_mc;
+	struct nsp_counter nsp_uc;
+	bool nsp_enabled;
+
+	int offload_fwd_mark;
+};
+
+/**
+ * struct prueth - PRUeth structure
+ * @dev: device
+ * @pruss: pruss handle
+ * @pru0: rproc instance to PRU0
+ * @pru1: rproc instance to PRU1
+ * @mem: PRUSS memory resources we need to access
+ * @sram_pool: OCMC ram pool for buffers
+ * @mii_rt: regmap to mii_rt block
+ * @iep: regmap to IEP block
+ * @tbl_check_timer: HR timer for refreshing NSP counters
+ *
+ * @eth_node: node for each emac node
+ * @emac: emac data for three ports, one host and two physical
+ * @registered_netdevs: net device for each registered emac
+ *
+ * @hw_bridge_dev: pointer to hw_bridge device
+ * @fdb_tbl: pointer to FDB table struct
+ *
+ * @emac_configured: bit mask to configured ports
+ * @br_members: bit mask indicating ports that are part of the bridge
+ * @eth_type: flag indicate firmware mode (Dual emac vs Switch etc)
+ * @base_mac: random mac used as physical ID for each port of a switch
+ */
+struct prueth {
+	struct device *dev;
+	struct pruss *pruss;
+	struct rproc *pru0, *pru1;
+	struct pruss_mem_region mem[PRUETH_MEM_MAX];
+	struct gen_pool *sram_pool;
+	struct regmap *mii_rt;
+	struct regmap *iep;
+	struct hrtimer tbl_check_timer;
+
+	struct device_node *eth_node[PRUETH_NUM_MACS];
+	struct prueth_emac *emac[PRUETH_NUM_MACS];
+	struct net_device *registered_netdevs[PRUETH_NUM_MACS];
+
+	struct net_device *hw_bridge_dev;
+	struct fdb_tbl *fdb_tbl;
+
+	unsigned int eth_type;
+	u8 emac_configured;
+	u8 br_members;
+	u8 base_mac[ETH_ALEN];
+};
+
+void prueth_init_timer(struct prueth *prueth);
+void prueth_start_timer(struct prueth *prueth);
+int emac_ndo_setup_tc(struct net_device *dev, enum tc_setup_type type,
+		      void *type_data);
+
+extern const struct prueth_queue_desc queue_descs[][4];
 
 #endif /* __NET_TI_PRUETH_H */

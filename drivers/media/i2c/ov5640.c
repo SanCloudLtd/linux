@@ -549,35 +549,35 @@ static const struct ov5640_mode_info ov5640_mode_init_data = {
 static const struct ov5640_mode_info
 ov5640_mode_data[OV5640_NUM_MODES] = {
 	{OV5640_MODE_QCIF_176_144, SUBSAMPLING,
-	 176, 1896, 144, 984,
+	 176, 2844, 144, 984,
 	 ov5640_setting_QCIF_176_144,
 	 ARRAY_SIZE(ov5640_setting_QCIF_176_144)},
 	{OV5640_MODE_QVGA_320_240, SUBSAMPLING,
-	 320, 1896, 240, 984,
+	 320, 2844, 240, 984,
 	 ov5640_setting_QVGA_320_240,
 	 ARRAY_SIZE(ov5640_setting_QVGA_320_240)},
 	{OV5640_MODE_VGA_640_480, SUBSAMPLING,
-	 640, 1896, 480, 1080,
+	 640, 2844, 480, 1080,
 	 ov5640_setting_VGA_640_480,
 	 ARRAY_SIZE(ov5640_setting_VGA_640_480)},
 	{OV5640_MODE_NTSC_720_480, SUBSAMPLING,
-	 720, 1896, 480, 984,
+	 720, 2844, 480, 984,
 	 ov5640_setting_NTSC_720_480,
 	 ARRAY_SIZE(ov5640_setting_NTSC_720_480)},
 	{OV5640_MODE_PAL_720_576, SUBSAMPLING,
-	 720, 1896, 576, 984,
+	 720, 2844, 576, 984,
 	 ov5640_setting_PAL_720_576,
 	 ARRAY_SIZE(ov5640_setting_PAL_720_576)},
 	{OV5640_MODE_XGA_1024_768, SUBSAMPLING,
-	 1024, 1896, 768, 1080,
+	 1024, 2844, 768, 1080,
 	 ov5640_setting_XGA_1024_768,
 	 ARRAY_SIZE(ov5640_setting_XGA_1024_768)},
 	{OV5640_MODE_720P_1280_720, SUBSAMPLING,
-	 1280, 1892, 720, 740,
+	 1280, 2844, 720, 740,
 	 ov5640_setting_720P_1280_720,
 	 ARRAY_SIZE(ov5640_setting_720P_1280_720)},
 	{OV5640_MODE_1080P_1920_1080, SCALING,
-	 1920, 2500, 1080, 1120,
+	 1920, 2844, 1080, 1120,
 	 ov5640_setting_1080P_1920_1080,
 	 ARRAY_SIZE(ov5640_setting_1080P_1920_1080)},
 	{OV5640_MODE_QSXGA_2592_1944, SCALING,
@@ -874,7 +874,7 @@ static unsigned long ov5640_calc_sys_clk(struct ov5640_dev *sensor,
 			 * We have reached the maximum allowed PLL1 output,
 			 * increase sysdiv.
 			 */
-			if (!rate)
+			if (!_rate)
 				break;
 
 			/*
@@ -3088,8 +3088,8 @@ static int ov5640_probe(struct i2c_client *client)
 free_ctrls:
 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
 entity_cleanup:
-	mutex_destroy(&sensor->lock);
 	media_entity_cleanup(&sensor->sd.entity);
+	mutex_destroy(&sensor->lock);
 	return ret;
 }
 
@@ -3099,9 +3099,9 @@ static int ov5640_remove(struct i2c_client *client)
 	struct ov5640_dev *sensor = to_ov5640_dev(sd);
 
 	v4l2_async_unregister_subdev(&sensor->sd);
-	mutex_destroy(&sensor->lock);
 	media_entity_cleanup(&sensor->sd.entity);
 	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
+	mutex_destroy(&sensor->lock);
 
 	return 0;
 }
