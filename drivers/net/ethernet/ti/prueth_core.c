@@ -1780,7 +1780,12 @@ static int prueth_netdev_init(struct prueth *prueth,
 	/* remove unsupported modes */
 	phy_remove_link_mode(emac->phydev, ETHTOOL_LINK_MODE_10baseT_Half_BIT);
 	phy_remove_link_mode(emac->phydev, ETHTOOL_LINK_MODE_10baseT_Full_BIT);
-	phy_remove_link_mode(emac->phydev, ETHTOOL_LINK_MODE_100baseT_Half_BIT);
+
+	if (of_property_read_bool(eth_node, "ti,no-half-duplex")) {
+		phy_remove_link_mode(emac->phydev,
+				     ETHTOOL_LINK_MODE_100baseT_Half_BIT);
+	}
+
 	phy_remove_link_mode(emac->phydev, ETHTOOL_LINK_MODE_Pause_BIT);
 	phy_remove_link_mode(emac->phydev, ETHTOOL_LINK_MODE_Asym_Pause_BIT);
 
@@ -1929,15 +1934,14 @@ static int prueth_ndev_event(struct notifier_block *unused,
 	return notifier_from_errno(ret);
 }
 
-static struct notifier_block prueth_ndev_nb = {
-	.notifier_call = prueth_ndev_event,
-};
-
 static int prueth_register_notifiers(struct prueth *prueth)
 {
+	struct notifier_block *nb;
 	int ret;
 
-	ret = register_netdevice_notifier(&prueth_ndev_nb);
+	nb = &prueth->prueth_ndev_nb;
+	nb->notifier_call = prueth_ndev_event;
+	ret = register_netdevice_notifier(nb);
 	if (ret) {
 		dev_err(prueth->dev,
 			"register netdevice notifier failed ret: %d\n", ret);
@@ -1946,7 +1950,7 @@ static int prueth_register_notifiers(struct prueth *prueth)
 
 	ret = prueth_sw_register_notifiers(prueth);
 	if (ret) {
-		unregister_netdevice_notifier(&prueth_ndev_nb);
+		unregister_netdevice_notifier(nb);
 		return ret;
 	}
 
@@ -2215,7 +2219,7 @@ static int prueth_remove(struct platform_device *pdev)
 	struct prueth *prueth = platform_get_drvdata(pdev);
 	int i;
 
-	unregister_netdevice_notifier(&prueth_ndev_nb);
+	unregister_netdevice_notifier(&prueth->prueth_ndev_nb);
 	prueth_sw_unregister_notifiers(prueth);
 
 	for (i = 0; i < PRUETH_NUM_MACS; i++) {
