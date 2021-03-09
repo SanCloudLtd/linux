@@ -2477,6 +2477,7 @@ static int spi_nor_cypress_octal_dtr_enable(struct spi_nor *nor, bool enable)
 static void s28hs512t_default_init(struct spi_nor *nor)
 {
 	nor->params.octal_dtr_enable = spi_nor_cypress_octal_dtr_enable;
+	nor->params.writesize = 16;
 }
 
 static void s28hs512t_post_sfdp_fixup(struct spi_nor *nor)
@@ -4671,6 +4672,7 @@ out:
 static int spi_nor_parse_sfdp(struct spi_nor *nor,
 			      struct spi_nor_flash_parameter *params)
 {
+	const struct sfdp_parameter_header *sfdp_4bait_param_header = NULL;
 	const struct sfdp_parameter_header *param_header, *bfpt_header;
 	struct sfdp_parameter_header *param_headers = NULL;
 	struct sfdp_header header;
@@ -4752,7 +4754,13 @@ static int spi_nor_parse_sfdp(struct spi_nor *nor,
 			break;
 
 		case SFDP_4BAIT_ID:
-			err = spi_nor_parse_4bait(nor, param_header, params);
+			/*
+			 * Parse 4BAIT table at the end as this will end up
+			 * changing nor->addr_width obtained from BFPT.
+			 * But other parsers, such as SMPT parser, need to
+			 * know default/current addr_width of the flash.
+			 */
+			sfdp_4bait_param_header = param_header;
 			break;
 
 		case SFDP_PROFILE1_ID:
@@ -4774,6 +4782,12 @@ static int spi_nor_parse_sfdp(struct spi_nor *nor,
 			 */
 			err = 0;
 		}
+	}
+
+	if (sfdp_4bait_param_header &&
+	    spi_nor_parse_4bait(nor, sfdp_4bait_param_header, params)) {
+		dev_warn(dev, "Failed to parse optional parameter table: %04x\n",
+			 SFDP_PARAM_HEADER_ID(param_header));
 	}
 
 exit:
@@ -5064,11 +5078,10 @@ static void spi_nor_sfdp_init_params(struct spi_nor *nor)
 
 	memcpy(&sfdp_params, &nor->params, sizeof(sfdp_params));
 
-	if (spi_nor_parse_sfdp(nor, &sfdp_params)) {
+	if (spi_nor_parse_sfdp(nor, &nor->params)) {
+		memcpy(&nor->params, &sfdp_params, sizeof(nor->params));
 		nor->addr_width = 0;
 		nor->flags &= ~SNOR_F_4B_OPCODES;
-	} else {
-		memcpy(&nor->params, &sfdp_params, sizeof(nor->params));
 	}
 }
 
@@ -5091,6 +5104,7 @@ static void spi_nor_info_init_params(struct spi_nor *nor)
 	params->setup = spi_nor_default_setup;
 
 	/* Set SPI NOR sizes. */
+	params->writesize = 1;
 	params->size = (u64)info->sector_size * info->n_sectors;
 	params->page_size = info->page_size;
 
@@ -5628,7 +5642,7 @@ int spi_nor_scan(struct spi_nor *nor, const char *name,
 		mtd->name = dev_name(dev);
 	mtd->priv = nor;
 	mtd->type = MTD_NORFLASH;
-	mtd->writesize = 1;
+	mtd->writesize = params->writesize;
 	mtd->flags = MTD_CAP_NORFLASH;
 	mtd->size = params->size;
 	mtd->_erase = spi_nor_erase;

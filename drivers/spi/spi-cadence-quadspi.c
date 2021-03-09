@@ -1842,7 +1842,7 @@ static int cqspi_direct_read_dma(struct cqspi_flash_pdata *f_pdata,
 
 	dma_async_issue_pending(cqspi->rx_chan);
 	if (!wait_for_completion_timeout(&cqspi->rx_dma_complete,
-					 msecs_to_jiffies(len))) {
+					 msecs_to_jiffies(max_t(size_t, len, 500)))) {
 		dmaengine_terminate_sync(cqspi->rx_chan);
 		dev_err(dev, "DMA wait_for_completion_timeout\n");
 		ret = -ETIMEDOUT;
@@ -2054,9 +2054,16 @@ static void cqspi_mem_phy_op(struct spi_mem *mem,
 
 	f_pdata->phy_read_op = *op;
 
-	ret = cqspi_phy_calibrate(f_pdata, mem);
-	if (ret)
-		dev_info(&cqspi->pdev->dev, "PHY calibration failed: %d\n", ret);
+	if (cqspi_phy_check_pattern(f_pdata, mem)) {
+		dev_dbg(&cqspi->pdev->dev,
+			"PHY calibration pattern not found. Falling back to slow read speeds.\n");
+	} else {
+		ret = cqspi_phy_calibrate(f_pdata, mem);
+		if (ret)
+			dev_warn(&cqspi->pdev->dev,
+				 "PHY calibration failed: %d. Falling back to slow read speeds.\n",
+				 ret);
+	}
 }
 
 static int cqspi_of_get_flash_pdata(struct platform_device *pdev,
