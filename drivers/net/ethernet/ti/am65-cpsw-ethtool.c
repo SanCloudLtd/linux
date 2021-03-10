@@ -379,6 +379,8 @@ static const char am65_cpsw_ethtool_priv_flags[][ETH_GSTRING_LEN] = {
 	"iet-frame-preemption",
 #define AM65_CPSW_PRIV_IET_MAC_VERIFY		BIT(2)
 	"iet-mac-verify",
+#define AM65_CPSW_PRIV_CUT_THRU			BIT(3)
+	"cut-thru",
 };
 
 static int am65_cpsw_ethtool_op_begin(struct net_device *ndev)
@@ -578,13 +580,14 @@ static int am65_cpsw_nway_reset(struct net_device *ndev)
 static int am65_cpsw_get_regs_len(struct net_device *ndev)
 {
 	struct am65_cpsw_common *common = am65_ndev_to_common(ndev);
-	u32 i, regdump_len = 0;
+	u32 ale_entries, i, regdump_len = 0;
 
+	ale_entries = cpsw_ale_get_num_entries(common->ale);
 	for (i = 0; i < ARRAY_SIZE(am65_cpsw_regdump); i++) {
 		if (am65_cpsw_regdump[i].hdr.module_id ==
 		    AM65_CPSW_REGDUMP_MOD_CPSW_ALE_TBL) {
 			regdump_len += sizeof(struct am65_cpsw_regdump_hdr);
-			regdump_len += common->ale->params.ale_entries *
+			regdump_len += ale_entries *
 				       ALE_ENTRY_WORDS * sizeof(u32);
 			continue;
 		}
@@ -598,10 +601,11 @@ static void am65_cpsw_get_regs(struct net_device *ndev,
 			       struct ethtool_regs *regs, void *p)
 {
 	struct am65_cpsw_common *common = am65_ndev_to_common(ndev);
-	u32 i, j, pos, *reg = p;
+	u32 ale_entries, i, j, pos, *reg = p;
 
 	/* update CPSW IP version */
 	regs->version = AM65_CPSW_REGDUMP_VER;
+	ale_entries = cpsw_ale_get_num_entries(common->ale);
 
 	pos = 0;
 	for (i = 0; i < ARRAY_SIZE(am65_cpsw_regdump); i++) {
@@ -609,7 +613,7 @@ static void am65_cpsw_get_regs(struct net_device *ndev,
 
 		if (am65_cpsw_regdump[i].hdr.module_id ==
 		    AM65_CPSW_REGDUMP_MOD_CPSW_ALE_TBL) {
-			u32 ale_tbl_len = common->ale->params.ale_entries *
+			u32 ale_tbl_len = ale_entries *
 					  ALE_ENTRY_WORDS * sizeof(u32) +
 					  sizeof(struct am65_cpsw_regdump_hdr);
 			reg[pos++] = ale_tbl_len;
@@ -706,7 +710,7 @@ static int am65_cpsw_get_ethtool_ts_info(struct net_device *ndev,
 {
 	struct am65_cpsw_common *common = am65_ndev_to_common(ndev);
 
-	if (!IS_ENABLED(CONFIG_TI_AM65_CPTS))
+	if (!IS_ENABLED(CONFIG_TI_K3_AM65_CPTS))
 		return ethtool_op_get_ts_info(ndev, info);
 
 	info->so_timestamping =
@@ -736,6 +740,8 @@ static u32 am65_cpsw_get_ethtool_priv_flags(struct net_device *ndev)
 		priv_flags |= AM65_CPSW_PRIV_IET_FRAME_PREEMPTION;
 	if (iet->mac_verify_configured)
 		priv_flags |= AM65_CPSW_PRIV_IET_MAC_VERIFY;
+	if (port->qos.cut_thru.enable)
+		priv_flags |= AM65_CPSW_PRIV_CUT_THRU;
 
 	return priv_flags;
 }
@@ -745,11 +751,12 @@ static int am65_cpsw_set_ethtool_priv_flags(struct net_device *ndev, u32 flags)
 	struct am65_cpsw_common *common = am65_ndev_to_common(ndev);
 	struct am65_cpsw_port *port = am65_ndev_to_port(ndev);
 	struct am65_cpsw_iet *iet = &port->qos.iet;
-	int rrobin, iet_fpe, mac_verify;
+	int rrobin, iet_fpe, mac_verify, cut_thru;
 
 	rrobin = !!(flags & AM65_CPSW_PRIV_P0_RX_PTYPE_RROBIN);
 	iet_fpe = !!(flags & AM65_CPSW_PRIV_IET_FRAME_PREEMPTION);
 	mac_verify = !!(flags & AM65_CPSW_PRIV_IET_MAC_VERIFY);
+	cut_thru =  !!(flags & AM65_CPSW_PRIV_CUT_THRU);
 
 	if (common->usage_count)
 		return -EBUSY;
@@ -770,9 +777,20 @@ static int am65_cpsw_set_ethtool_priv_flags(struct net_device *ndev, u32 flags)
 		return -EINVAL;
 	}
 
+	if (cut_thru && !(common->pdata.quirks & AM64_CPSW_QUIRK_CUT_THRU)) {
+		netdev_err(ndev, "Cut-Thru not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (cut_thru && common->is_emac_mode) {
+		netdev_err(ndev, "Enable switch mode for cut-thru\n");
+		return -EINVAL;
+	}
+
 	common->pf_p0_rx_ptype_rrobin = rrobin;
 	iet->fpe_configured = iet_fpe;
 	iet->mac_verify_configured = mac_verify;
+	port->qos.cut_thru.enable = cut_thru;
 
 	return 0;
 }

@@ -665,7 +665,7 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 		bus-range = <0x0 0xf>;
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		cdns,no-bar-match-nbits = <64>;
 		vendor-id = /bits/ 16 <0x104c>;
 		device-id = /bits/ 16 <0xb00d>;
@@ -701,7 +701,7 @@
 		power-domains = <&k3_pds 239 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 239 1>;
 		clock-names = "fck";
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		max-functions = /bits/ 8 <6>;
 		max-virtual-functions = /bits/ 16 <4 4 4 4 0 0>;
 		dma-coherent;
@@ -726,7 +726,7 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 		bus-range = <0x0 0xf>;
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		cdns,no-bar-match-nbits = <64>;
 		vendor-id = /bits/ 16 <0x104c>;
 		device-id = /bits/ 16 <0xb00d>;
@@ -762,7 +762,7 @@
 		power-domains = <&k3_pds 240 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 240 1>;
 		clock-names = "fck";
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		max-functions = /bits/ 8 <6>;
 		max-virtual-functions = /bits/ 16 <4 4 4 4 0 0>;
 		dma-coherent;
@@ -784,7 +784,7 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 		bus-range = <0x0 0xf>;
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		cdns,no-bar-match-nbits = <64>;
 		vendor-id = /bits/ 16 <0x104c>;
 		device-id = /bits/ 16 <0xb00d>;
@@ -820,7 +820,7 @@
 		power-domains = <&k3_pds 241 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 241 1>;
 		clock-names = "fck";
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		max-functions = /bits/ 8 <6>;
 		max-virtual-functions = /bits/ 16 <4 4 4 4 0 0>;
 		dma-coherent;
@@ -842,7 +842,7 @@
 		#address-cells = <3>;
 		#size-cells = <2>;
 		bus-range = <0x0 0xf>;
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		cdns,no-bar-match-nbits = <64>;
 		vendor-id = /bits/ 16 <0x104c>;
 		device-id = /bits/ 16 <0xb00d>;
@@ -878,7 +878,7 @@
 		power-domains = <&k3_pds 242 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 242 1>;
 		clock-names = "fck";
-		cdns,max-outbound-regions = <16>;
+		cdns,max-outbound-regions = <32>;
 		max-functions = /bits/ 8 <6>;
 		max-virtual-functions = /bits/ 16 <4 4 4 4 0 0>;
 		dma-coherent;
@@ -1668,7 +1668,7 @@
 
 	main_r5fss0: r5fss@5c00000 {
 		compatible = "ti,j721e-r5fss";
-		lockstep-mode = <0>;
+		ti,cluster-mode = <0>;
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0x5c00000 0x00 0x5c00000 0x20000>,
@@ -1685,9 +1685,9 @@
 			ti,sci-proc-ids = <0x06 0xFF>;
 			resets = <&k3_reset 245 1>;
 			firmware-name = "j7-main-r5f0_0-fw";
-			atcm-enable = <1>;
-			btcm-enable = <1>;
-			loczrama = <1>;
+			ti,atcm-enable = <1>;
+			ti,btcm-enable = <1>;
+			ti,loczrama = <1>;
 		};
 
 		main_r5fss0_core1: r5f@5d00000 {
@@ -1700,15 +1700,15 @@
 			ti,sci-proc-ids = <0x07 0xFF>;
 			resets = <&k3_reset 246 1>;
 			firmware-name = "j7-main-r5f0_1-fw";
-			atcm-enable = <1>;
-			btcm-enable = <1>;
-			loczrama = <1>;
+			ti,atcm-enable = <1>;
+			ti,btcm-enable = <1>;
+			ti,loczrama = <1>;
 		};
 	};
 
 	main_r5fss1: r5fss@5e00000 {
 		compatible = "ti,j721e-r5fss";
-		lockstep-mode = <0>;
+		ti,cluster-mode = <0>;
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0x5e00000 0x00 0x5e00000 0x20000>,
@@ -1725,9 +1725,9 @@
 			ti,sci-proc-ids = <0x08 0xFF>;
 			resets = <&k3_reset 247 1>;
 			firmware-name = "j7-main-r5f1_0-fw";
-			atcm-enable = <1>;
-			btcm-enable = <1>;
-			loczrama = <1>;
+			ti,atcm-enable = <1>;
+			ti,btcm-enable = <1>;
+			ti,loczrama = <1>;
 		};
 
 		main_r5fss1_core1: r5f@5f00000 {
@@ -1740,9 +1740,9 @@
 			ti,sci-proc-ids = <0x09 0xFF>;
 			resets = <&k3_reset 248 1>;
 			firmware-name = "j7-main-r5f1_1-fw";
-			atcm-enable = <1>;
-			btcm-enable = <1>;
-			loczrama = <1>;
+			ti,atcm-enable = <1>;
+			ti,btcm-enable = <1>;
+			ti,loczrama = <1>;
 		};
 	};
 
