@@ -763,6 +763,7 @@ dtb-$(CONFIG_SOC_AM33XX) += \
 	am335x-pocketbeagle.dtb \
 	am335x-regor-rdk.dtb \
 	am335x-sancloud-bbe.dtb \
+	am335x-sancloud-bbe-lite.dtb \
 	am335x-sancloud-bbe-icu4.dtb \
 	am335x-sancloud-bbei-wifi.dtb \
 	am335x-shc.dtb \
