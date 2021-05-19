@@ -37,7 +37,7 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		compatible = "spidev";
+		compatible = "micron,spi-authenta";
 		symlink = "spi/0.0";
 
 		reg = <0>;
