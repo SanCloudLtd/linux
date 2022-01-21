@@ -846,7 +846,7 @@ EXPORT_SYMBOL_GPL(__sock_recv_timestamp);
 void __sock_recv_redinfo_timestamp(struct msghdr *msg, struct sock *sk,
 				   struct sk_buff *skb)
 {
-	struct scm_timestamping_internal tss;
+	struct scm_timestamping_internal tss = { 0 };
 	int empty = 1;
 	struct skb_shared_hwtstamps *red_shhwtstamps =
 		skb_redinfo_hwtstamps(skb);
@@ -856,9 +856,18 @@ void __sock_recv_redinfo_timestamp(struct msghdr *msg, struct sock *sk,
 	    ktime_to_timespec64_cond(red_shhwtstamps->hwtstamp, tss.ts + 2))
 		empty = 0;
 
-	if (!empty)
+	if (!empty) {
+		struct scm_timestamping tss1;
+		int i;
+
+		for (i = 0; i < ARRAY_SIZE(tss.ts); i++) {
+			tss1.ts[i].tv_sec = tss.ts[i].tv_sec;
+			tss1.ts[i].tv_nsec = tss.ts[i].tv_nsec;
+		}
+
 		put_cmsg(msg, SOL_SOCKET,
-			 SCM_RED_TIMESTAMPING, sizeof(tss), &tss);
+			 SCM_RED_TIMESTAMPING, sizeof(tss1), &tss1);
+	}
 }
 EXPORT_SYMBOL_GPL(__sock_recv_redinfo_timestamp);
 
@@ -1081,7 +1090,7 @@ static long sock_do_ioctl(struct net *net, struct socket *sock,
 		rtnl_unlock();
 		if (!err && copy_to_user(argp, &ifc, sizeof(struct ifconf)))
 			err = -EFAULT;
-	} else {
+	} else if (is_socket_ioctl_cmd(cmd)) {
 		struct ifreq ifr;
 		bool need_copyout;
 		if (copy_from_user(&ifr, argp, sizeof(struct ifreq)))
@@ -1090,6 +1099,8 @@ static long sock_do_ioctl(struct net *net, struct socket *sock,
 		if (!err && need_copyout)
 			if (copy_to_user(argp, &ifr, sizeof(struct ifreq)))
 				return -EFAULT;
+	} else {
+		err = -ENOTTY;
 	}
 	return err;
 }
@@ -1098,19 +1109,6 @@ static long sock_do_ioctl(struct net *net, struct socket *sock,
  *	With an ioctl, arg may well be a user mode pointer, but we don't know
  *	what to do with it - that's up to the protocol still.
  */
-
-/**
- *	get_net_ns - increment the refcount of the network namespace
- *	@ns: common namespace (net)
- *
- *	Returns the net's common namespace.
- */
-
-struct ns_common *get_net_ns(struct ns_common *ns)
-{
-	return &get_net(container_of(ns, struct net, ns))->ns;
-}
-EXPORT_SYMBOL_GPL(get_net_ns);
 
 static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
@@ -3296,6 +3294,8 @@ static int compat_ifr_data_ioctl(struct net *net, unsigned int cmd,
 	struct ifreq ifreq;
 	u32 data32;
 
+	if (!is_socket_ioctl_cmd(cmd))
+		return -ENOTTY;
 	if (copy_from_user(ifreq.ifr_name, u_ifreq32->ifr_name, IFNAMSIZ))
 		return -EFAULT;
 	if (get_user(data32, &u_ifreq32->ifr_data))

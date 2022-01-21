@@ -9,13 +9,13 @@
 #include <dt-bindings/mux/ti-serdes.h>
 
 / {
-	cmn_refclk: cmn-refclk {
+	cmn_refclk: clock-cmnrefclk {
 		#clock-cells = <0>;
 		compatible = "fixed-clock";
 		clock-frequency = <0>;
 	};
 
-	cmn_refclk1: cmn-refclk1 {
+	cmn_refclk1: clock-cmnrefclk1 {
 		#clock-cells = <0>;
 		compatible = "fixed-clock";
 		clock-frequency = <0>;
@@ -1176,13 +1176,16 @@
 		assigned-clocks = <&k3_clks 91 1>;
 		assigned-clock-parents = <&k3_clks 91 2>;
 		bus-width = <8>;
-		mmc-hs400-1_8v;
+		mmc-hs200-1_8v;
 		mmc-ddr-1_8v;
 		ti,otap-del-sel-legacy = <0xf>;
 		ti,otap-del-sel-mmc-hs = <0xf>;
 		ti,otap-del-sel-ddr52 = <0x5>;
 		ti,otap-del-sel-hs200 = <0x6>;
 		ti,otap-del-sel-hs400 = <0x0>;
+		ti,itap-del-sel-legacy = <0x10>;
+		ti,itap-del-sel-mmc-hs = <0xa>;
+		ti,itap-del-sel-ddr52 = <0x3>;
 		ti,trm-icp = <0x8>;
 		ti,strobe-sel = <0x77>;
 		dma-coherent;
@@ -1203,9 +1206,15 @@
 		ti,otap-del-sel-sdr25 = <0xf>;
 		ti,otap-del-sel-sdr50 = <0xc>;
 		ti,otap-del-sel-ddr50 = <0xc>;
+		ti,itap-del-sel-legacy = <0x0>;
+		ti,itap-del-sel-sd-hs = <0x0>;
+		ti,itap-del-sel-sdr12 = <0x0>;
+		ti,itap-del-sel-sdr25 = <0x0>;
+		ti,itap-del-sel-ddr50 = <0x2>;
 		ti,trm-icp = <0x8>;
 		ti,clkbuf-sel = <0x7>;
 		dma-coherent;
+		sdhci-caps-mask = <0x2 0x0>;
 	};
 
 	main_sdhci2: mmc@4f98000 {
@@ -1223,9 +1232,15 @@
 		ti,otap-del-sel-sdr25 = <0xf>;
 		ti,otap-del-sel-sdr50 = <0xc>;
 		ti,otap-del-sel-ddr50 = <0xc>;
+		ti,itap-del-sel-legacy = <0x0>;
+		ti,itap-del-sel-sd-hs = <0x0>;
+		ti,itap-del-sel-sdr12 = <0x0>;
+		ti,itap-del-sel-sdr25 = <0x0>;
+		ti,itap-del-sel-ddr50 = <0x2>;
 		ti,trm-icp = <0x8>;
 		ti,clkbuf-sel = <0x7>;
 		dma-coherent;
+		sdhci-caps-mask = <0x2 0x0>;
 	};
 
 	usbss0: cdns-usb@4104000 {
@@ -1363,6 +1378,23 @@
 		clock-names = "fck";
 		clocks = <&k3_clks 193 0>;
 		power-domains = <&k3_pds 193 TI_SCI_PD_EXCLUSIVE>;
+	};
+
+	d5520: video-decoder@4300000 {
+	       /* IMG D5520 driver configuration */
+	       compatible = "img,d5500-vxd";
+	       reg = <0x00 0x04300000>,
+		   <0x00 0x100000>;
+	       power-domains = <&k3_pds 144 TI_SCI_PD_EXCLUSIVE>;
+	       interrupts = <GIC_SPI 180 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	vxe384: video-encoder@4200000 {
+		compatible = "img,vxe384";
+		reg = <0x00 0x04200000>,
+		    <0x00 0x100000>;
+		power-domains = <&k3_pds 153 TI_SCI_PD_EXCLUSIVE>;
+		interrupts = <GIC_SPI 181 IRQ_TYPE_LEVEL_HIGH>;
 	};
 
 	ufs_wrapper: ufs-wrapper@4e80000 {
@@ -1903,6 +1935,9 @@
 			      <0x22400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-pru0_0-fw";
+			interrupt-parent = <&icssg0_intc>;
+			interrupts = <16 2 2>;
+			interrupt-names = "vring";
 		};
 
 		rtu0_0: rtu@4000 {
@@ -1912,6 +1947,9 @@
 			      <0x23400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-rtu0_0-fw";
+			interrupt-parent = <&icssg0_intc>;
+			interrupts = <20 4 4>;
+			interrupt-names = "vring";
 		};
 
 		tx_pru0_0: txpru@a000 {
@@ -1930,6 +1968,9 @@
 			      <0x24400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-pru0_1-fw";
+			interrupt-parent = <&icssg0_intc>;
+			interrupts = <18 3 3>;
+			interrupt-names = "vring";
 		};
 
 		rtu0_1: rtu@6000 {
@@ -1939,6 +1980,9 @@
 			      <0x23c00 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-rtu0_1-fw";
+			interrupt-parent = <&icssg0_intc>;
+			interrupts = <22 5 5>;
+			interrupt-names = "vring";
 		};
 
 		tx_pru0_1: txpru@c000 {
@@ -2057,6 +2101,9 @@
 			      <0x22400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-pru1_0-fw";
+			interrupt-parent = <&icssg1_intc>;
+			interrupts = <16 2 2>;
+			interrupt-names = "vring";
 		};
 
 		rtu1_0: rtu@4000 {
@@ -2066,6 +2113,9 @@
 			      <0x23400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-rtu1_0-fw";
+			interrupt-parent = <&icssg1_intc>;
+			interrupts = <20 4 4>;
+			interrupt-names = "vring";
 		};
 
 		tx_pru1_0: txpru@a000 {
@@ -2084,6 +2134,9 @@
 			      <0x24400 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-pru1_1-fw";
+			interrupt-parent = <&icssg1_intc>;
+			interrupts = <18 3 3>;
+			interrupt-names = "vring";
 		};
 
 		rtu1_1: rtu@6000 {
@@ -2093,6 +2146,9 @@
 			      <0x23c00 0x100>;
 			reg-names = "iram", "control", "debug";
 			firmware-name = "j7-rtu1_1-fw";
+			interrupt-parent = <&icssg1_intc>;
+			interrupts = <22 5 5>;
+			interrupt-names = "vring";
 		};
 
 		tx_pru1_1: txpru@c000 {
@@ -2145,12 +2201,12 @@
 		      <0x00 0x02708000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 156 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 156 1>, <&k3_clks 156 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 156 0>, <&k3_clks 156 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 124 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 125 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan1: can@2711000 {
@@ -2159,12 +2215,12 @@
 		      <0x00 0x02718000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 158 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 158 1>, <&k3_clks 158 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 158 0>, <&k3_clks 158 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 127 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 128 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan2: can@2721000 {
@@ -2173,12 +2229,12 @@
 		      <0x00 0x02728000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 160 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 160 1>, <&k3_clks 160 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 160 0>, <&k3_clks 160 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 130 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 131 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan3: can@2731000 {
@@ -2187,12 +2243,12 @@
 		      <0x00 0x02738000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 161 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 161 1>, <&k3_clks 161 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 161 0>, <&k3_clks 161 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 133 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 134 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan4: can@2741000 {
@@ -2201,12 +2257,12 @@
 		      <0x00 0x02748000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 162 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 162 1>, <&k3_clks 162 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 162 0>, <&k3_clks 162 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 136 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 137 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan5: can@2751000 {
@@ -2215,12 +2271,12 @@
 		      <0x00 0x02758000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 163 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 163 1>, <&k3_clks 163 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 163 0>, <&k3_clks 163 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 139 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 140 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan6: can@2761000 {
@@ -2229,12 +2285,12 @@
 		      <0x00 0x02768000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 164 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 164 1>, <&k3_clks 164 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 164 0>, <&k3_clks 164 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 142 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 143 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan7: can@2771000 {
@@ -2243,12 +2299,12 @@
 		      <0x00 0x02778000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 165 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 165 1>, <&k3_clks 165 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 165 0>, <&k3_clks 165 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 145 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 146 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan8: can@2781000 {
@@ -2257,12 +2313,12 @@
 		      <0x00 0x02788000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 166 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 166 1>, <&k3_clks 166 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 166 0>, <&k3_clks 166 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 576 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 577 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan9: can@2791000 {
@@ -2271,12 +2327,12 @@
 		      <0x00 0x02798000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 167 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 167 1>, <&k3_clks 167 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 167 0>, <&k3_clks 167 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 579 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 580 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan10: can@27a1000 {
@@ -2285,12 +2341,12 @@
 		      <0x00 0x027a8000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 168 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 168 1>, <&k3_clks 168 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 168 0>, <&k3_clks 168 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 582 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 583 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan11: can@27b1000 {
@@ -2299,12 +2355,12 @@
 		      <0x00 0x027b8000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 169 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 169 1>, <&k3_clks 169 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 169 0>, <&k3_clks 169 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 585 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 586 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan12: can@27c1000 {
@@ -2313,12 +2369,12 @@
 		      <0x00 0x027c8000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 170 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 170 1>, <&k3_clks 170 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 170 0>, <&k3_clks 170 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 588 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 589 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	main_mcan13: can@27d1000 {
@@ -2327,25 +2383,31 @@
 		      <0x00 0x027d8000 0x00 0x8000>;
 		reg-names = "m_can", "message_ram";
 		power-domains = <&k3_pds 171 TI_SCI_PD_EXCLUSIVE>;
-		clocks = <&k3_clks 171 1>, <&k3_clks 171 0>;
-		clock-names = "cclk", "hclk";
+		clocks = <&k3_clks 171 0>, <&k3_clks 171 1>;
+		clock-names = "hclk", "cclk";
 		interrupts = <GIC_SPI 591 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 592 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "int0", "int1";
-		bosch,mram-cfg = <0x0 0 0 32 0 0 1 1>;
+		bosch,mram-cfg = <0x0 128 64 64 64 64 32 32>;
 	};
 
 	ti_csi2rx0: ticsi2rx@4500000 {
 		compatible = "ti,j721e-csi2rx";
-		dmas = <&main_udmap 0x4940>;
-		dma-names = "rx0";
+		dmas = <&main_udmap 0x4940>, <&main_udmap 0x4941>, <&main_udmap 0x4942>,
+			<&main_udmap 0x4943>, <&main_udmap 0x4944>, <&main_udmap 0x4945>,
+			<&main_udmap 0x4946>, <&main_udmap 0x4947>, <&main_udmap 0x4948>,
+			<&main_udmap 0x4949>, <&main_udmap 0x494a>, <&main_udmap 0x494b>,
+			<&main_udmap 0x494c>, <&main_udmap 0x494d>, <&main_udmap 0x494e>,
+			<&main_udmap 0x494f>;
+		dma-names = "rx0", "rx1", "rx2", "rx3", "rx4", "rx5", "rx6", "rx7",
+			    "rx8", "rx9", "rx10", "rx11", "rx12", "rx13", "rx14", "rx15";
 		reg = <0x0 0x4500000 0x0 0x1000>;
 		power-domains = <&k3_pds 26 TI_SCI_PD_EXCLUSIVE>;
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
 
-		cdns_csi2rx: csi-bridge@4504000 {
+		cdns_csi2rx0: csi-bridge@4504000 {
 			compatible = "cdns,csi2rx";
 			reg = <0x0 0x4504000 0x0 0x1000>;
 			clocks = <&k3_clks 26 2>, <&k3_clks 26 0>, <&k3_clks 26 2>,
@@ -2354,6 +2416,7 @@
 				"pixel_if1_clk", "pixel_if2_clk", "pixel_if3_clk";
 			phys = <&dphy0>;
 			phy-names = "dphy";
+			power-domains = <&k3_pds 26 TI_SCI_PD_EXCLUSIVE>;
 
 			ports {
 				#address-cells = <1>;
@@ -2382,10 +2445,71 @@
 		};
 	};
 
+	ti_csi2rx1: ticsi2rx@4510000 {
+		compatible = "ti,j721e-csi2rx";
+		dmas = <&main_udmap 0x4960>, <&main_udmap 0x4961>, <&main_udmap 0x4962>,
+			<&main_udmap 0x4963>, <&main_udmap 0x4964>, <&main_udmap 0x4965>,
+			<&main_udmap 0x4966>, <&main_udmap 0x4967>, <&main_udmap 0x4968>,
+			<&main_udmap 0x4969>, <&main_udmap 0x496a>, <&main_udmap 0x496b>,
+			<&main_udmap 0x496c>, <&main_udmap 0x496d>, <&main_udmap 0x496e>,
+			<&main_udmap 0x496f>;
+		dma-names = "rx0", "rx1", "rx2", "rx3", "rx4", "rx5", "rx6", "rx7",
+			    "rx8", "rx9", "rx10", "rx11", "rx12", "rx13", "rx14", "rx15";
+		reg = <0x0 0x4510000 0x0 0x1000>;
+		power-domains = <&k3_pds 27 TI_SCI_PD_EXCLUSIVE>;
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		cdns_csi2rx1: csi-bridge@4514000 {
+			compatible = "cdns,csi2rx";
+			reg = <0x0 0x4514000 0x0 0x1000>;
+			clocks = <&k3_clks 27 2>, <&k3_clks 27 0>, <&k3_clks 27 2>,
+				<&k3_clks 27 2>, <&k3_clks 27 3>, <&k3_clks 27 3>;
+			clock-names = "sys_clk", "p_clk", "pixel_if0_clk",
+				"pixel_if1_clk", "pixel_if2_clk", "pixel_if3_clk";
+			phys = <&dphy1>;
+			phy-names = "dphy";
+			power-domains = <&k3_pds 27 TI_SCI_PD_EXCLUSIVE>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				csi1_port0: port@0 {
+					reg = <0>;
+				};
+
+				csi1_port1: port@1 {
+					reg = <1>;
+				};
+
+				csi1_port2: port@2 {
+					reg = <2>;
+				};
+
+				csi1_port3: port@3 {
+					reg = <3>;
+				};
+
+				csi1_port4: port@4 {
+					reg = <4>;
+				};
+			};
+		};
+	};
+
 	dphy0: phy@4580000 {
-		compatible = "cdns,dphy";
+		compatible = "ti,j721e-dphy", "cdns,dphy";
 		reg = <0x0 0x4580000 0x0 0x1100>;
 		#phy-cells = <0>;
 		power-domains = <&k3_pds 147 TI_SCI_PD_EXCLUSIVE>;
+	};
+
+	dphy1: phy@4590000 {
+		compatible = "ti,j721e-dphy", "cdns,dphy";
+		reg = <0x0 0x4590000 0x0 0x1100>;
+		#phy-cells = <0>;
+		power-domains = <&k3_pds 148 TI_SCI_PD_EXCLUSIVE>;
 	};
 };

@@ -178,51 +178,6 @@ static const unsigned long goodix_irq_flags[] = {
 	IRQ_TYPE_LEVEL_HIGH,
 };
 
-/*
- * Those tablets have their coordinates origin at the bottom right
- * of the tablet, as if rotated 180 degrees
- */
-static const struct dmi_system_id rotated_screen[] = {
-#if defined(CONFIG_DMI) && defined(CONFIG_X86)
-	{
-		.ident = "Teclast X89",
-		.matches = {
-			/* tPAD is too generic, also match on bios date */
-			DMI_MATCH(DMI_BOARD_VENDOR, "TECLAST"),
-			DMI_MATCH(DMI_BOARD_NAME, "tPAD"),
-			DMI_MATCH(DMI_BIOS_DATE, "12/19/2014"),
-		},
-	},
-	{
-		.ident = "Teclast X98 Pro",
-		.matches = {
-			/*
-			 * Only match BIOS date, because the manufacturers
-			 * BIOS does not report the board name at all
-			 * (sometimes)...
-			 */
-			DMI_MATCH(DMI_BOARD_VENDOR, "TECLAST"),
-			DMI_MATCH(DMI_BIOS_DATE, "10/28/2015"),
-		},
-	},
-	{
-		.ident = "WinBook TW100",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "WinBook"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "TW100")
-		}
-	},
-	{
-		.ident = "WinBook TW700",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "WinBook"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "TW700")
-		},
-	},
-#endif
-	{}
-};
-
 static const struct dmi_system_id nine_bytes_report[] = {
 #if defined(CONFIG_DMI) && defined(CONFIG_X86)
 	{
@@ -720,30 +675,29 @@ static int goodix_reset(struct goodix_ts_data *ts)
 {
 	int error;
 
-	/* begin select I2C slave addr */
-	error = gpiod_direction_output(ts->gpiod_rst, 0);
-	if (error)
-		return error;
-
 	msleep(20);				/* T2: > 10ms */
 
 	/* HIGH: 0x28/0x29, LOW: 0xBA/0xBB */
+#ifdef ACPI_GPIO_SUPPORT
 	error = goodix_irq_direction_output(ts, ts->client->addr == 0x14);
 	if (error)
 		return error;
+#else
+	if (ts->irq_pin_access_method == IRQ_PIN_ACCESS_ACPI_GPIO)
+		/*
+		 * The IRQ pin triggers on a falling edge, so its gets marked
+		 * as active-low, manually invert the value.
+		 */
+		gpiod_set_value_cansleep(ts->gpiod_int, ts->client->addr != 0x14);
+	else
+		gpiod_set_value_cansleep(ts->gpiod_int, ts->client->addr == 0x14);
+#endif
 
 	usleep_range(100, 2000);		/* T3: > 100us */
 
-	error = gpiod_direction_output(ts->gpiod_rst, 1);
-	if (error)
-		return error;
+	gpiod_set_value_cansleep(ts->gpiod_rst, 1);
 
 	usleep_range(6000, 10000);		/* T4: > 5ms */
-
-	/* end select I2C slave addr */
-	error = gpiod_direction_input(ts->gpiod_rst);
-	if (error)
-		return error;
 
 	error = goodix_int_sync(ts);
 	if (error)
@@ -906,7 +860,8 @@ static int goodix_get_gpio_config(struct goodix_ts_data *ts)
 
 retry_get_irq_gpio:
 	/* Get the interrupt GPIO pin number */
-	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_INT_NAME, GPIOD_IN);
+	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_INT_NAME,
+					GPIOD_OUT_LOW);
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
@@ -923,7 +878,8 @@ retry_get_irq_gpio:
 	ts->gpiod_int = gpiod;
 
 	/* Get the reset line GPIO pin number */
-	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_RST_NAME, GPIOD_IN);
+	gpiod = devm_gpiod_get_optional(dev, GOODIX_GPIO_RST_NAME,
+					GPIOD_OUT_LOW);
 	if (IS_ERR(gpiod)) {
 		error = PTR_ERR(gpiod);
 		if (error != -EPROBE_DEFER)
@@ -1119,13 +1075,6 @@ static int goodix_configure_dev(struct goodix_ts_data *ts)
 				  ABS_MT_POSITION_X, ts->prop.max_x);
 		input_abs_set_max(ts->input_dev,
 				  ABS_MT_POSITION_Y, ts->prop.max_y);
-	}
-
-	if (dmi_check_system(rotated_screen)) {
-		ts->prop.invert_x = true;
-		ts->prop.invert_y = true;
-		dev_dbg(&ts->client->dev,
-			"Applying '180 degrees rotated screen' quirk\n");
 	}
 
 	if (dmi_check_system(nine_bytes_report)) {
