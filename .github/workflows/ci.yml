@@ -1,0 +1,37 @@
+# Copyright (C) 2022 SanCloud Ltd
+# SPDX-License-Identifier: GPL-2.0-only
+
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/sancloudltd/iot-crossdev:dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Configure kernel
+        run: |
+          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          make sancloud_defconfig
+
+      - name: Build DTBs
+        run: |
+          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          make am335x-sancloud-bbe.dtb \
+               am335x-sancloud-bbe-lite.dtb \
+               am335x-sancloud-bbe-extended-wifi.dtb
+
+      - name: Build zImage
+        run: |
+          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          make -j4 zImage
+
+      - name: Build modules
+        run: |
+          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          make -j4 modules
