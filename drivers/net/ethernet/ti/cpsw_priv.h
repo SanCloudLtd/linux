@@ -381,8 +381,8 @@ struct cpsw_priv {
 	u32 emac_port;
 	struct cpsw_common *cpsw;
 	int offload_fwd_mark;
-	u32 tx_packet_min;
 	u8 port_state[3];
+	u32 tx_packet_min;
 };
 
 #define ndev_to_cpsw(ndev) (((struct cpsw_priv *)netdev_priv(ndev))->cpsw)
