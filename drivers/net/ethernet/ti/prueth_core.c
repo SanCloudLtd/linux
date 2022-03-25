@@ -1715,8 +1715,10 @@ static int emac_ndo_stop(struct net_device *ndev)
 
 	/* save and lre stats */
 	emac_get_stats(emac, &emac->stats);
-	if (PRUETH_IS_LRE(prueth) && !prueth->emac_configured)
+	if (PRUETH_IS_LRE(prueth) && !prueth->emac_configured) {
 		prueth_lre_get_stats(prueth, prueth->lre_stats);
+		prueth_lre_cleanup(prueth);
+	}
 
 	/* free table memory of the switch */
 	if (PRUETH_IS_SWITCH(emac->prueth))
@@ -2842,8 +2844,10 @@ static int prueth_netdev_init(struct prueth *prueth,
 
 	ndev->netdev_ops = &emac_netdev_ops;
 	ndev->ethtool_ops = &emac_ethtool_ops;
+#if IS_ENABLED(CONFIG_HSR)
 	if (prueth->support_lre)
 		ndev->lredev_ops = &prueth_lredev_ops;
+#endif
 
 	/* for HSR/PRP */
 	if (prueth->support_lre && emac->port_id == PRUETH_PORT_MII0) {
