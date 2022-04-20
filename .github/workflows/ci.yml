@@ -16,22 +16,22 @@ jobs:
 
       - name: Configure kernel
         run: |
-          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          . /opt/toolchain/setenv
           make sancloud_defconfig
 
       - name: Build DTBs
         run: |
-          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          . /opt/toolchain/setenv
           make am335x-sancloud-bbe.dtb \
                am335x-sancloud-bbe-lite.dtb \
                am335x-sancloud-bbe-extended-wifi.dtb
 
       - name: Build zImage
         run: |
-          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          . /opt/toolchain/setenv
           make -j4 zImage
 
       - name: Build modules
         run: |
-          . /opt/armv7-eabihf--glibc--stable-2020.08-1/setenv
+          . /opt/toolchain/setenv
           make -j4 modules
