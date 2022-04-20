@@ -162,6 +162,7 @@ static const struct goodix_chip_id goodix_chip_ids[] = {
 	{ .id = "911", .data = &gt911_chip_data },
 	{ .id = "9271", .data = &gt911_chip_data },
 	{ .id = "9110", .data = &gt911_chip_data },
+	{ .id = "9111", .data = &gt911_chip_data },
 	{ .id = "927", .data = &gt911_chip_data },
 	{ .id = "928", .data = &gt911_chip_data },
 
@@ -1369,6 +1370,13 @@ static SIMPLE_DEV_PM_OPS(goodix_pm_ops, goodix_suspend, goodix_resume);
 
 static const struct i2c_device_id goodix_ts_id[] = {
 	{ "GDIX1001:00", 0 },
+	{ "gt911", 0 },
+	{ "gt9110", 0 },
+	{ "gt912", 0 },
+	{ "gt927", 0 },
+	{ "gt9271", 0 },
+	{ "gt928", 0 },
+	{ "gt967", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, goodix_ts_id);
