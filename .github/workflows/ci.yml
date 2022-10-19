@@ -9,7 +9,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/sancloudltd/iot-crossdev:dev
+      image: quay.io/sancloudltd/iot-arm-build
     steps:
       - name: Checkout
         uses: actions/checkout@v2
