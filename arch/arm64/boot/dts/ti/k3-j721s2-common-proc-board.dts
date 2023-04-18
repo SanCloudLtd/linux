@@ -576,6 +576,20 @@
 	};
 };
 
+&tscadc0 {
+	status = "okay";
+	adc {
+		ti,adc-channels = <0 1 2 3 4 5 6 7>;
+	};
+};
+
+&tscadc1 {
+	status = "okay";
+	adc {
+		ti,adc-channels = <0 1 2 3 4 5 6 7>;
+	};
+};
+
 &mcu_mcan0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_mcan0_pins_default>;
@@ -798,4 +812,21 @@
 
 &csi1_port4 {
 	status = "disabled";
+};
+
+&wkup_i2c0 {
+	status = "okay";
+	tps6594x: tps6594x@48 {
+		compatible = "ti,tps6594x";
+		reg = <0x48>;
+		ti,system-power-controller;
+
+		rtc {
+			compatible = "ti,tps6594x-rtc";
+		};
+
+		gpio {
+			compatible = "ti,tps6594x-gpio";
+		};
+	};
 };
