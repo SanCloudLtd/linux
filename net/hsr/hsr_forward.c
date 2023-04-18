@@ -244,6 +244,7 @@ static struct sk_buff *prp_fill_rct(struct sk_buff *skb,
 	set_prp_LSDU_size(trailer, lsdu_size);
 	trailer->sequence_nr = htons(frame->sequence_nr);
 	trailer->PRP_suffix = htons(ETH_P_PRP);
+	skb->protocol = eth_hdr(skb)->h_proto;
 
 	return skb;
 }
@@ -300,6 +301,7 @@ static struct sk_buff *hsr_fill_tag(struct sk_buff *skb,
 	hsr_ethhdr->hsr_tag.encap_proto = hsr_ethhdr->ethhdr.h_proto;
 	hsr_ethhdr->ethhdr.h_proto = htons(proto_version ?
 			ETH_P_HSR : ETH_P_PRP);
+	skb->protocol = hsr_ethhdr->ethhdr.h_proto;
 
 	return skb;
 }
@@ -423,7 +425,7 @@ static void hsr_deliver_master(struct sk_buff *skb, struct hsr_node *node_src,
 	struct hsr_priv *hsr = port->hsr;
 	struct net_device *dev = port->dev;
 	bool was_multicast_frame;
-	int res;
+	int res, recv_len;
 
 	was_multicast_frame = (skb->pkt_type == PACKET_MULTICAST);
 	/* For LRE offloaded case, assume same MAC address is on both
@@ -433,12 +435,13 @@ static void hsr_deliver_master(struct sk_buff *skb, struct hsr_node *node_src,
 	if (!port->hsr->rx_offloaded)
 		hsr_addr_subst_source(node_src, skb);
 	skb_pull(skb, ETH_HLEN);
+	recv_len = skb->len;
 	res = netif_rx(skb);
 	if (res == NET_RX_DROP) {
 		dev->stats.rx_dropped++;
 	} else {
 		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += skb->len;
+		dev->stats.rx_bytes += recv_len;
 		if (was_multicast_frame)
 			dev->stats.multicast++;
 		INC_CNT_TX_C(hsr);
@@ -654,7 +657,6 @@ static void handle_std_frame(struct sk_buff *skb,
 {
 	struct hsr_port *port = frame->port_rcv;
 	struct hsr_priv *hsr = port->hsr;
-	unsigned long irqflags;
 
 	frame->skb_hsr = NULL;
 	frame->skb_prp = NULL;
@@ -668,10 +670,9 @@ static void handle_std_frame(struct sk_buff *skb,
 			frame->sequence_nr = REDINFO_SEQNR(skb);
 		} else {
 			/* Sequence nr for the master node */
-			spin_lock_irqsave(&hsr->seqnr_lock, irqflags);
+			lockdep_assert_held(&hsr->seqnr_lock);
 			frame->sequence_nr = hsr->sequence_nr;
 			hsr->sequence_nr++;
-			spin_unlock_irqrestore(&hsr->seqnr_lock, irqflags);
 		}
 	}
 }
@@ -679,7 +680,11 @@ static void handle_std_frame(struct sk_buff *skb,
 int hsr_fill_frame_info(__be16 proto, struct sk_buff *skb,
 			struct hsr_frame_info *frame)
 {
-	if (proto == htons(ETH_P_PRP) ||
+	struct hsr_port *port = frame->port_rcv;
+	struct hsr_priv *hsr = port->hsr;
+
+	/* HSRv0 supervisory frames double as a tag so treat them as tagged. */
+	if ((!hsr->prot_version && proto == htons(ETH_P_PRP)) ||
 	    proto == htons(ETH_P_HSR)) {
 		/* Check if skb contains hsr_ethhdr */
 		if (skb->mac_len < sizeof(struct hsr_ethhdr))
@@ -788,6 +793,7 @@ void hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 {
 	struct hsr_frame_info frame;
 
+	rcu_read_lock();
 	if (fill_frame_info(&frame, skb, port) < 0)
 		goto out_drop;
 
@@ -803,6 +809,7 @@ void hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 		hsr_register_frame_in(frame.node_src, port,
 				      frame.sequence_nr);
 	hsr_forward_do(&frame);
+	rcu_read_unlock();
 	/* Gets called for ingress frames as well as egress from master port.
 	 * So check and increment stats for master port only here.
 	 */
@@ -818,6 +825,7 @@ void hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 
 out_drop:
 	INC_CNT_RX_ERROR_AB(port->type, port->hsr);
+	rcu_read_unlock();
 	port->dev->stats.tx_dropped++;
 	kfree_skb(skb);
 }
