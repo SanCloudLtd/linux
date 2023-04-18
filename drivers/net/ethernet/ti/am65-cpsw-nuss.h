@@ -11,7 +11,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
-#include <linux/phy.h>
+#include <linux/phylink.h>
 #include <linux/platform_device.h>
 #include <linux/soc/ti/k3-ringacc.h>
 #include <net/devlink.h>
@@ -31,13 +31,14 @@ struct am65_cpsw_slave_data {
 	bool				mac_only;
 	struct cpsw_sl			*mac_sl;
 	struct device_node		*phy_node;
-	struct phy_device		*phy;
 	phy_interface_t			phy_if;
 	struct phy			*ifphy;
 	bool				rx_pause;
 	bool				tx_pause;
 	u8				mac_addr[ETH_ALEN];
 	int				port_vlan;
+	struct phylink			*phylink;
+	struct phylink_config		phylink_config;
 };
 
 struct am65_cpsw_port {
@@ -46,6 +47,7 @@ struct am65_cpsw_port {
 	const char			*name;
 	u32				port_id;
 	void __iomem			*port_base;
+	void __iomem			*sgmii_base;
 	void __iomem			*stat_base;
 	void __iomem			*fetch_ram_base;
 	bool				disabled;
@@ -93,6 +95,7 @@ struct am65_cpsw_rx_chn {
 
 struct am65_cpsw_pdata {
 	u32	quirks;
+	u64	extra_modes;
 	enum k3_ring_mode fdqring_mode;
 	const char	*ale_dev_id;
 };
@@ -198,8 +201,24 @@ int am65_cpsw_nuss_update_tx_chns(struct am65_cpsw_common *common, int num_tx);
 
 bool am65_cpsw_port_dev_check(const struct net_device *dev);
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port);
 int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common);
 void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common);
+#else
+static inline int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port)
+{
+	return 0;
+}
+
+static inline int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common)
+{
+	return 0;
+}
+
+static inline void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common)
+{
+}
+#endif
 
 #endif /* AM65_CPSW_NUSS_H_ */
