@@ -23,9 +23,9 @@ bool hsr_invalid_dan_ingress_frame(__be16 protocol)
 
 static rx_handler_result_t hsr_handle_frame(struct sk_buff **pskb)
 {
-	struct hsr_priv *hsr = NULL;
 	struct sk_buff *skb = *pskb;
 	struct hsr_port *port;
+	struct hsr_priv *hsr;
 	__be16 protocol;
 
 	/* Packets from dev_loopback_xmit() do not have L2 header, bail out */
@@ -44,7 +44,6 @@ static rx_handler_result_t hsr_handle_frame(struct sk_buff **pskb)
 
 	if (hsr_addr_is_self(port->hsr, eth_hdr(skb)->h_source)) {
 		/* Directly kill frames sent by ourselves */
-		INC_CNT_RX_ERROR_AB(port->type, port->hsr);
 		kfree_skb(skb);
 		goto finish_consume;
 	}
@@ -67,15 +66,12 @@ static rx_handler_result_t hsr_handle_frame(struct sk_buff **pskb)
 		skb_set_network_header(skb, ETH_HLEN + HSR_HLEN);
 	skb_reset_mac_len(skb);
 
-	INC_CNT_RX_AB(port->type, hsr);
 	hsr_forward_skb(skb, port);
 
 finish_consume:
 	return RX_HANDLER_CONSUMED;
 
 finish_pass:
-	if (hsr)
-		INC_CNT_RX_ERROR_AB(port->type, hsr);
 	return RX_HANDLER_PASS;
 }
 
@@ -138,7 +134,7 @@ static int hsr_portdev_setup(struct hsr_priv *hsr, struct net_device *dev,
 	/* Don't use promiscuous mode for offload since L2 frame forward
 	 * happens at the offloaded hardware.
 	 */
-	if (!port->hsr->rx_offloaded) {
+	if (!port->hsr->fwd_offloaded) {
 		res = dev_set_promiscuity(dev, 1);
 		if (res)
 			return res;
@@ -161,7 +157,7 @@ static int hsr_portdev_setup(struct hsr_priv *hsr, struct net_device *dev,
 fail_rx_handler:
 	netdev_upper_dev_unlink(dev, hsr_dev);
 fail_upper_dev_link:
-	if (!port->hsr->rx_offloaded)
+	if (!port->hsr->fwd_offloaded)
 		dev_set_promiscuity(dev, -1);
 
 	return res;
@@ -224,7 +220,8 @@ void hsr_del_port(struct hsr_port *port)
 		netdev_update_features(master->dev);
 		dev_set_mtu(master->dev, hsr_get_max_mtu(hsr));
 		netdev_rx_handler_unregister(port->dev);
-		dev_set_promiscuity(port->dev, -1);
+		if (!port->hsr->fwd_offloaded)
+			dev_set_promiscuity(port->dev, -1);
 		netdev_upper_dev_unlink(port->dev, master->dev);
 	}
 
