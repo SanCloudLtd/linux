@@ -2,7 +2,7 @@
 /*
  * Wave5 series multi-standard codec IP - basic types
  *
- * Copyright (C) 2021 CHIPS&MEDIA INC
+ * Copyright (C) 2021-2023 CHIPS&MEDIA INC
  */
 #ifndef __VPU_DRV_H__
 #define __VPU_DRV_H__
@@ -20,9 +20,15 @@
 #define VPU_BUF_SYNC_TO_DEVICE 0
 #define VPU_BUF_SYNC_FROM_DEVICE 1
 
-struct vpu_buffer {
+struct vpu_src_buffer {
+	struct v4l2_m2m_buffer	v4l2_m2m_buf;
+	struct list_head	list;
+	bool			consumed;
+};
+
+struct vpu_dst_buffer {
 	struct v4l2_m2m_buffer v4l2_m2m_buf;
-	bool                   consumed;
+	bool                   display;
 };
 
 enum vpu_fmt_type {
@@ -32,10 +38,7 @@ enum vpu_fmt_type {
 
 struct vpu_format {
 	unsigned int v4l2_pix_fmt;
-	unsigned int max_width;
-	unsigned int min_width;
-	unsigned int max_height;
-	unsigned int min_height;
+	const struct v4l2_frmsize_stepwise *v4l2_frmsize;
 };
 
 static inline struct vpu_instance *wave5_to_vpu_inst(struct v4l2_fh *vfh)
@@ -48,9 +51,14 @@ static inline struct vpu_instance *wave5_ctrl_to_vpu_inst(struct v4l2_ctrl *vctr
 	return container_of(vctrl->handler, struct vpu_instance, v4l2_ctrl_hdl);
 }
 
-static inline struct vpu_buffer *wave5_to_vpu_buf(struct vb2_v4l2_buffer *vbuf)
+static inline struct vpu_src_buffer *wave5_to_vpu_src_buf(struct vb2_v4l2_buffer *vbuf)
 {
-	return container_of(vbuf, struct vpu_buffer, v4l2_m2m_buf.vb);
+	return container_of(vbuf, struct vpu_src_buffer, v4l2_m2m_buf.vb);
+}
+
+static inline struct vpu_dst_buffer *wave5_to_vpu_dst_buf(struct vb2_v4l2_buffer *vbuf)
+{
+	return container_of(vbuf, struct vpu_dst_buffer, v4l2_m2m_buf.vb);
 }
 
 int wave5_vpu_wait_interrupt(struct vpu_instance *inst, unsigned int timeout);

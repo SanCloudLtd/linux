@@ -19,7 +19,6 @@
 #include <linux/mux/consumer.h>
 #include <linux/mux/driver.h>
 #include <linux/of.h>
-#include <linux/of_platform.h>
 #include <linux/slab.h>
 
 /*
@@ -45,7 +44,6 @@ struct mux_state {
 
 static struct class mux_class = {
 	.name = "mux",
-	.owner = THIS_MODULE,
 };
 
 static DEFINE_IDA(mux_ida);
@@ -216,6 +214,35 @@ void mux_chip_free(struct mux_chip *mux_chip)
 	put_device(&mux_chip->dev);
 }
 EXPORT_SYMBOL_GPL(mux_chip_free);
+
+/**
+ * mux_chip_resume() - restores the mux-chip state
+ * @mux_chip: The mux-chip to resume.
+ *
+ * Restores the mux-chip state.
+ *
+ * Return: Zero on success or a negative errno on error.
+ */
+int mux_chip_resume(struct mux_chip *mux_chip)
+{
+	int ret, i;
+
+	for (i = 0; i < mux_chip->controllers; ++i) {
+		struct mux_control *mux = &mux_chip->mux[i];
+
+		if (mux->cached_state == MUX_CACHE_UNKNOWN)
+			continue;
+
+		ret = mux_control_set(mux, mux->cached_state);
+		if (ret < 0) {
+			dev_err(&mux_chip->dev, "unable to restore state\n");
+			return ret;
+		}
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mux_chip_resume);
 
 static void devm_mux_chip_release(struct device *dev, void *res)
 {
@@ -699,18 +726,17 @@ static struct mux_state *mux_state_get(struct device *dev, const char *mux_name)
 	return mstate;
 }
 
-/**
+/*
  * mux_state_put() - Put away the mux-state for good.
  * @mstate: The mux-state to put away.
  *
  * mux_state_put() reverses the effects of mux_state_get().
  */
-void mux_state_put(struct mux_state *mstate)
+static void mux_state_put(struct mux_state *mstate)
 {
 	mux_control_put(mstate->mux);
 	kfree(mstate);
 }
-EXPORT_SYMBOL_GPL(mux_state_put);
 
 static void devm_mux_state_release(struct device *dev, void *res)
 {

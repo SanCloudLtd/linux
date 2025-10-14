@@ -11,21 +11,21 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/kernel.h>
+#include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
-#include <linux/of_graph.h>
-#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 #include <linux/sys_soc.h>
 
+#include <drm/drm_blend.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_fb_cma_helper.h>
-#include <drm/drm_gem_cma_helper.h>
+#include <drm/drm_fb_dma_helper.h>
+#include <drm/drm_framebuffer.h>
+#include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_of.h>
 
 #include "tidss_crtc.h"
 #include "tidss_dispc.h"
@@ -273,10 +273,22 @@ const struct dispc_features dispc_j721e_feats = {
 	.vid_order = { 1, 3, 0, 2 },
 };
 
+static const u16 tidss_am62_common1_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+	[DISPC_IRQ_EOI_OFF] =			0x24,
+	[DISPC_IRQSTATUS_RAW_OFF] =		0x28,
+	[DISPC_IRQSTATUS_OFF] =			0x2c,
+	[DISPC_IRQENABLE_SET_OFF] =		0x30,
+	[DISPC_IRQENABLE_CLR_OFF] =		0x40,
+	[DISPC_VID_IRQENABLE_OFF] =		0x44,
+	[DISPC_VID_IRQSTATUS_OFF] =		0x58,
+	[DISPC_VP_IRQENABLE_OFF] =		0x70,
+	[DISPC_VP_IRQSTATUS_OFF] =		0x7c,
+};
+
 const struct dispc_features dispc_am625_feats = {
 	.max_pclk_khz = {
 		[DISPC_VP_DPI] = 165000,
-		[DISPC_VP_OLDI] = 165000,
+		[DISPC_VP_INTERNAL] = 170000,
 	},
 
 	.scaling = {
@@ -306,7 +318,159 @@ const struct dispc_features dispc_am625_feats = {
 	.vp_name = { "vp1", "vp2" },
 	.ovr_name = { "ovr1", "ovr2" },
 	.vpclk_name =  { "vp1", "vp2" },
-	.vp_bus_type = { DISPC_VP_OLDI, DISPC_VP_DPI },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 2,
+	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+	.vid_name = { "vid", "vidl1" },
+	.vid_lite = { false, true, },
+	.vid_order = { 1, 0 },
+};
+
+const struct dispc_features dispc_am62a7_feats = {
+	/*
+	 * if the code reaches dispc_mode_valid with VP1,
+	 * it should return MODE_BAD.
+	 */
+	.max_pclk_khz = {
+		[DISPC_VP_TIED_OFF] = 0,
+		[DISPC_VP_DPI] = 165000,
+	},
+
+	.scaling = {
+		.in_width_max_5tap_rgb = 1280,
+		.in_width_max_3tap_rgb = 2560,
+		.in_width_max_5tap_yuv = 2560,
+		.in_width_max_3tap_yuv = 4096,
+		.upscale_limit = 16,
+		.downscale_limit_5tap = 4,
+		.downscale_limit_3tap = 2,
+		/*
+		 * The max supported pixel inc value is 255. The value
+		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
+		 * The maximum bpp of all formats supported by the HW
+		 * is 8. So the maximum supported xinc value is 32,
+		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
+		 */
+		.xinc_max = 32,
+	},
+
+	.subrev = DISPC_AM62A7,
+
+	.common = "common",
+	.common_regs = tidss_am65x_common_regs,
+
+	.num_vps = 2,
+	.vp_name = { "vp1", "vp2" },
+	.ovr_name = { "ovr1", "ovr2" },
+	.vpclk_name =  { "vp1", "vp2" },
+	/* VP1 of the DSS in AM62A7 SoC is tied off internally */
+	.vp_bus_type = { DISPC_VP_TIED_OFF, DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 2,
+	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+	.vid_name = { "vid", "vidl1" },
+	.vid_lite = { false, true, },
+	.vid_order = { 1, 0 },
+};
+
+const struct dispc_features dispc_am62p51_feats = {
+	.max_pclk_khz = {
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_INTERNAL] = 300000,
+	},
+
+	.scaling = {
+		.in_width_max_5tap_rgb = 1280,
+		.in_width_max_3tap_rgb = 2560,
+		.in_width_max_5tap_yuv = 2560,
+		.in_width_max_3tap_yuv = 4096,
+		.upscale_limit = 16,
+		.downscale_limit_5tap = 4,
+		.downscale_limit_3tap = 2,
+		/*
+		 * The max supported pixel inc value is 255. The value
+		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
+		 * The maximum bpp of all formats supported by the HW
+		 * is 8. So the maximum supported xinc value is 32,
+		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
+		 */
+		.xinc_max = 32,
+	},
+
+	.subrev = DISPC_AM62P51,
+
+	.common = "common",
+	.common_regs = tidss_am65x_common_regs,
+
+	.num_vps = 2,
+	.vp_name = { "vp1", "vp2" },
+	.ovr_name = { "ovr1", "ovr2" },
+	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 2,
+	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+	.vid_name = { "vid", "vidl1" },
+	.vid_lite = { false, true, },
+	.vid_order = { 1, 0 },
+};
+
+const struct dispc_features dispc_am62p52_feats = {
+	.max_pclk_khz = {
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_INTERNAL] = 300000,
+	},
+
+	.scaling = {
+		.in_width_max_5tap_rgb = 1280,
+		.in_width_max_3tap_rgb = 2560,
+		.in_width_max_5tap_yuv = 2560,
+		.in_width_max_3tap_yuv = 4096,
+		.upscale_limit = 16,
+		.downscale_limit_5tap = 4,
+		.downscale_limit_3tap = 2,
+		/*
+		 * The max supported pixel inc value is 255. The value
+		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
+		 * The maximum bpp of all formats supported by the HW
+		 * is 8. So the maximum supported xinc value is 32,
+		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
+		 */
+		.xinc_max = 32,
+	},
+
+	.subrev = DISPC_AM62P52,
+
+	.common = "common",
+	.common_regs = tidss_am65x_common_regs,
+
+	.num_vps = 2,
+	.vp_name = { "vp1", "vp2" },
+	.ovr_name = { "ovr1", "ovr2" },
+	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_INTERNAL },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -348,8 +512,6 @@ struct dispc_device {
 	bool is_enabled;
 
 	struct dss_vp_data vp_data[TIDSS_MAX_PORTS];
-
-	enum dss_oldi_modes oldi_mode;
 
 	u32 *fourccs;
 	u32 num_fourccs;
@@ -412,6 +574,16 @@ static u32 dispc_vp_read(struct dispc_device *dispc, u32 hw_videoport, u16 reg)
 	void __iomem *base = dispc->base_vp[hw_videoport];
 
 	return ioread32(base + reg);
+}
+
+u32 tidss_get_status(struct tidss_device *tidss)
+{
+	return dispc_read(tidss->dispc, DSS_SYSSTATUS);
+}
+
+void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport, u32 val)
+{
+	return dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, val);
 }
 
 /*
@@ -648,13 +820,16 @@ void dispc_k2g_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
 {
 	dispc_irq_t old_mask = dispc_k2g_read_irqenable(dispc);
 
-	/* clear the irqstatus for newly enabled irqs */
+	/* clear the irqstatus for irqs that will be enabled */
 	dispc_k2g_clear_irqstatus(dispc, (mask ^ old_mask) & mask);
 
 	dispc_k2g_vp_set_irqenable(dispc, 0, mask);
 	dispc_k2g_vid_set_irqenable(dispc, 0, mask);
 
 	dispc_write(dispc, DISPC_IRQENABLE_SET, (1 << 0) | (1 << 7));
+
+	/* clear the irqstatus for irqs that were disabled */
+	dispc_k2g_clear_irqstatus(dispc, (mask ^ old_mask) & old_mask);
 
 	/* flush posted write */
 	dispc_k2g_read_irqenable(dispc);
@@ -728,24 +903,18 @@ static
 void dispc_k3_clear_irqstatus(struct dispc_device *dispc, dispc_irq_t clearmask)
 {
 	unsigned int i;
-	u32 top_clear = 0;
 
 	for (i = 0; i < dispc->feat->num_vps; ++i) {
-		if (clearmask & DSS_IRQ_VP_MASK(i)) {
+		if (clearmask & DSS_IRQ_VP_MASK(i))
 			dispc_k3_vp_write_irqstatus(dispc, i, clearmask);
-			top_clear |= BIT(i);
-		}
 	}
 	for (i = 0; i < dispc->feat->num_planes; ++i) {
-		if (clearmask & DSS_IRQ_PLANE_MASK(i)) {
+		if (clearmask & DSS_IRQ_PLANE_MASK(i))
 			dispc_k3_vid_write_irqstatus(dispc, i, clearmask);
-			top_clear |= BIT(4 + i);
-		}
 	}
-	if (dispc->feat->subrev == DISPC_K2G)
-		return;
 
-	dispc_write(dispc, DISPC_IRQSTATUS, top_clear);
+	/* always clear the top level irqstatus */
+	dispc_write(dispc, DISPC_IRQSTATUS, dispc_read(dispc, DISPC_IRQSTATUS));
 
 	/* Flush posted writes */
 	dispc_read(dispc, DISPC_IRQSTATUS);
@@ -791,7 +960,7 @@ static void dispc_k3_set_irqenable(struct dispc_device *dispc,
 
 	old_mask = dispc_k3_read_irqenable(dispc);
 
-	/* clear the irqstatus for newly enabled irqs */
+	/* clear the irqstatus for irqs that will be enabled */
 	dispc_k3_clear_irqstatus(dispc, (old_mask ^ mask) & mask);
 
 	for (i = 0; i < dispc->feat->num_vps; ++i) {
@@ -816,6 +985,9 @@ static void dispc_k3_set_irqenable(struct dispc_device *dispc,
 	if (main_disable)
 		dispc_write(dispc, DISPC_IRQENABLE_CLR, main_disable);
 
+	/* clear the irqstatus for irqs that were disabled */
+	dispc_k3_clear_irqstatus(dispc, (old_mask ^ mask) & old_mask);
+
 	/* Flush posted writes */
 	dispc_read(dispc, DISPC_IRQENABLE_SET);
 }
@@ -825,9 +997,12 @@ dispc_irq_t dispc_read_and_clear_irqstatus(struct dispc_device *dispc)
 	switch (dispc->feat->subrev) {
 	case DISPC_K2G:
 		return dispc_k2g_read_and_clear_irqstatus(dispc);
+	case DISPC_AM625:
+	case DISPC_AM62A7:
+	case DISPC_AM62P51:
+	case DISPC_AM62P52:
 	case DISPC_AM65X:
 	case DISPC_J721E:
-	case DISPC_AM625:
 		return dispc_k3_read_and_clear_irqstatus(dispc);
 	default:
 		WARN_ON(1);
@@ -841,9 +1016,12 @@ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
 	case DISPC_K2G:
 		dispc_k2g_set_irqenable(dispc, mask);
 		break;
+	case DISPC_AM625:
+	case DISPC_AM62A7:
+	case DISPC_AM62P51:
+	case DISPC_AM62P52:
 	case DISPC_AM65X:
 	case DISPC_J721E:
-	case DISPC_AM625:
 		dispc_k3_set_irqenable(dispc, mask);
 		break;
 	default:
@@ -914,54 +1092,21 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
 
 static void dispc_oldi_tx_power(struct dispc_device *dispc, bool power)
 {
-	u32 val;
+	u32 val = power ? 0 : OLDI_PWRDN_TX;
 
 	if (WARN_ON(!dispc->oldi_io_ctrl))
 		return;
 
-	if (dispc->feat->subrev == DISPC_AM65X) {
-		val = power ? 0 : OLDI_PWRDN_TX;
-
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT0_IO_CTRL,
-				   OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT1_IO_CTRL,
-				   OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT2_IO_CTRL,
-				   OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT3_IO_CTRL,
-				   OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_CLK_IO_CTRL,
-				   OLDI_PWRDN_TX, val);
-
-	} else if (dispc->feat->subrev == DISPC_AM625) {
-		if (power) {
-			switch (dispc->oldi_mode) {
-			case OLDI_SINGLE_LINK_SINGLE_MODE:
-				/* Power down OLDI TX 1 */
-				val = OLDI1_PWRDN_TX;
-				break;
-
-			case OLDI_SINGLE_LINK_DUPLICATE_MODE:
-			case OLDI_DUAL_LINK:
-				/* No Power down */
-				val = 0;
-				break;
-
-			default:
-				/* Power down both OLDI TXes and the LVDS Bandgap */
-				val = OLDI_BG_PWRDN | OLDI0_PWRDN_TX | OLDI1_PWRDN_TX;
-				break;
-			}
-
-		} else {
-			/* Power down both OLDI TXes and the LVDS Bandgap */
-			val = OLDI_BG_PWRDN | OLDI0_PWRDN_TX | OLDI1_PWRDN_TX;
-		}
-
-		regmap_update_bits(dispc->oldi_io_ctrl, OLDI_PD_CTRL,
-				   OLDI_BG_PWRDN | OLDI0_PWRDN_TX |
-				   OLDI1_PWRDN_TX, val);
-	}
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT0_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT1_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT2_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT3_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_CLK_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
 }
 
 static void dispc_set_num_datalines(struct dispc_device *dispc,
@@ -998,8 +1143,8 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
 	int count = 0;
 
 	/*
-	 * For the moment MASTERSLAVE, and SRC bits of DISPC_VP_DSS_OLDI_CFG are
-	 * set statically to 0.
+	 * For the moment DUALMODESYNC, MASTERSLAVE, MODE, and SRC
+	 * bits of DISPC_VP_DSS_OLDI_CFG are set statically to 0.
 	 */
 
 	if (fmt->data_width == 24)
@@ -1015,30 +1160,6 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
 	oldi_cfg |= BIT(12); /* SOFTRST */
 
 	oldi_cfg |= BIT(0); /* ENABLE */
-
-	switch (dispc->oldi_mode) {
-	case OLDI_MODE_OFF:
-		oldi_cfg &= ~BIT(0); /* DISABLE */
-		break;
-
-	case OLDI_SINGLE_LINK_SINGLE_MODE:
-		/* All configuration is done for this mode.  */
-		break;
-
-	case OLDI_SINGLE_LINK_DUPLICATE_MODE:
-		oldi_cfg |= BIT(5); /* DUPLICATE MODE */
-		break;
-
-	case OLDI_DUAL_LINK:
-		oldi_cfg |= BIT(11); /* DUALMODESYNC */
-		oldi_cfg |= BIT(3); /* data-mapping field also indicates dual-link mode */
-		break;
-
-	default:
-		dev_warn(dispc->dev, "%s: Incorrect oldi mode. Returning.\n",
-			 __func__);
-		return;
-	}
 
 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, oldi_cfg);
 
@@ -1231,6 +1352,22 @@ enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc,
 
 	max_pclk = dispc->feat->max_pclk_khz[bus_type];
 
+	/*
+	 * For shared mode, with remote core driving the video port, make sure that Linux
+	 * controlled primary plane doesn't exceed video port screen size set by remote core
+	 */
+	if (dispc->tidss->shared_mode && !dispc->tidss->shared_mode_owned_vps[hw_videoport]) {
+		int vp_hdisplay = VP_REG_GET(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN, 11, 0) + 1;
+		int vp_vdisplay = VP_REG_GET(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN, 27, 16) + 1;
+
+		if (mode->hdisplay > vp_hdisplay ||
+		    mode->vdisplay > vp_vdisplay) {
+			dev_err(dispc->dev, "%dx%d exceeds VP screen size %dx%d in shared mode\n",
+				mode->hdisplay, mode->vdisplay, vp_hdisplay, vp_vdisplay);
+			return MODE_BAD;
+		}
+	}
+
 	if (WARN_ON(max_pclk == 0))
 		return MODE_BAD;
 
@@ -1279,15 +1416,18 @@ enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc,
 		return MODE_BAD_VVALUE;
 
 	if (dispc->memory_bandwidth_limit) {
-		const unsigned int bpp = 4;
-		u64 bandwidth;
+		if (!dispc->tidss->shared_mode ||
+		    dispc->tidss->shared_mode_owned_vps[hw_videoport]) {
+			const unsigned int bpp = 4;
+			u64 bandwidth;
 
-		bandwidth = 1000 * mode->clock;
-		bandwidth = bandwidth * mode->hdisplay * mode->vdisplay * bpp;
-		bandwidth = div_u64(bandwidth, mode->htotal * mode->vtotal);
+			bandwidth = 1000 * mode->clock;
+			bandwidth = bandwidth * mode->hdisplay * mode->vdisplay * bpp;
+			bandwidth = div_u64(bandwidth, mode->htotal * mode->vtotal);
 
-		if (dispc->memory_bandwidth_limit < bandwidth)
-			return MODE_BAD;
+			if (dispc->memory_bandwidth_limit < bandwidth)
+				return MODE_BAD;
+		}
 	}
 
 	return MODE_OK;
@@ -1313,7 +1453,6 @@ void dispc_vp_disable_clk(struct dispc_device *dispc, u32 hw_videoport)
  * Calculate the percentage difference between the requested pixel clock rate
  * and the effective rate resulting from calculating the clock divider value.
  */
-static
 unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate)
 {
 	int r = rate / 100, rr = real_rate / 100;
@@ -1327,17 +1466,8 @@ int dispc_vp_set_clk_rate(struct dispc_device *dispc, u32 hw_videoport,
 	int r;
 	unsigned long new_rate;
 
-	/*
-	 * For AM625 OLDI video ports, the requested pixel clock needs to take into account the
-	 * serial clock required for the serialization of DPI signals into LVDS signals. The
-	 * incoming pixel clock on the OLDI video port gets divided by 7 whenever OLDI enable bit
-	 * gets set.
-	 */
-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI &&
-	    dispc->feat->subrev == DISPC_AM625)
-		rate *= 7;
-
 	r = clk_set_rate(dispc->vp_clk[hw_videoport], rate);
+
 	if (r) {
 		dev_err(dispc->dev, "vp%d: failed to set clk rate to %lu\n",
 			hw_videoport, rate);
@@ -1399,8 +1529,11 @@ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
 		dispc_k2g_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					x, y, layer);
 		break;
-	case DISPC_AM65X:
 	case DISPC_AM625:
+	case DISPC_AM62A7:
+	case DISPC_AM62P51:
+	case DISPC_AM62P52:
+	case DISPC_AM65X:
 		dispc_am65x_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					  x, y, layer);
 		break;
@@ -2073,16 +2206,16 @@ int dispc_plane_check(struct dispc_device *dispc, u32 hw_plane,
 }
 
 static
-dma_addr_t dispc_plane_state_paddr(const struct drm_plane_state *state)
+dma_addr_t dispc_plane_state_dma_addr(const struct drm_plane_state *state)
 {
 	struct drm_framebuffer *fb = state->fb;
-	struct drm_gem_cma_object *gem;
+	struct drm_gem_dma_object *gem;
 	u32 x = state->src_x >> 16;
 	u32 y = state->src_y >> 16;
 
-	gem = drm_fb_cma_get_gem_obj(state->fb, 0);
+	gem = drm_fb_dma_get_gem_obj(state->fb, 0);
 
-	return gem->paddr + fb->offsets[0] + x * fb->format->cpp[0] +
+	return gem->dma_addr + fb->offsets[0] + x * fb->format->cpp[0] +
 		y * fb->pitches[0];
 }
 
@@ -2090,39 +2223,39 @@ static
 dma_addr_t dispc_plane_state_p_uv_addr(const struct drm_plane_state *state)
 {
 	struct drm_framebuffer *fb = state->fb;
-	struct drm_gem_cma_object *gem;
+	struct drm_gem_dma_object *gem;
 	u32 x = state->src_x >> 16;
 	u32 y = state->src_y >> 16;
 
 	if (WARN_ON(state->fb->format->num_planes != 2))
 		return 0;
 
-	gem = drm_fb_cma_get_gem_obj(fb, 1);
+	gem = drm_fb_dma_get_gem_obj(fb, 1);
 
-	return gem->paddr + fb->offsets[1] +
+	return gem->dma_addr + fb->offsets[1] +
 		(x * fb->format->cpp[1] / fb->format->hsub) +
 		(y * fb->pitches[1] / fb->format->vsub);
 }
 
-int dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
-		      const struct drm_plane_state *state,
-		      u32 hw_videoport)
+void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+		       const struct drm_plane_state *state,
+		       u32 hw_videoport)
 {
 	bool lite = dispc->feat->vid_lite[hw_plane];
 	u32 fourcc = state->fb->format->format;
 	u16 cpp = state->fb->format->cpp[0];
 	u32 fb_width = state->fb->pitches[0] / cpp;
-	dma_addr_t paddr = dispc_plane_state_paddr(state);
+	dma_addr_t dma_addr = dispc_plane_state_dma_addr(state);
 	struct dispc_scaling_params scale;
 
 	dispc_vid_calc_scaling(dispc, state, &scale, lite);
 
 	dispc_plane_set_pixel_format(dispc, hw_plane, fourcc);
 
-	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_0, paddr & 0xffffffff);
-	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_EXT_0, (u64)paddr >> 32);
-	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_1, paddr & 0xffffffff);
-	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_EXT_1, (u64)paddr >> 32);
+	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_0, dma_addr & 0xffffffff);
+	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_EXT_0, (u64)dma_addr >> 32);
+	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_1, dma_addr & 0xffffffff);
+	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_EXT_1, (u64)dma_addr >> 32);
 
 	dispc_vid_write(dispc, hw_plane, DISPC_VID_PICTURE_SIZE,
 			(scale.in_w - 1) | ((scale.in_h - 1) << 16));
@@ -2185,15 +2318,11 @@ int dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
 	else
 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 0,
 				28, 28);
-
-	return 0;
 }
 
-int dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable)
+void dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable)
 {
 	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable, 0, 0);
-
-	return 0;
 }
 
 static u32 dispc_vid_get_fifo_size(struct dispc_device *dispc, u32 hw_plane)
@@ -2322,9 +2451,12 @@ static void dispc_plane_init(struct dispc_device *dispc)
 	case DISPC_K2G:
 		dispc_k2g_plane_init(dispc);
 		break;
+	case DISPC_AM625:
+	case DISPC_AM62A7:
+	case DISPC_AM62P51:
+	case DISPC_AM62P52:
 	case DISPC_AM65X:
 	case DISPC_J721E:
-	case DISPC_AM625:
 		dispc_k3_plane_init(dispc);
 		break;
 	default:
@@ -2429,8 +2561,11 @@ static void dispc_vp_write_gamma_table(struct dispc_device *dispc,
 	case DISPC_K2G:
 		dispc_k2g_vp_write_gamma_table(dispc, hw_videoport);
 		break;
-	case DISPC_AM65X:
 	case DISPC_AM625:
+	case DISPC_AM62A7:
+	case DISPC_AM62P51:
+	case DISPC_AM62P52:
+	case DISPC_AM65X:
 		dispc_am65x_vp_write_gamma_table(dispc, hw_videoport);
 		break;
 	case DISPC_J721E:
@@ -2669,6 +2804,147 @@ static void dispc_vp_set_color_mgmt(struct dispc_device *dispc,
 		dispc_k3_vp_set_ctm(dispc, hw_videoport, ctm);
 }
 
+static int get_vp_idx_from_vp(const char *vp_name)
+{
+	u32 vp_idx;
+
+	if (!strcmp("vp1", vp_name))
+		vp_idx = 0;
+	else if (!strcmp("vp2", vp_name))
+		vp_idx = 1;
+	else if (!strcmp("vp3", vp_name))
+		vp_idx = 2;
+	else if (!strcmp("vp4", vp_name))
+		vp_idx = 3;
+	else
+		return 0;
+
+	return vp_idx;
+}
+
+static const char *get_ovr_from_vp(const char *vp_name)
+{
+	const char *ovr_name = NULL;
+
+	if (!strcmp("vp1", vp_name))
+		ovr_name = "ovr1";
+	else if (!strcmp("vp2", vp_name))
+		ovr_name = "ovr2";
+	else if (!strcmp("vp3", vp_name))
+		ovr_name = "ovr3";
+	else if (!strcmp("vp4", vp_name))
+		ovr_name = "ovr4";
+	else
+		return NULL;
+
+	return ovr_name;
+}
+
+static void dispc_shared_mode_update_bus_type(struct dispc_features *shared_mode_feat,
+					      struct dispc_device *dispc)
+{
+	u32 i, vp_idx;
+	int num_vps = shared_mode_feat->num_vps;
+	enum dispc_vp_bus_type vp_bus_type[TIDSS_MAX_PORTS];
+
+	memcpy((void *)vp_bus_type, (void *)shared_mode_feat->vp_bus_type,
+	       sizeof(vp_bus_type));
+	memset(shared_mode_feat->vp_bus_type, 0, sizeof(vp_bus_type));
+
+	for (i = 0; i < num_vps; i++) {
+		/*
+		 * Find corresponding vp bus type.
+		 */
+		vp_idx = get_vp_idx_from_vp(shared_mode_feat->vp_name[i]);
+		shared_mode_feat->vp_bus_type[i] = vp_bus_type[vp_idx];
+	}
+}
+
+static int dispc_update_shared_mode_features(struct dispc_features *shared_mode_feat,
+					     struct dispc_device *dispc)
+{
+	int r = 0, i = 0;
+
+	dev_dbg(dispc->dev, "Start updating dispc feature list for shared mode:\n");
+
+	/*
+	 * Start with a shallow copy from existing features and prune the list
+	 * as per what is actually made available to Linux
+	 */
+	memcpy((void *)shared_mode_feat, (void *)dispc->feat, sizeof(*shared_mode_feat));
+	shared_mode_feat->num_vps = device_property_string_array_count(dispc->dev,
+								       "ti,dss-shared-mode-vp");
+	shared_mode_feat->num_planes = device_property_string_array_count(dispc->dev,
+									  "ti,dss-shared-mode-planes");
+
+	r = device_property_read_string(dispc->dev, "ti,dss-shared-mode-common",
+					(const char **)&shared_mode_feat->common);
+	if (r) {
+		dev_err(dispc->dev, "failed to read shared video port name: %d\n", r);
+		return r;
+	}
+
+	memset(shared_mode_feat->vid_name, 0, sizeof(shared_mode_feat->vid_name));
+	r = device_property_read_string_array(dispc->dev, "ti,dss-shared-mode-planes",
+					      shared_mode_feat->vid_name, TIDSS_MAX_PLANES);
+	if (r < 0) {
+		dev_err(dispc->dev, "failed to read client vid layer name: %d\n", r);
+		return r;
+	}
+
+	r = device_property_read_u32_array(dispc->dev, "ti,dss-shared-mode-vp-owned",
+					   dispc->tidss->shared_mode_owned_vps,
+					   shared_mode_feat->num_vps);
+	if (r < 0) {
+		dev_err(dispc->dev, "failed to read owned vp list: %d\n", r);
+		return r;
+	}
+
+	memset(shared_mode_feat->vp_name, 0, sizeof(shared_mode_feat->vp_name));
+	r = device_property_read_string_array(dispc->dev, "ti,dss-shared-mode-vp",
+					      shared_mode_feat->vp_name, TIDSS_MAX_PORTS);
+	if (r < 0) {
+		dev_err(dispc->dev, "failed to read shared video port name: %d\n", r);
+		return r;
+	}
+
+	memset(shared_mode_feat->vid_order, 0, sizeof(shared_mode_feat->vid_order));
+	r = device_property_read_u32_array(dispc->dev, "ti,dss-shared-mode-plane-zorder",
+					   shared_mode_feat->vid_order,
+					   shared_mode_feat->num_planes);
+	if (r < 0) {
+		dev_err(dispc->dev, "failed to read vid_order array name: %d\n", r);
+		return r;
+	}
+	memcpy((void *)shared_mode_feat->vpclk_name, (void *)shared_mode_feat->vp_name,
+	       sizeof(shared_mode_feat->vpclk_name));
+	memset(shared_mode_feat->ovr_name, 0, sizeof(shared_mode_feat->ovr_name));
+
+	for (i = 0; i < shared_mode_feat->num_vps; i++) {
+		shared_mode_feat->ovr_name[i] = get_ovr_from_vp(shared_mode_feat->vp_name[i]);
+		dev_dbg(dispc->dev, "vp[%d] = %s, ovr[%d] = %s vpclk[%d] = %s vp_owned[%d] = %d\n",
+			i,  shared_mode_feat->vp_name[i], i, shared_mode_feat->ovr_name[i], i,
+			shared_mode_feat->vpclk_name[i], i, dispc->tidss->shared_mode_owned_vps[i]);
+	}
+
+	for (i = 0; i < shared_mode_feat->num_planes; i++) {
+		if (!strncmp("vidl", shared_mode_feat->vid_name[i], 4))
+			shared_mode_feat->vid_lite[i] = true;
+		dev_dbg(dispc->dev, "vid[%d] = %s, vid_order[%d] = %u vid_lite[%d] = %u\n", i,
+			shared_mode_feat->vid_name[i], i, shared_mode_feat->vid_order[i], i,
+			shared_mode_feat->vid_lite[i]);
+	}
+
+	if (!strcmp(shared_mode_feat->common, "common1"))
+		shared_mode_feat->common_regs = tidss_am62_common1_regs;
+
+	dev_dbg(dispc->dev, "common : %s\n", shared_mode_feat->common);
+	dispc_shared_mode_update_bus_type(shared_mode_feat, dispc);
+	dev_dbg(dispc->dev, "Feature list updated for shared mode\n");
+
+	return 0;
+}
+
 void dispc_vp_setup(struct dispc_device *dispc, u32 hw_videoport,
 		    const struct drm_crtc_state *state, bool newmodeset)
 {
@@ -2676,9 +2952,27 @@ void dispc_vp_setup(struct dispc_device *dispc, u32 hw_videoport,
 	dispc_vp_set_color_mgmt(dispc, hw_videoport, state, newmodeset);
 }
 
+static bool dispc_is_idle(struct dispc_device *dispc)
+{
+	return REG_GET(dispc, DSS_SYSSTATUS, 9, 9);
+}
+
+static bool dispc_owns_global_common_in_shared_mode(struct dispc_device *dispc)
+{
+	if ((!strcmp(dispc->feat->common, "common") ||
+	     !strcmp(dispc->feat->common, "common_m")) &&
+	     dispc->tidss->shared_mode)
+		return true;
+	else
+		return false;
+}
+
 int dispc_runtime_suspend(struct dispc_device *dispc)
 {
 	dev_dbg(dispc->dev, "suspend\n");
+
+	if (!dispc_is_idle(dispc))
+		dev_warn(dispc->dev, "Bad HW state: DSS not idle when suspending");
 
 	dispc->is_enabled = false;
 
@@ -2693,6 +2987,9 @@ int dispc_runtime_resume(struct dispc_device *dispc)
 
 	clk_prepare_enable(dispc->fclk);
 
+	if (!dispc_is_idle(dispc))
+		dev_warn(dispc->dev, "Bad HW state: DSS not idle when resuming");
+
 	if (REG_GET(dispc, DSS_SYSSTATUS, 0, 0) == 0)
 		dev_warn(dispc->dev, "DSS FUNC RESET not done!\n");
 
@@ -2704,7 +3001,8 @@ int dispc_runtime_resume(struct dispc_device *dispc)
 		REG_GET(dispc, DSS_SYSSTATUS, 2, 2),
 		REG_GET(dispc, DSS_SYSSTATUS, 3, 3));
 
-	if (dispc->feat->subrev == DISPC_AM65X || dispc->feat->subrev == DISPC_AM625)
+	if (dispc->feat->subrev == DISPC_AM625 ||
+	    dispc->feat->subrev == DISPC_AM65X)
 		dev_dbg(dispc->dev, "OLDI RESETDONE %d,%d,%d\n",
 			REG_GET(dispc, DSS_SYSSTATUS, 5, 5),
 			REG_GET(dispc, DSS_SYSSTATUS, 6, 6),
@@ -2732,16 +3030,9 @@ void dispc_remove(struct tidss_device *tidss)
 static int dispc_iomap_resource(struct platform_device *pdev, const char *name,
 				void __iomem **base)
 {
-	struct resource *res;
 	void __iomem *b;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, name);
-	if (!res) {
-		dev_err(&pdev->dev, "cannot get mem resource '%s'\n", name);
-		return -EINVAL;
-	}
-
-	b = devm_ioremap_resource(&pdev->dev, res);
+	b = devm_platform_ioremap_resource_byname(pdev, name);
 	if (IS_ERR(b)) {
 		dev_err(&pdev->dev, "cannot ioremap resource '%s'\n", name);
 		return PTR_ERR(b);
@@ -2781,72 +3072,146 @@ static void dispc_init_errata(struct dispc_device *dispc)
 	}
 }
 
-static void dispc_softreset(struct dispc_device *dispc)
+/*
+ * K2G display controller does not support soft reset, so we do a basic manual
+ * reset here: make sure the IRQs are masked and VPs are disabled.
+ */
+static void dispc_softreset_k2g(struct dispc_device *dispc)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&dispc->tidss->irq_lock, flags);
+	dispc_set_irqenable(dispc, 0);
+	dispc_read_and_clear_irqstatus(dispc);
+	spin_unlock_irqrestore(&dispc->tidss->irq_lock, flags);
+
+	for (unsigned int vp_idx = 0; vp_idx < dispc->feat->num_vps; ++vp_idx)
+		VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 0, 0, 0);
+}
+
+static int dispc_softreset(struct dispc_device *dispc)
 {
 	u32 val;
-	int ret = 0;
+	int ret;
+
+	if (dispc->feat->subrev == DISPC_K2G) {
+		dispc_softreset_k2g(dispc);
+		return 0;
+	}
 
 	/* Soft reset */
 	REG_FLD_MOD(dispc, DSS_SYSCONFIG, 1, 1, 1);
 	/* Wait for reset to complete */
 	ret = readl_poll_timeout(dispc->base_common + DSS_SYSSTATUS,
 				 val, val & 1, 100, 5000);
-	if (ret)
-		dev_warn(dispc->dev, "failed to reset dispc\n");
+	if (ret) {
+		dev_err(dispc->dev, "failed to reset dispc\n");
+		return ret;
+	}
+
+	return 0;
 }
 
-static void dispc_get_oldi_mode(struct dispc_device *dispc)
+static int dispc_init_hw(struct dispc_device *dispc)
 {
-	int pixel_order;
-	struct device_node *dss_ports, *oldi0_port, *oldi1_port;
+	struct device *dev = dispc->dev;
+	int ret;
 
-	dss_ports = of_get_next_child(dispc->dev->of_node, NULL);
-	oldi0_port = of_graph_get_port_by_id(dss_ports, 0);
-	oldi1_port = of_graph_get_port_by_id(dss_ports, 2);
+	ret = pm_runtime_set_active(dev);
+	if (ret) {
+		dev_err(dev, "Failed to set DSS PM to active\n");
+		return ret;
+	}
 
-	if (!oldi0_port && !oldi1_port) {
-		dispc->oldi_mode = OLDI_MODE_OFF;
-	} else if ((oldi0_port && !oldi1_port) ||
-		   (!oldi0_port && oldi1_port)) {
-		dispc->oldi_mode = OLDI_SINGLE_LINK_SINGLE_MODE;
+	ret = clk_prepare_enable(dispc->fclk);
+	if (ret) {
+		dev_err(dev, "Failed to enable DSS fclk\n");
+		goto err_runtime_suspend;
+	}
+
+	dispc->tidss->boot_enabled_vp_mask = 0;
+
+	/* HACK: If simple-framebuffer device is absent, then soft reset dispc even if it is not
+	 * idle. This is to avoid powering-off of DSS (which can happen due
+	 * to probe deferral waiting for child drivers) while DSS is active thus leading to system
+	 * hang.
+	 */
+	if (dispc_is_idle(dispc) || !dispc->tidss->simplefb_enabled) {
+		ret = dispc_softreset(dispc);
+		if (ret)
+			goto err_clk_disable;
 	} else {
-		/*
-		 * OLDI Ports found for both the OLDI TXes. The DSS is
-		 * to be configured in either Dual Link or Cloning Mode.
-		 */
-		pixel_order = drm_of_lvds_get_dual_link_pixel_order(oldi0_port,
-								    oldi1_port);
-		switch (pixel_order) {
-		case -EINVAL:
-			/*
-			 * The dual link properties were not found in at least
-			 * one of the sink nodes. Since the ports are present in
-			 * the DT, we can safely assume the required configuration
-			 * is Duplicate Modes.
-			 */
-			dispc->oldi_mode = OLDI_SINGLE_LINK_DUPLICATE_MODE;
-			break;
+		for (u32 vp_idx = 0; vp_idx < dispc->feat->num_vps; vp_idx++) {
+			bool enabled = VP_REG_GET(dispc, vp_idx,
+						  DISPC_VP_CONTROL, 0, 0);
 
-		case DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS:
-		case DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS:
-			/*
-			 * Note that the OLDI TX 0 transmits the odd set of pixels
-			 * while the OLDI TX 1 transmits the even set. This is a
-			 * fixed configuration in the IP integration and is not
-			 * changeable. These properties have been used to merely
-			 * identify if a Dual Link configuration is required.
-			 * Swapping this property in the panel port DT nodes will
-			 * not make any difference and will result in a don't
-			 * care condition.
-			 */
-			dispc->oldi_mode = OLDI_DUAL_LINK;
-			break;
+			if (!enabled)
+				continue;
 
-		default:
-			dispc->oldi_mode = OLDI_MODE_OFF;
-			break;
+			dispc->tidss->boot_enabled_vp_mask |= BIT(vp_idx);
+
+			/* Keep the VP clk enabled */
+			ret = clk_prepare_enable(dispc->vp_clk[vp_idx]);
+			if (ret) {
+				while (vp_idx--) {
+					if (!(dispc->tidss->boot_enabled_vp_mask &
+					      BIT(vp_idx)))
+						continue;
+
+					clk_disable_unprepare(dispc->vp_clk[vp_idx]);
+				}
+
+				goto err_clk_disable;
+			}
+		}
+
+		if (!dispc->tidss->boot_enabled_vp_mask) {
+			dev_warn(dev,
+				 "Bad HW state: DSS not idle but no VPs are enabled. Resetting.\n");
+			ret = dispc_softreset(dispc);
+			if (ret)
+				goto err_clk_disable;
+		} else {
+			/*
+			 * Do basic HW init here, which won't interrupt the
+			 * splash-screen.
+			 */
+
+			/* Ensure we won't get interrupts */
+			dispc_set_irqenable(dispc, 0);
+			dispc_read_and_clear_irqstatus(dispc);
 		}
 	}
+
+	if (dispc->tidss->boot_enabled_vp_mask) {
+		dev_dbg(dev,
+			"Bootloader splash-screen detected, leaving DSS active.\n");
+		pm_runtime_get_noresume(dev);
+	} else {
+		/*
+		 * No splash-screen. Disable the clock and set DSS back to suspended.
+		 */
+		clk_disable_unprepare(dispc->fclk);
+		ret = pm_runtime_set_suspended(dev);
+		if (ret) {
+			dev_err(dev, "Failed to set DSS PM to suspended\n");
+			return ret;
+		}
+	}
+
+	return 0;
+
+err_clk_disable:
+	clk_disable_unprepare(dispc->fclk);
+
+err_runtime_suspend:
+	ret = pm_runtime_set_suspended(dev);
+	if (ret) {
+		dev_err(dev, "Failed to set DSS PM to suspended\n");
+		return ret;
+	}
+
+	return ret;
 }
 
 int dispc_init(struct tidss_device *tidss)
@@ -2855,6 +3220,7 @@ int dispc_init(struct tidss_device *tidss)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct dispc_device *dispc;
 	const struct dispc_features *feat;
+	struct dispc_features *shared_mode_feat;
 	unsigned int i, num_fourccs;
 	int r = 0;
 
@@ -2867,6 +3233,8 @@ int dispc_init(struct tidss_device *tidss)
 		if (r)
 			dev_warn(dev, "cannot set DMA masks to 48-bit\n");
 	}
+
+	dma_set_max_seg_size(dev, UINT_MAX);
 
 	dispc = devm_kzalloc(dev, sizeof(*dispc), GFP_KERNEL);
 	if (!dispc)
@@ -2894,6 +3262,21 @@ int dispc_init(struct tidss_device *tidss)
 
 	dispc->num_fourccs = num_fourccs;
 
+	if (tidss->shared_mode) {
+		dev_dbg(dev, "%s : DSS is being shared with remote core\n", __func__);
+		shared_mode_feat = devm_kzalloc(dev, sizeof(*shared_mode_feat), GFP_KERNEL);
+		if (!shared_mode_feat)
+			return -ENOMEM;
+
+		r = dispc_update_shared_mode_features(shared_mode_feat, dispc);
+		if (r)
+			return r;
+
+		tidss->feat = (const struct dispc_features *)shared_mode_feat;
+		feat = tidss->feat;
+		dispc->feat = feat;
+	}
+
 	dispc_common_regmap = dispc->feat->common_regs;
 
 	r = dispc_iomap_resource(pdev, dispc->feat->common,
@@ -2907,10 +3290,6 @@ int dispc_init(struct tidss_device *tidss)
 		if (r)
 			return r;
 	}
-
-	/* K2G display controller does not support soft reset */
-	if (feat->subrev != DISPC_K2G)
-		dispc_softreset(dispc);
 
 	for (i = 0; i < dispc->feat->num_vps; i++) {
 		u32 gamma_size = dispc->feat->vp_feat.color.gamma_size;
@@ -2943,33 +3322,75 @@ int dispc_init(struct tidss_device *tidss)
 		dispc->vp_data[i].gamma_table = gamma_table;
 	}
 
-	/*
-	 * K2G and J721E DSS do not support these properties.
-	 * Furthermore, the default mode for the OLDI TXes is OFF.
-	 */
-	dispc->oldi_mode = OLDI_MODE_OFF;
-
-	if (feat->subrev == DISPC_AM65X || feat->subrev == DISPC_AM625) {
-		dispc_get_oldi_mode(dispc);
-		if (dispc->oldi_mode) {
+	if (feat->subrev == DISPC_AM65X) {
+		/*
+		 * For shared mode, Initialize the OLDI IO control only if we own
+		 * the OLDI Tx ports
+		 */
+		if (!tidss->shared_mode || tidss->shared_mode_own_oldi) {
 			r = dispc_init_am65x_oldi_io_ctrl(dev, dispc);
 			if (r)
 				return r;
 		}
 	}
 
-	dispc->fclk = devm_clk_get(dev, "fck");
-	if (IS_ERR(dispc->fclk)) {
-		dev_err(dev, "%s: Failed to get fclk: %ld\n",
-			__func__, PTR_ERR(dispc->fclk));
-		return PTR_ERR(dispc->fclk);
-	}
-	dev_dbg(dev, "DSS fclk %lu Hz\n", clk_get_rate(dispc->fclk));
+	/*
+	 * For shared mode, Initialize the hardware and clocking only if processing core running
+	 * Linux has ownership of DSS global register space
+	 */
+	if (!tidss->shared_mode || dispc_owns_global_common_in_shared_mode(dispc)) {
+		dispc->fclk = devm_clk_get(dev, "fck");
+		if (IS_ERR(dispc->fclk)) {
+			dev_err(dev, "%s: Failed to get fclk: %ld\n",
+				__func__, PTR_ERR(dispc->fclk));
+			return PTR_ERR(dispc->fclk);
+		}
+		dev_dbg(dev, "DSS fclk %lu Hz\n", clk_get_rate(dispc->fclk));
 
-	of_property_read_u32(dispc->dev->of_node, "max-memory-bandwidth",
-			     &dispc->memory_bandwidth_limit);
+		of_property_read_u32(dispc->dev->of_node, "max-memory-bandwidth",
+				     &dispc->memory_bandwidth_limit);
+
+		r = dispc_init_hw(dispc);
+		if (r)
+			return r;
+	}
 
 	tidss->dispc = dispc;
 
 	return 0;
+}
+
+void dispc_splash_fini(struct dispc_device *dispc)
+{
+	if (WARN_ON(!dispc->tidss->boot_enabled_vp_mask))
+		return;
+
+	/*
+	 * Do a reset now, to clean up the bootloader setup, as we're about to
+	 * do a modeset.
+	 */
+	dispc_softreset(dispc);
+
+	/*
+	 * Call resume manually. This will clk_prepare_enable() the fclk, and do
+	 * the common basic HW configuration.
+	 */
+	dispc_runtime_resume(dispc);
+
+	/*
+	 * Call clk_disable_unprepare() to counter the clk_prepare_enable() we
+	 * did in the dispc_check_hw_state(). The fclk will still be enabled,
+	 * as the dispc_runtime_resume() above does a clk_prepare_enable().
+	 */
+	clk_disable_unprepare(dispc->fclk);
+
+	for (u32 vp_idx = 0; vp_idx < dispc->feat->num_vps; vp_idx++) {
+		if (dispc->tidss->boot_enabled_vp_mask & BIT(vp_idx))
+			clk_disable_unprepare(dispc->vp_clk[vp_idx]);
+	}
+
+	/* counter the pm_runtime_get_noresume() */
+	pm_runtime_put_noidle(dispc->dev);
+
+	dispc->tidss->boot_enabled_vp_mask = 0;
 }

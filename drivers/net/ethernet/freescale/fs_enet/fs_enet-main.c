@@ -35,10 +35,9 @@
 #include <linux/fs.h>
 #include <linux/platform_device.h>
 #include <linux/phy.h>
+#include <linux/property.h>
 #include <linux/of.h>
 #include <linux/of_mdio.h>
-#include <linux/of_platform.h>
-#include <linux/of_gpio.h>
 #include <linux/of_net.h>
 #include <linux/pgtable.h>
 
@@ -318,14 +317,12 @@ fs_enet_interrupt(int irq, void *dev_id)
 {
 	struct net_device *dev = dev_id;
 	struct fs_enet_private *fep;
-	const struct fs_platform_info *fpi;
 	u32 int_events;
 	u32 int_clr_events;
 	int nr, napi_ok;
 	int handled;
 
 	fep = netdev_priv(dev);
-	fpi = fep->fpi;
 
 	nr = 0;
 	while ((int_events = (*fep->ops->get_int_events)(dev)) != 0) {
@@ -791,7 +788,7 @@ static int fs_enet_close(struct net_device *dev)
 static void fs_get_drvinfo(struct net_device *dev,
 			    struct ethtool_drvinfo *info)
 {
-	strlcpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
+	strscpy(info->driver, DRV_MODULE_NAME, sizeof(info->driver));
 }
 
 static int fs_get_regs_len(struct net_device *dev)
@@ -883,15 +880,12 @@ static const struct ethtool_ops fs_ethtool_ops = {
 	.set_tunable = fs_set_tunable,
 };
 
-extern int fs_mii_connect(struct net_device *dev);
-extern void fs_mii_disconnect(struct net_device *dev);
-
 /**************************************************************************************/
 
 #ifdef CONFIG_FS_ENET_HAS_FEC
-#define IS_FEC(match) ((match)->data == &fs_fec_ops)
+#define IS_FEC(ops) ((ops) == &fs_fec_ops)
 #else
-#define IS_FEC(match) 0
+#define IS_FEC(ops) 0
 #endif
 
 static const struct net_device_ops fs_enet_netdev_ops = {
@@ -900,7 +894,7 @@ static const struct net_device_ops fs_enet_netdev_ops = {
 	.ndo_start_xmit		= fs_enet_start_xmit,
 	.ndo_tx_timeout		= fs_timeout,
 	.ndo_set_rx_mode	= fs_set_multicast_list,
-	.ndo_do_ioctl		= phy_do_ioctl_running,
+	.ndo_eth_ioctl		= phy_do_ioctl_running,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 #ifdef CONFIG_NET_POLL_CONTROLLER
@@ -908,29 +902,27 @@ static const struct net_device_ops fs_enet_netdev_ops = {
 #endif
 };
 
-static const struct of_device_id fs_enet_match[];
 static int fs_enet_probe(struct platform_device *ofdev)
 {
-	const struct of_device_id *match;
+	const struct fs_ops *ops;
 	struct net_device *ndev;
 	struct fs_enet_private *fep;
 	struct fs_platform_info *fpi;
 	const u32 *data;
 	struct clk *clk;
 	int err;
-	const u8 *mac_addr;
 	const char *phy_connection_type;
 	int privsize, len, ret = -ENODEV;
 
-	match = of_match_device(fs_enet_match, &ofdev->dev);
-	if (!match)
+	ops = device_get_match_data(&ofdev->dev);
+	if (!ops)
 		return -EINVAL;
 
 	fpi = kzalloc(sizeof(*fpi), GFP_KERNEL);
 	if (!fpi)
 		return -ENOMEM;
 
-	if (!IS_FEC(match)) {
+	if (!IS_FEC(ops)) {
 		data = of_get_property(ofdev->dev.of_node, "fsl,cpm-command", &len);
 		if (!data || len != 4)
 			goto out_free_fpi;
@@ -992,7 +984,7 @@ static int fs_enet_probe(struct platform_device *ofdev)
 	fep->dev = &ofdev->dev;
 	fep->ndev = ndev;
 	fep->fpi = fpi;
-	fep->ops = match->data;
+	fep->ops = ops;
 
 	ret = fep->ops->setup_data(ndev);
 	if (ret)
@@ -1006,9 +998,7 @@ static int fs_enet_probe(struct platform_device *ofdev)
 	spin_lock_init(&fep->lock);
 	spin_lock_init(&fep->tx_lock);
 
-	mac_addr = of_get_mac_address(ofdev->dev.of_node);
-	if (!IS_ERR(mac_addr))
-		ether_addr_copy(ndev->dev_addr, mac_addr);
+	of_get_ethdev_address(ofdev->dev.of_node, ndev);
 
 	ret = fep->ops->allocate_bd(ndev);
 	if (ret)
@@ -1023,7 +1013,8 @@ static int fs_enet_probe(struct platform_device *ofdev)
 	ndev->netdev_ops = &fs_enet_netdev_ops;
 	ndev->watchdog_timeo = 2 * HZ;
 	INIT_WORK(&fep->timeout_work, fs_timeout_work);
-	netif_napi_add(ndev, &fep->napi, fs_enet_napi, fpi->napi_weight);
+	netif_napi_add_weight(ndev, &fep->napi, fs_enet_napi,
+			      fpi->napi_weight);
 
 	ndev->ethtool_ops = &fs_ethtool_ops;
 
@@ -1056,7 +1047,7 @@ out_free_fpi:
 	return ret;
 }
 
-static int fs_enet_remove(struct platform_device *ofdev)
+static void fs_enet_remove(struct platform_device *ofdev)
 {
 	struct net_device *ndev = platform_get_drvdata(ofdev);
 	struct fs_enet_private *fep = netdev_priv(ndev);
@@ -1071,7 +1062,6 @@ static int fs_enet_remove(struct platform_device *ofdev)
 	if (of_phy_is_fixed_link(ofdev->dev.of_node))
 		of_phy_deregister_fixed_link(ofdev->dev.of_node);
 	free_netdev(ndev);
-	return 0;
 }
 
 static const struct of_device_id fs_enet_match[] = {
@@ -1118,7 +1108,7 @@ static struct platform_driver fs_enet_driver = {
 		.of_match_table = fs_enet_match,
 	},
 	.probe = fs_enet_probe,
-	.remove = fs_enet_remove,
+	.remove_new = fs_enet_remove,
 };
 
 #ifdef CONFIG_NET_POLL_CONTROLLER

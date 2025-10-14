@@ -1442,11 +1442,9 @@ static int imx355_set_stream(struct v4l2_subdev *sd, int enable)
 	}
 
 	if (enable) {
-		ret = pm_runtime_get_sync(&client->dev);
-		if (ret < 0) {
-			pm_runtime_put_noidle(&client->dev);
+		ret = pm_runtime_resume_and_get(&client->dev);
+		if (ret < 0)
 			goto err_unlock;
-		}
 
 		/*
 		 * Apply default & customized values
@@ -1480,8 +1478,7 @@ err_unlock:
 
 static int __maybe_unused imx355_suspend(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct imx355 *imx355 = to_imx355(sd);
 
 	if (imx355->streaming)
@@ -1492,8 +1489,7 @@ static int __maybe_unused imx355_suspend(struct device *dev)
 
 static int __maybe_unused imx355_resume(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct imx355 *imx355 = to_imx355(sd);
 	int ret;
 
@@ -1621,8 +1617,12 @@ static int imx355_init_controls(struct imx355 *imx355)
 
 	imx355->hflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx355_ctrl_ops,
 					  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	if (imx355->hflip)
+		imx355->hflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 	imx355->vflip = v4l2_ctrl_new_std(ctrl_hdlr, &imx355_ctrl_ops,
 					  V4L2_CID_VFLIP, 0, 1, 1, 0);
+	if (imx355->vflip)
+		imx355->vflip->flags |= V4L2_CTRL_FLAG_MODIFY_LAYOUT;
 
 	v4l2_ctrl_new_std(ctrl_hdlr, &imx355_ctrl_ops, V4L2_CID_ANALOGUE_GAIN,
 			  IMX355_ANA_GAIN_MIN, IMX355_ANA_GAIN_MAX,
@@ -1788,10 +1788,6 @@ static int imx355_probe(struct i2c_client *client)
 		goto error_handler_free;
 	}
 
-	ret = v4l2_async_register_subdev_sensor_common(&imx355->sd);
-	if (ret < 0)
-		goto error_media_entity;
-
 	/*
 	 * Device is already turned on by i2c-core with ACPI domain PM.
 	 * Enable runtime PM and turn off the device.
@@ -1800,9 +1796,15 @@ static int imx355_probe(struct i2c_client *client)
 	pm_runtime_enable(&client->dev);
 	pm_runtime_idle(&client->dev);
 
+	ret = v4l2_async_register_subdev_sensor(&imx355->sd);
+	if (ret < 0)
+		goto error_media_entity_runtime_pm;
+
 	return 0;
 
-error_media_entity:
+error_media_entity_runtime_pm:
+	pm_runtime_disable(&client->dev);
+	pm_runtime_set_suspended(&client->dev);
 	media_entity_cleanup(&imx355->sd.entity);
 
 error_handler_free:
@@ -1814,7 +1816,7 @@ error_probe:
 	return ret;
 }
 
-static int imx355_remove(struct i2c_client *client)
+static void imx355_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx355 *imx355 = to_imx355(sd);
@@ -1827,15 +1829,13 @@ static int imx355_remove(struct i2c_client *client)
 	pm_runtime_set_suspended(&client->dev);
 
 	mutex_destroy(&imx355->mutex);
-
-	return 0;
 }
 
 static const struct dev_pm_ops imx355_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(imx355_suspend, imx355_resume)
 };
 
-static const struct acpi_device_id imx355_acpi_ids[] = {
+static const struct acpi_device_id imx355_acpi_ids[] __maybe_unused = {
 	{ "SONY355A" },
 	{ /* sentinel */ }
 };
@@ -1847,14 +1847,14 @@ static struct i2c_driver imx355_i2c_driver = {
 		.pm = &imx355_pm_ops,
 		.acpi_match_table = ACPI_PTR(imx355_acpi_ids),
 	},
-	.probe_new = imx355_probe,
+	.probe = imx355_probe,
 	.remove = imx355_remove,
 };
 module_i2c_driver(imx355_i2c_driver);
 
 MODULE_AUTHOR("Qiu, Tianshu <tian.shu.qiu@intel.com>");
-MODULE_AUTHOR("Rapolu, Chiranjeevi <chiranjeevi.rapolu@intel.com>");
+MODULE_AUTHOR("Rapolu, Chiranjeevi");
 MODULE_AUTHOR("Bingbu Cao <bingbu.cao@intel.com>");
-MODULE_AUTHOR("Yang, Hyungwoo <hyungwoo.yang@intel.com>");
+MODULE_AUTHOR("Yang, Hyungwoo");
 MODULE_DESCRIPTION("Sony imx355 sensor driver");
 MODULE_LICENSE("GPL v2");

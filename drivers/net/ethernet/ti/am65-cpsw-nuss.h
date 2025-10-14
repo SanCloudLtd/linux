@@ -15,6 +15,7 @@
 #include <linux/platform_device.h>
 #include <linux/soc/ti/k3-ringacc.h>
 #include <net/devlink.h>
+#include <net/xdp.h>
 #include "am65-cpsw-qos.h"
 
 struct am65_cpts;
@@ -33,6 +34,7 @@ struct am65_cpsw_slave_data {
 	struct device_node		*phy_node;
 	phy_interface_t			phy_if;
 	struct phy			*ifphy;
+	struct phy			*serdes_phy;
 	bool				rx_pause;
 	bool				tx_pause;
 	u8				mac_addr[ETH_ALEN];
@@ -57,8 +59,16 @@ struct am65_cpsw_port {
 	struct am65_cpsw_qos		qos;
 	struct devlink_port		devlink_port;
 	struct dentry			*debugfs_port;
+	struct bpf_prog			*xdp_prog;
+	struct xdp_rxq_info		xdp_rxq;
 	/* Only for suspend resume context */
 	u32				vid_context;
+};
+
+enum am65_cpsw_tx_buf_type {
+	AM65_CPSW_TX_BUF_TYPE_SKB,
+	AM65_CPSW_TX_BUF_TYPE_XDP_TX,
+	AM65_CPSW_TX_BUF_TYPE_XDP_NDO,
 };
 
 struct am65_cpsw_host {
@@ -81,8 +91,9 @@ struct am65_cpsw_tx_chn {
 	int irq;
 	u32 id;
 	u32 descs_num;
+	unsigned char dsize_log2;
 	char tx_chn_name[128];
-	u32  rate_mbps;
+	u32 rate_mbps;
 };
 
 struct am65_cpsw_rx_chn {
@@ -90,13 +101,16 @@ struct am65_cpsw_rx_chn {
 	struct device *dma_dev;
 	struct k3_cppi_desc_pool *desc_pool;
 	struct k3_udma_glue_rx_channel *rx_chn;
+	struct page_pool *page_pool;
+	struct page **pages;
 	u32 descs_num;
+	unsigned char dsize_log2;
 	int irq;
 };
 
 #define AM65_CPSW_QUIRK_I2027_NO_TX_CSUM BIT(0)
-#define AM64_CPSW_QUIRK_CUT_THRU BIT(1)
-#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(2)
+#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(1)
+#define AM64_CPSW_QUIRK_CUT_THRU	 BIT(2)
 
 struct am65_cpsw_pdata {
 	u32	quirks;
@@ -140,9 +154,10 @@ struct am65_cpsw_common {
 
 	struct am65_cpsw_rx_chn	rx_chns;
 	struct napi_struct	napi_rx;
+
 	bool			rx_irq_disabled;
-	struct hrtimer rx_hrtimer;
-	unsigned long rx_pace_timeout;
+	struct hrtimer		rx_hrtimer;
+	unsigned long		rx_pace_timeout;
 
 	u32			nuss_ver;
 	u32			cpsw_ver;
@@ -150,7 +165,7 @@ struct am65_cpsw_common {
 	bool			pf_p0_rx_ptype_rrobin;
 	struct am65_cpts	*cpts;
 	int			est_enabled;
-	int			iet_enabled;
+	bool			iet_enabled;
 	unsigned int		cut_thru_enabled;
 
 	bool		is_emac_mode;
@@ -179,6 +194,10 @@ struct am65_cpsw_ndev_priv {
 	struct am65_cpsw_port	*port;
 	struct am65_cpsw_ndev_stats __percpu *stats;
 	bool offload_fwd_mark;
+	/* Serialize access to MAC Merge state between ethtool requests
+	 * and link state updates
+	 */
+	struct mutex		mm_lock;
 };
 
 #define am65_ndev_to_priv(ndev) \
@@ -201,31 +220,14 @@ struct am65_cpsw_ndev_priv {
 
 extern const struct ethtool_ops am65_cpsw_ethtool_ops_slave;
 
-void am65_cpsw_nuss_adjust_link(struct net_device *ndev);
 void am65_cpsw_nuss_set_p0_ptype(struct am65_cpsw_common *common);
 void am65_cpsw_nuss_remove_tx_chns(struct am65_cpsw_common *common);
 int am65_cpsw_nuss_update_tx_chns(struct am65_cpsw_common *common, int num_tx);
 
 bool am65_cpsw_port_dev_check(const struct net_device *dev);
 
-#if IS_ENABLED(CONFIG_DEBUG_FS)
 int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port);
 int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common);
 void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common);
-#else
-static inline int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port)
-{
-	return 0;
-}
-
-static inline int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common)
-{
-	return 0;
-}
-
-static inline void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common)
-{
-}
-#endif
 
 #endif /* AM65_CPSW_NUSS_H_ */

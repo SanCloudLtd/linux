@@ -15,9 +15,9 @@
 #include <linux/msi.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/of_address.h>
+#include <linux/of.h>
 #include <linux/of_irq.h>
-#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/irqchip/chained_irq.h>
 #include <linux/soc/ti/ti_sci_inta_msi.h>
 #include <linux/soc/ti/ti_sci_protocol.h>
@@ -64,7 +64,7 @@ struct ti_sci_inta_event_desc {
  * @events:		Array of event descriptors assigned to this vint.
  * @parent_virq:	Linux IRQ number that gets attached to parent
  * @vint_id:		TISCI vint ID
- * @affinity_managed	flag to indicate VINT affinity is managed
+ * @affinity_managed:	flag to indicate VINT affinity is managed
  */
 struct ti_sci_inta_vint_desc {
 	struct irq_domain *domain;
@@ -80,7 +80,7 @@ struct ti_sci_inta_vint_desc {
  * struct ti_sci_inta_irq_domain - Structure representing a TISCI based
  *				   Interrupt Aggregator IRQ domain.
  * @sci:		Pointer to TISCI handle
- * @vint:		TISCI resource pointer representing IA inerrupts.
+ * @vint:		TISCI resource pointer representing IA interrupts.
  * @global_event:	TISCI resource pointer representing global events.
  * @vint_list:		List of the vints active in the system
  * @vint_mutex:		Mutex to protect vint_list
@@ -149,7 +149,7 @@ static void ti_sci_inta_irq_handler(struct irq_desc *desc)
 	struct ti_sci_inta_vint_desc *vint_desc;
 	struct ti_sci_inta_irq_domain *inta;
 	struct irq_domain *domain;
-	unsigned int virq, bit;
+	unsigned int bit;
 	unsigned long val;
 
 	vint_desc = irq_desc_get_handler_data(desc);
@@ -161,11 +161,8 @@ static void ti_sci_inta_irq_handler(struct irq_desc *desc)
 	val = readq_relaxed(inta->base + vint_desc->vint_id * 0x1000 +
 			    VINT_STATUS_MASKED_OFFSET);
 
-	for_each_set_bit(bit, &val, MAX_EVENTS_PER_VINT) {
-		virq = irq_find_mapping(domain, vint_desc->events[bit].hwirq);
-		if (virq)
-			generic_handle_irq(virq);
-	}
+	for_each_set_bit(bit, &val, MAX_EVENTS_PER_VINT)
+		generic_handle_domain_irq(domain, vint_desc->events[bit].hwirq);
 
 	chained_irq_exit(irq_desc_get_chip(desc), desc);
 }
@@ -173,7 +170,7 @@ static void ti_sci_inta_irq_handler(struct irq_desc *desc)
 /**
  * ti_sci_inta_xlate_irq() - Translate hwirq to parent's hwirq.
  * @inta:	IRQ domain corresponding to Interrupt Aggregator
- * @irq:	Hardware irq corresponding to the above irq domain
+ * @vint_id:	Hardware irq corresponding to the above irq domain
  *
  * Return parent irq number if translation is available else -ENOENT.
  */
@@ -204,6 +201,7 @@ static int ti_sci_inta_xlate_irq(struct ti_sci_inta_irq_domain *inta,
 /**
  * ti_sci_inta_alloc_parent_irq() - Allocate parent irq to Interrupt aggregator
  * @domain:	IRQ domain corresponding to Interrupt Aggregator
+ * @vint_id:	vint_id to which event is to be mapped to
  *
  * Return 0 if all went well else corresponding error value.
  */
@@ -528,6 +526,10 @@ static int ti_sci_inta_set_affinity(struct irq_data *d,
 	event_desc = irq_data_get_irq_chip_data(d);
 	if (event_desc) {
 		vint_desc = to_vint_desc(event_desc, event_desc->vint_bit);
+		parent_irq_data = irq_get_irq_data(vint_desc->parent_virq);
+
+		if (!parent_irq_data || !parent_irq_data->chip->irq_set_affinity)
+			return -EINVAL;
 
 		/*
 		 * Cannot set affinity if there is more than one event
@@ -539,9 +541,8 @@ static int ti_sci_inta_set_affinity(struct irq_data *d,
 		vint_desc->affinity_managed = true;
 
 		irq_data_update_effective_affinity(d, mask_val);
-		parent_irq_data = irq_get_irq_data(vint_desc->parent_virq);
-		if (parent_irq_data->chip->irq_set_affinity)
-			return parent_irq_data->chip->irq_set_affinity(parent_irq_data, mask_val, force);
+
+		return parent_irq_data->chip->irq_set_affinity(parent_irq_data, mask_val, force);
 	}
 
 	return -EINVAL;
@@ -644,7 +645,7 @@ static void ti_sci_inta_msi_set_desc(msi_alloc_info_t *arg,
 	struct platform_device *pdev = to_platform_device(desc->dev);
 
 	arg->desc = desc;
-	arg->hwirq = TO_HWIRQ(pdev->id, desc->inta.dev_index);
+	arg->hwirq = TO_HWIRQ(pdev->id, desc->msi_index);
 }
 
 static struct msi_domain_ops ti_sci_inta_msi_ops = {
@@ -699,7 +700,6 @@ static int ti_sci_inta_irq_domain_probe(struct platform_device *pdev)
 	struct device_node *parent_node, *node;
 	struct ti_sci_inta_irq_domain *inta;
 	struct device *dev = &pdev->dev;
-	struct resource *res;
 	int ret;
 
 	node = dev_of_node(dev);
@@ -743,8 +743,7 @@ static int ti_sci_inta_irq_domain_probe(struct platform_device *pdev)
 		return PTR_ERR(inta->global_event);
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	inta->base = devm_ioremap_resource(dev, res);
+	inta->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(inta->base))
 		return PTR_ERR(inta->base);
 
@@ -794,4 +793,3 @@ module_platform_driver(ti_sci_inta_irq_domain_driver);
 
 MODULE_AUTHOR("Lokesh Vutla <lokeshvutla@ti.com>");
 MODULE_DESCRIPTION("K3 Interrupt Aggregator driver over TI SCI protocol");
-MODULE_LICENSE("GPL v2");
