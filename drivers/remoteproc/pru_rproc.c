@@ -2,12 +2,14 @@
 /*
  * PRU-ICSS remoteproc driver for various TI SoCs
  *
- * Copyright (C) 2014-2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2014-2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  * Author(s):
  *	Suman Anna <s-anna@ti.com>
  *	Andrew F. Davis <afd@ti.com>
  *	Grzegorz Jaszczyk <grzegorz.jaszczyk@linaro.org> for Texas Instruments
+ *	Puranjay Mohan <p-mohan@ti.com>
+ *	Md Danish Anwar <danishanwar@ti.com>
  */
 
 #include <linux/bitops.h>
@@ -15,9 +17,10 @@
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/of_irq.h>
-#include <linux/pruss.h>
+#include <linux/platform_device.h>
+#include <linux/remoteproc/pruss.h>
 #include <linux/pruss_driver.h>
 #include <linux/remoteproc.h>
 
@@ -81,21 +84,6 @@ enum pru_iomem {
 };
 
 /**
- * enum pru_type - PRU core type identifier
- *
- * @PRU_TYPE_PRU: Programmable Real-time Unit
- * @PRU_TYPE_RTU: Auxiliary Programmable Real-Time Unit
- * @PRU_TYPE_TX_PRU: Transmit Programmable Real-Time Unit
- * @PRU_TYPE_MAX: just keep this one at the end
- */
-enum pru_type {
-	PRU_TYPE_PRU = 0,
-	PRU_TYPE_RTU,
-	PRU_TYPE_TX_PRU,
-	PRU_TYPE_MAX,
-};
-
-/**
  * struct pru_private_data - device data for a PRU core
  * @type: type of the PRU core (PRU, RTU, Tx_PRU)
  * @is_k3: flag used to identify the need for special load handling
@@ -134,7 +122,7 @@ struct pru_rproc {
 	const struct pru_private_data *data;
 	struct pruss_mem_region mem_regions[PRU_IOMEM_MAX];
 	struct device_node *client_np;
-	struct mutex lock; /* client access lock */
+	struct mutex lock;
 	const char *fw_name;
 	unsigned int *mapped_irq;
 	struct pru_irq_rsc *pru_interrupt_map;
@@ -176,7 +164,7 @@ void pru_control_set_reg(struct pru_rproc *pru, unsigned int reg,
 }
 
 /**
- * pru_rproc_set_firmware() - set firmware for a pru core
+ * pru_rproc_set_firmware() - set firmware for a PRU core
  * @rproc: the rproc instance of the PRU
  * @fw_name: the new firmware name, or NULL if default is desired
  *
@@ -194,33 +182,25 @@ static int pru_rproc_set_firmware(struct rproc *rproc, const char *fw_name)
 
 static struct rproc *__pru_rproc_get(struct device_node *np, int index)
 {
-	struct device_node *rproc_np = NULL;
-	struct platform_device *pdev;
 	struct rproc *rproc;
+	phandle rproc_phandle;
+	int ret;
 
-	rproc_np = of_parse_phandle(np, "ti,prus", index);
-	if (!rproc_np || !of_device_is_available(rproc_np))
-		return ERR_PTR(-ENODEV);
+	ret = of_property_read_u32_index(np, "ti,prus", index, &rproc_phandle);
+	if (ret)
+		return ERR_PTR(ret);
 
-	pdev = of_find_device_by_node(rproc_np);
-	of_node_put(rproc_np);
-
-	if (!pdev)
-		/* probably PRU not yet probed */
-		return ERR_PTR(-EPROBE_DEFER);
-
-	/* make sure it is PRU rproc */
-	if (!is_pru_rproc(&pdev->dev)) {
-		put_device(&pdev->dev);
-		return ERR_PTR(-ENODEV);
+	rproc = rproc_get_by_phandle(rproc_phandle);
+	if (!rproc) {
+		ret = -EPROBE_DEFER;
+		return ERR_PTR(ret);
 	}
 
-	rproc = platform_get_drvdata(pdev);
-	put_device(&pdev->dev);
-	if (!rproc)
-		return ERR_PTR(-EPROBE_DEFER);
-
-	get_device(&rproc->dev);
+	/* make sure it is PRU rproc */
+	if (!is_pru_rproc(rproc->dev.parent)) {
+		rproc_put(rproc);
+		return ERR_PTR(-ENODEV);
+	}
 
 	return rproc;
 }
@@ -251,8 +231,8 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 {
 	struct rproc *rproc;
 	struct pru_rproc *pru;
-	const char *fw_name;
 	struct device *dev;
+	const char *fw_name;
 	int ret;
 	u32 mux;
 
@@ -267,14 +247,17 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 
 	if (pru->client_np) {
 		mutex_unlock(&pru->lock);
-		put_device(dev);
-		return ERR_PTR(-EBUSY);
+		ret = -EBUSY;
+		goto err_no_rproc_handle;
 	}
 
 	pru->client_np = np;
-	rproc->deny_sysfs_ops = true;
+	rproc->sysfs_read_only = true;
 
 	mutex_unlock(&pru->lock);
+
+	if (pru_id)
+		*pru_id = pru->id;
 
 	ret = pruss_cfg_get_gpmux(pru->pruss, pru->id, &pru->gpmux_save);
 	if (ret) {
@@ -282,6 +265,7 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 		goto err;
 	}
 
+	/* An error here is acceptable for backward compatibility */
 	ret = of_property_read_u32_index(np, "ti,pruss-gp-mux-sel", index,
 					 &mux);
 	if (!ret) {
@@ -302,10 +286,11 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 		}
 	}
 
-	if (pru_id)
-		*pru_id = pru->id;
-
 	return rproc;
+
+err_no_rproc_handle:
+	rproc_put(rproc);
+	return ERR_PTR(ret);
 
 err:
 	pru_rproc_put(rproc);
@@ -328,19 +313,23 @@ void pru_rproc_put(struct rproc *rproc)
 		return;
 
 	pru = rproc->priv;
-	if (!pru->client_np)
-		return;
 
 	pruss_cfg_set_gpmux(pru->pruss, pru->id, pru->gpmux_save);
 
 	pru_rproc_set_firmware(rproc, NULL);
 
 	mutex_lock(&pru->lock);
+
+	if (!pru->client_np) {
+		mutex_unlock(&pru->lock);
+		return;
+	}
+
 	pru->client_np = NULL;
-	rproc->deny_sysfs_ops = false;
+	rproc->sysfs_read_only = false;
 	mutex_unlock(&pru->lock);
 
-	put_device(&rproc->dev);
+	rproc_put(rproc);
 }
 EXPORT_SYMBOL_GPL(pru_rproc_put);
 
@@ -770,11 +759,11 @@ static void *pru_d_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
 	dram0 = pruss->mem_regions[PRUSS_MEM_DRAM0];
 	dram1 = pruss->mem_regions[PRUSS_MEM_DRAM1];
 	/* PRU1 has its local RAM addresses reversed */
-	if (pru->id == 1)
+	if (pru->id == PRUSS_PRU1)
 		swap(dram0, dram1);
 	shrd_ram = pruss->mem_regions[PRUSS_MEM_SHRD_RAM2];
 
-	if (da >= PRU_PDRAM_DA && da + len <= PRU_PDRAM_DA + dram0.size) {
+	if (da + len <= PRU_PDRAM_DA + dram0.size) {
 		offset = da - PRU_PDRAM_DA;
 		va = (__force void *)(dram0.va + offset);
 	} else if (da >= PRU_SDRAM_DA &&
@@ -823,8 +812,7 @@ static void *pru_i_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
 	 */
 	da &= 0xfffff;
 
-	if (da >= PRU_IRAM_DA &&
-	    da + len <= PRU_IRAM_DA + pru->mem_regions[PRU_IOMEM_IRAM].size) {
+	if (da + len <= PRU_IRAM_DA + pru->mem_regions[PRU_IOMEM_IRAM].size) {
 		offset = da - PRU_IRAM_DA;
 		va = (__force void *)(pru->mem_regions[PRU_IOMEM_IRAM].va +
 				      offset);
@@ -838,7 +826,7 @@ static void *pru_i_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
  * core for any PRU client drivers. The PRU Instruction RAM access is restricted
  * only to the PRU loader code.
  */
-static void *pru_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len)
+static void *pru_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
 {
 	struct pru_rproc *pru = rproc->priv;
 
@@ -1149,6 +1137,7 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	pru->pruss = platform_get_drvdata(ppdev);
 	pru->rproc = rproc;
 	pru->fw_name = fw_name;
+	pru->client_np = NULL;
 	spin_lock_init(&pru->rmw_lock);
 	mutex_init(&pru->lock);
 
@@ -1189,14 +1178,12 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int pru_rproc_remove(struct platform_device *pdev)
+static void pru_rproc_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rproc *rproc = platform_get_drvdata(pdev);
 
 	dev_dbg(dev, "%s: removing rproc %s\n", __func__, rproc->name);
-
-	return 0;
 }
 
 static const struct pru_private_data pru_data = {
@@ -1222,6 +1209,9 @@ static const struct of_device_id pru_rproc_match[] = {
 	{ .compatible = "ti,am3356-pru",	.data = &pru_data },
 	{ .compatible = "ti,am4376-pru",	.data = &pru_data },
 	{ .compatible = "ti,am5728-pru",	.data = &pru_data },
+	{ .compatible = "ti,am642-pru",		.data = &k3_pru_data },
+	{ .compatible = "ti,am642-rtu",		.data = &k3_rtu_data },
+	{ .compatible = "ti,am642-tx-pru",	.data = &k3_tx_pru_data },
 	{ .compatible = "ti,k2g-pru",		.data = &pru_data },
 	{ .compatible = "ti,am654-pru",		.data = &k3_pru_data },
 	{ .compatible = "ti,am654-rtu",		.data = &k3_rtu_data },
@@ -1229,9 +1219,6 @@ static const struct of_device_id pru_rproc_match[] = {
 	{ .compatible = "ti,j721e-pru",		.data = &k3_pru_data },
 	{ .compatible = "ti,j721e-rtu",		.data = &k3_rtu_data },
 	{ .compatible = "ti,j721e-tx-pru",	.data = &k3_tx_pru_data },
-	{ .compatible = "ti,am642-pru",		.data = &k3_pru_data },
-	{ .compatible = "ti,am642-rtu",		.data = &k3_rtu_data },
-	{ .compatible = "ti,am642-tx-pru",	.data = &k3_tx_pru_data },
 	{ .compatible = "ti,am625-pru",		.data = &k3_pru_data },
 	{},
 };
@@ -1239,17 +1226,19 @@ MODULE_DEVICE_TABLE(of, pru_rproc_match);
 
 static struct platform_driver pru_rproc_driver = {
 	.driver = {
-		.name = PRU_RPROC_DRVNAME,
+		.name   = PRU_RPROC_DRVNAME,
 		.of_match_table = pru_rproc_match,
 		.suppress_bind_attrs = true,
 	},
 	.probe  = pru_rproc_probe,
-	.remove = pru_rproc_remove,
+	.remove_new = pru_rproc_remove,
 };
 module_platform_driver(pru_rproc_driver);
 
 MODULE_AUTHOR("Suman Anna <s-anna@ti.com>");
 MODULE_AUTHOR("Andrew F. Davis <afd@ti.com>");
 MODULE_AUTHOR("Grzegorz Jaszczyk <grzegorz.jaszczyk@linaro.org>");
+MODULE_AUTHOR("Puranjay Mohan <p-mohan@ti.com>");
+MODULE_AUTHOR("Md Danish Anwar <danishanwar@ti.com>");
 MODULE_DESCRIPTION("PRU-ICSS Remote Processor Driver");
 MODULE_LICENSE("GPL v2");

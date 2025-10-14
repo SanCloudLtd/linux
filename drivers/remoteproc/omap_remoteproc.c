@@ -19,7 +19,8 @@
 #include <linux/clk/ti.h>
 #include <linux/err.h>
 #include <linux/io.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -243,7 +244,7 @@ static inline int omap_rproc_get_timer_irq(struct omap_rproc_timer *timer)
  * omap_rproc_ack_timer_irq() - acknowledge a timer irq
  * @timer: handle to a OMAP rproc timer
  *
- * This function is used to clear the irq associated with a watchdog timer. The
+ * This function is used to clear the irq associated with a watchdog timer.
  * The function is called by the OMAP remoteproc upon a watchdog event on the
  * remote processor to clear the interrupt status of the watchdog timer.
  */
@@ -303,7 +304,7 @@ static irqreturn_t omap_rproc_watchdog_isr(int irq, void *data)
  * @configure: boolean flag used to acquire and configure the timer handle
  *
  * This function is used primarily to enable the timers associated with
- * a remoteproc. The configure flag is provided to allow the driver to
+ * a remoteproc. The configure flag is provided to allow the driver
  * to either acquire and start a timer (during device initialization) or
  * to just start a timer (during a resume operation).
  *
@@ -443,7 +444,7 @@ free_timers:
  * @configure: boolean flag used to release the timer handle
  *
  * This function is used primarily to disable the timers associated with
- * a remoteproc. The configure flag is provided to allow the driver to
+ * a remoteproc. The configure flag is provided to allow the driver
  * to either stop and release a timer (during device shutdown) or to just
  * stop a timer (during a suspend operation).
  *
@@ -703,19 +704,6 @@ static int omap_rproc_stop(struct rproc *rproc)
 	pm_runtime_put_noidle(dev);
 	pm_runtime_set_suspended(dev);
 
-	/*
-	 * If remoteproc has crashed, we must trigger IOMMU to reset it also.
-	 * Otherwise we may have stale data in IOMMU causing remoteproc to
-	 * hang / die again. Sleep between is needed to make sure reset
-	 * actually gets triggered, otherwise the runtime PM framework may
-	 * consider this sequence as a NOP.
-	 */
-	if (rproc->state == RPROC_CRASHED) {
-		omap_iommu_domain_deactivate(rproc->domain);
-		msleep(5);
-		omap_iommu_domain_activate(rproc->domain);
-	}
-
 	return 0;
 
 enable_device:
@@ -741,7 +729,7 @@ out:
  * Return: translated virtual address in kernel memory space on success,
  *         or NULL on failure.
  */
-static void *omap_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len)
+static void *omap_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
 {
 	struct omap_rproc *oproc = rproc->priv;
 	int i;
@@ -914,8 +902,7 @@ out:
 
 static int __maybe_unused omap_rproc_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rproc *rproc = platform_get_drvdata(pdev);
+	struct rproc *rproc = dev_get_drvdata(dev);
 	struct omap_rproc *oproc = rproc->priv;
 	int ret = 0;
 
@@ -951,8 +938,7 @@ out:
 
 static int __maybe_unused omap_rproc_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rproc *rproc = platform_get_drvdata(pdev);
+	struct rproc *rproc = dev_get_drvdata(dev);
 	struct omap_rproc *oproc = rproc->priv;
 	int ret = 0;
 
@@ -1369,9 +1355,6 @@ static int omap_rproc_probe(struct platform_device *pdev)
 	if (ret)
 		goto release_mem;
 
-	if (rproc_get_id(rproc) < 0)
-		dev_warn(&pdev->dev, "device does not have an alias id\n");
-
 	return 0;
 
 release_mem:
@@ -1381,15 +1364,13 @@ free_rproc:
 	return ret;
 }
 
-static int omap_rproc_remove(struct platform_device *pdev)
+static void omap_rproc_remove(struct platform_device *pdev)
 {
 	struct rproc *rproc = platform_get_drvdata(pdev);
 
 	rproc_del(rproc);
 	rproc_free(rproc);
 	of_reserved_mem_device_release(&pdev->dev);
-
-	return 0;
 }
 
 static const struct dev_pm_ops omap_rproc_pm_ops = {
@@ -1400,7 +1381,7 @@ static const struct dev_pm_ops omap_rproc_pm_ops = {
 
 static struct platform_driver omap_rproc_driver = {
 	.probe = omap_rproc_probe,
-	.remove = omap_rproc_remove,
+	.remove_new = omap_rproc_remove,
 	.driver = {
 		.name = "omap-rproc",
 		.pm = &omap_rproc_pm_ops,

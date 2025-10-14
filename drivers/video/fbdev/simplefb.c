@@ -12,12 +12,14 @@
  * Copyright (C) 1996 Paul Mackerras
  */
 
+#include <linux/aperture.h>
 #include <linux/errno.h>
 #include <linux/fb.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_data/simplefb.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 #include <linux/clk.h>
 #include <linux/of.h>
 #include <linux/of_clk.h>
@@ -66,25 +68,54 @@ static int simplefb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	return 0;
 }
 
-struct simplefb_par;
+struct simplefb_par {
+	u32 palette[PSEUDO_PALETTE_SIZE];
+	resource_size_t base;
+	resource_size_t size;
+	struct resource *mem;
+#if defined CONFIG_OF && defined CONFIG_COMMON_CLK
+	bool clks_enabled;
+	unsigned int clk_count;
+	struct clk **clks;
+#endif
+#if defined CONFIG_OF && defined CONFIG_REGULATOR
+	bool regulators_enabled;
+	u32 regulator_count;
+	struct regulator **regulators;
+#endif
+	int num_domains; /* Handle attached PM domains */
+	struct device **pd_dev;
+	struct device_link **pd_link;
+};
+
 static void simplefb_clocks_destroy(struct simplefb_par *par);
 static void simplefb_regulators_destroy(struct simplefb_par *par);
 
+/*
+ * fb_ops.fb_destroy is called by the last put_fb_info() call at the end
+ * of unregister_framebuffer() or fb_release(). Do any cleanup here.
+ */
 static void simplefb_destroy(struct fb_info *info)
 {
+	struct simplefb_par *par = info->par;
+	struct resource *mem = par->mem;
+
 	simplefb_regulators_destroy(info->par);
 	simplefb_clocks_destroy(info->par);
 	if (info->screen_base)
 		iounmap(info->screen_base);
+
+	framebuffer_release(info);
+
+	if (mem)
+		release_mem_region(mem->start, resource_size(mem));
 }
 
 static const struct fb_ops simplefb_ops = {
 	.owner		= THIS_MODULE,
+	FB_DEFAULT_IOMEM_OPS,
 	.fb_destroy	= simplefb_destroy,
 	.fb_setcolreg	= simplefb_setcolreg,
-	.fb_fillrect	= cfb_fillrect,
-	.fb_copyarea	= cfb_copyarea,
-	.fb_imageblit	= cfb_imageblit,
 };
 
 static struct simplefb_format simplefb_formats[] = SIMPLEFB_FORMATS;
@@ -169,19 +200,69 @@ static int simplefb_parse_pd(struct platform_device *pdev,
 	return 0;
 }
 
-struct simplefb_par {
-	u32 palette[PSEUDO_PALETTE_SIZE];
-#if defined CONFIG_OF && defined CONFIG_COMMON_CLK
-	bool clks_enabled;
-	unsigned int clk_count;
-	struct clk **clks;
-#endif
-#if defined CONFIG_OF && defined CONFIG_REGULATOR
-	bool regulators_enabled;
-	u32 regulator_count;
-	struct regulator **regulators;
-#endif
-};
+static int simplefb_detach_pm_domains(struct simplefb_par *par, struct platform_device *pdev)
+{
+	int i;
+
+	if (par->num_domains <= 1)
+		return 0;
+
+	for (i = 0; i < par->num_domains; i++) {
+		if (par->pd_link[i] && !IS_ERR(par->pd_link[i]))
+			device_link_del(par->pd_link[i]);
+		if (par->pd_dev[i] && !IS_ERR(par->pd_dev[i]))
+			dev_pm_domain_detach(par->pd_dev[i], true);
+		par->pd_dev[i] = NULL;
+		par->pd_link[i] = NULL;
+	}
+
+	return 0;
+}
+
+static int simplefb_attach_pm_domains(struct simplefb_par *par, struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	struct device_node *np = pdev->dev.of_node;
+	int i, ret;
+
+	par->num_domains = of_count_phandle_with_args(np, "power-domains",
+						      "#power-domain-cells");
+	if (par->num_domains <= 1) {
+		dev_dbg(dev, "One or less power domains, no need to do attach domains\n");
+		return 0;
+	}
+
+	par->pd_dev = devm_kmalloc_array(dev, par->num_domains,
+					 sizeof(*par->pd_dev), GFP_KERNEL);
+	if (!par->pd_dev)
+		return -ENOMEM;
+
+	par->pd_link = devm_kmalloc_array(dev, par->num_domains,
+					  sizeof(*par->pd_link), GFP_KERNEL);
+	if (!par->pd_link)
+		return -ENOMEM;
+
+	for (i = 0; i < par->num_domains; i++) {
+		par->pd_dev[i] = dev_pm_domain_attach_by_id(dev, i);
+		if (IS_ERR(par->pd_dev[i])) {
+			ret = PTR_ERR(par->pd_dev[i]);
+			goto fail;
+		}
+
+		par->pd_link[i] = device_link_add(dev, par->pd_dev[i],
+						  DL_FLAG_STATELESS |
+						  DL_FLAG_PM_RUNTIME | DL_FLAG_RPM_ACTIVE);
+		if (!par->pd_link[i]) {
+			ret = -EINVAL;
+			goto fail;
+		}
+	}
+
+	return 0;
+fail:
+	simplefb_detach_pm_domains(par, pdev);
+	return ret;
+}
 
 #if defined CONFIG_OF && defined CONFIG_COMMON_CLK
 /*
@@ -225,8 +306,7 @@ static int simplefb_clocks_get(struct simplefb_par *par,
 		if (IS_ERR(clock)) {
 			if (PTR_ERR(clock) == -EPROBE_DEFER) {
 				while (--i >= 0) {
-					if (par->clks[i])
-						clk_put(par->clks[i]);
+					clk_put(par->clks[i]);
 				}
 				kfree(par->clks);
 				return -EPROBE_DEFER;
@@ -344,7 +424,7 @@ static int simplefb_regulators_get(struct simplefb_par *par,
 		if (!p || p == prop->name)
 			continue;
 
-		strlcpy(name, prop->name,
+		strscpy(name, prop->name,
 			strlen(prop->name) - strlen(SUPPLY_SUFFIX) + 1);
 		regulator = devm_regulator_get_optional(&pdev->dev, name);
 		if (IS_ERR(regulator)) {
@@ -405,7 +485,7 @@ static int simplefb_probe(struct platform_device *pdev)
 	struct simplefb_params params;
 	struct fb_info *info;
 	struct simplefb_par *par;
-	struct resource *mem;
+	struct resource *res, *mem;
 
 	if (fb_get_options("simplefb", NULL))
 		return -ENODEV;
@@ -419,15 +499,28 @@ static int simplefb_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!mem) {
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res) {
 		dev_err(&pdev->dev, "No memory resource\n");
 		return -EINVAL;
 	}
 
+	mem = request_mem_region(res->start, resource_size(res), "simplefb");
+	if (!mem) {
+		/*
+		 * We cannot make this fatal. Sometimes this comes from magic
+		 * spaces our resource handlers simply don't know about. Use
+		 * the I/O-memory resource as-is and try to map that instead.
+		 */
+		dev_warn(&pdev->dev, "simplefb: cannot reserve video memory at %pR\n", res);
+		mem = res;
+	}
+
 	info = framebuffer_alloc(sizeof(struct simplefb_par), &pdev->dev);
-	if (!info)
-		return -ENOMEM;
+	if (!info) {
+		ret = -ENOMEM;
+		goto error_release_mem_region;
+	}
 	platform_set_drvdata(pdev, info);
 
 	par = info->par;
@@ -448,16 +541,10 @@ static int simplefb_probe(struct platform_device *pdev)
 	info->var.blue = params.format->blue;
 	info->var.transp = params.format->transp;
 
-	info->apertures = alloc_apertures(1);
-	if (!info->apertures) {
-		ret = -ENOMEM;
-		goto error_fb_release;
-	}
-	info->apertures->ranges[0].base = info->fix.smem_start;
-	info->apertures->ranges[0].size = info->fix.smem_len;
+	par->base = info->fix.smem_start;
+	par->size = info->fix.smem_len;
 
 	info->fbops = &simplefb_ops;
-	info->flags = FBINFO_DEFAULT | FBINFO_MISC_FIRMWARE;
 	info->screen_base = ioremap_wc(info->fix.smem_start,
 				       info->fix.smem_len);
 	if (!info->screen_base) {
@@ -466,9 +553,13 @@ static int simplefb_probe(struct platform_device *pdev)
 	}
 	info->pseudo_palette = par->palette;
 
-	ret = simplefb_clocks_get(par, pdev);
+	ret = simplefb_attach_pm_domains(par, pdev);
 	if (ret < 0)
 		goto error_unmap;
+
+	ret = simplefb_clocks_get(par, pdev);
+	if (ret < 0)
+		goto error_detach_pm_domains;
 
 	ret = simplefb_regulators_get(par, pdev);
 	if (ret < 0)
@@ -477,14 +568,21 @@ static int simplefb_probe(struct platform_device *pdev)
 	simplefb_clocks_enable(par, pdev);
 	simplefb_regulators_enable(par, pdev);
 
-	dev_info(&pdev->dev, "framebuffer at 0x%lx, 0x%x bytes, mapped to 0x%p\n",
-			     info->fix.smem_start, info->fix.smem_len,
-			     info->screen_base);
+	dev_info(&pdev->dev, "framebuffer at 0x%lx, 0x%x bytes\n",
+			     info->fix.smem_start, info->fix.smem_len);
 	dev_info(&pdev->dev, "format=%s, mode=%dx%dx%d, linelength=%d\n",
 			     params.format->name,
 			     info->var.xres, info->var.yres,
 			     info->var.bits_per_pixel, info->fix.line_length);
 
+	if (mem != res)
+		par->mem = mem; /* release in clean-up handler */
+
+	ret = devm_aperture_acquire_for_platform_device(pdev, par->base, par->size);
+	if (ret) {
+		dev_err(&pdev->dev, "Unable to acquire aperture: %d\n", ret);
+		goto error_regulators;
+	}
 	ret = register_framebuffer(info);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Unable to register simplefb: %d\n", ret);
@@ -499,21 +597,25 @@ error_regulators:
 	simplefb_regulators_destroy(par);
 error_clocks:
 	simplefb_clocks_destroy(par);
+error_detach_pm_domains:
+	simplefb_detach_pm_domains(par, pdev);
 error_unmap:
 	iounmap(info->screen_base);
 error_fb_release:
 	framebuffer_release(info);
+error_release_mem_region:
+	if (mem != res)
+		release_mem_region(mem->start, resource_size(mem));
 	return ret;
 }
 
-static int simplefb_remove(struct platform_device *pdev)
+static void simplefb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 
+	simplefb_detach_pm_domains(info->par, pdev);
+	/* simplefb_destroy takes care of info cleanup */
 	unregister_framebuffer(info);
-	framebuffer_release(info);
-
-	return 0;
 }
 
 static const struct of_device_id simplefb_of_match[] = {
@@ -528,29 +630,10 @@ static struct platform_driver simplefb_driver = {
 		.of_match_table = simplefb_of_match,
 	},
 	.probe = simplefb_probe,
-	.remove = simplefb_remove,
+	.remove_new = simplefb_remove,
 };
 
-static int __init simplefb_init(void)
-{
-	int ret;
-	struct device_node *np;
-
-	ret = platform_driver_register(&simplefb_driver);
-	if (ret)
-		return ret;
-
-	if (IS_ENABLED(CONFIG_OF_ADDRESS) && of_chosen) {
-		for_each_child_of_node(of_chosen, np) {
-			if (of_device_is_compatible(np, "simple-framebuffer"))
-				of_platform_device_create(np, NULL, NULL);
-		}
-	}
-
-	return 0;
-}
-
-fs_initcall(simplefb_init);
+module_platform_driver(simplefb_driver);
 
 MODULE_AUTHOR("Stephen Warren <swarren@wwwdotorg.org>");
 MODULE_DESCRIPTION("Simple framebuffer driver");

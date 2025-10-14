@@ -31,6 +31,7 @@ static void qedf_remove(struct pci_dev *pdev);
 static void qedf_shutdown(struct pci_dev *pdev);
 static void qedf_schedule_recovery_handler(void *dev);
 static void qedf_recovery_handler(struct work_struct *work);
+static int qedf_suspend(struct pci_dev *pdev, pm_message_t state);
 
 /*
  * Driver module parameters.
@@ -317,11 +318,18 @@ static struct fc_seq *qedf_elsct_send(struct fc_lport *lport, u32 did,
 	 */
 	if (resp == fc_lport_flogi_resp) {
 		qedf->flogi_cnt++;
+		qedf->flogi_pending++;
+
+		if (test_bit(QEDF_UNLOADING, &qedf->flags)) {
+			QEDF_ERR(&qedf->dbg_ctx, "Driver unloading\n");
+			qedf->flogi_pending = 0;
+		}
+
 		if (qedf->flogi_pending >= QEDF_FLOGI_RETRY_CNT) {
 			schedule_delayed_work(&qedf->stag_work, 2);
 			return NULL;
 		}
-		qedf->flogi_pending++;
+
 		return fc_elsct_send(lport, did, fp, op, qedf_flogi_resp,
 		    arg, timeout);
 	}
@@ -740,7 +748,7 @@ static int qedf_eh_abort(struct scsi_cmnd *sc_cmd)
 	}
 
 
-	io_req = (struct qedf_ioreq *)sc_cmd->SCp.ptr;
+	io_req = qedf_priv(sc_cmd)->io_req;
 	if (!io_req) {
 		QEDF_ERR(&qedf->dbg_ctx,
 			 "sc_cmd not queued with lld, sc_cmd=%p op=0x%02x, port_id=%06x\n",
@@ -873,7 +881,7 @@ static int qedf_eh_device_reset(struct scsi_cmnd *sc_cmd)
 
 bool qedf_wait_for_upload(struct qedf_ctx *qedf)
 {
-	struct qedf_rport *fcport = NULL;
+	struct qedf_rport *fcport;
 	int wait_cnt = 120;
 
 	while (wait_cnt--) {
@@ -888,7 +896,7 @@ bool qedf_wait_for_upload(struct qedf_ctx *qedf)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(fcport, &qedf->fcports, peers) {
-		if (fcport && test_bit(QEDF_RPORT_SESSION_READY,
+		if (test_bit(QEDF_RPORT_SESSION_READY,
 				       &fcport->flags)) {
 			if (fcport->rdata)
 				QEDF_ERR(&qedf->dbg_ctx,
@@ -899,9 +907,9 @@ bool qedf_wait_for_upload(struct qedf_ctx *qedf)
 					 "Waiting for fcport %p.\n", fcport);
 			}
 	}
+
 	rcu_read_unlock();
 	return false;
-
 }
 
 /* Performs soft reset of qedf_ctx by simulating a link down/up */
@@ -910,12 +918,13 @@ void qedf_ctx_soft_reset(struct fc_lport *lport)
 	struct qedf_ctx *qedf;
 	struct qed_link_output if_link;
 
+	qedf = lport_priv(lport);
+
 	if (lport->vport) {
-		QEDF_ERR(NULL, "Cannot issue host reset on NPIV port.\n");
+		clear_bit(QEDF_STAG_IN_PROGRESS, &qedf->flags);
+		printk_ratelimited("Cannot issue host reset on NPIV port.\n");
 		return;
 	}
-
-	qedf = lport_priv(lport);
 
 	qedf->flogi_pending = 0;
 	/* For host reset, essentially do a soft link up/down */
@@ -936,6 +945,7 @@ void qedf_ctx_soft_reset(struct fc_lport *lport)
 	if (!if_link.link_up) {
 		QEDF_INFO(&qedf->dbg_ctx, QEDF_LOG_DISC,
 			  "Physical link is not up.\n");
+		clear_bit(QEDF_STAG_IN_PROGRESS, &qedf->flags);
 		return;
 	}
 	/* Flush and wait to make sure link down is processed */
@@ -948,6 +958,7 @@ void qedf_ctx_soft_reset(struct fc_lport *lport)
 		  "Queue link up work.\n");
 	queue_delayed_work(qedf->link_update_wq, &qedf->link_update,
 	    0);
+	clear_bit(QEDF_STAG_IN_PROGRESS, &qedf->flags);
 }
 
 /* Reset the host by gracefully logging out and then logging back in */
@@ -979,14 +990,14 @@ static int qedf_slave_configure(struct scsi_device *sdev)
 	return 0;
 }
 
-static struct scsi_host_template qedf_host_template = {
+static const struct scsi_host_template qedf_host_template = {
 	.module 	= THIS_MODULE,
 	.name 		= QEDF_MODULE_NAME,
 	.this_id 	= -1,
 	.cmd_per_lun	= 32,
 	.max_sectors 	= 0xffff,
 	.queuecommand 	= qedf_queuecommand,
-	.shost_attrs	= qedf_host_attrs,
+	.shost_groups	= qedf_host_groups,
 	.eh_abort_handler	= qedf_eh_abort,
 	.eh_device_reset_handler = qedf_eh_device_reset, /* lun reset */
 	.eh_target_reset_handler = qedf_eh_target_reset, /* target reset */
@@ -996,6 +1007,7 @@ static struct scsi_host_template qedf_host_template = {
 	.sg_tablesize = QEDF_MAX_BDS_PER_CMD,
 	.can_queue = FCOE_PARAMS_NUM_TASKS,
 	.change_queue_depth = scsi_change_queue_depth,
+	.cmd_size = sizeof(struct qedf_cmd_priv),
 };
 
 static int qedf_get_paged_crc_eof(struct sk_buff *skb, int tlen)
@@ -1066,7 +1078,6 @@ static int qedf_xmit(struct fc_lport *lport, struct fc_frame *fp)
 	u32			crc;
 	unsigned int		hlen, tlen, elen;
 	int			wlen;
-	struct fc_stats		*stats;
 	struct fc_lport *tmp_lport;
 	struct fc_lport *vn_port = NULL;
 	struct qedf_rport *fcport;
@@ -1214,10 +1225,8 @@ static int qedf_xmit(struct fc_lport *lport, struct fc_frame *fp)
 	hp->fcoe_sof = sof;
 
 	/*update tx stats */
-	stats = per_cpu_ptr(lport->stats, get_cpu());
-	stats->TxFrames++;
-	stats->TxWords += wlen;
-	put_cpu();
+	this_cpu_inc(lport->stats->TxFrames);
+	this_cpu_add(lport->stats->TxWords, wlen);
 
 	/* Get VLAN ID from skb for printing purposes */
 	__vlan_hwaccel_get_tag(skb, &vlan_tci);
@@ -1415,6 +1424,8 @@ static void qedf_upload_connection(struct qedf_ctx *qedf,
 	 */
 	term_params = dma_alloc_coherent(&qedf->pdev->dev, QEDF_TERM_BUFF_SIZE,
 		&term_params_dma, GFP_KERNEL);
+	if (!term_params)
+		return;
 
 	QEDF_INFO(&(qedf->dbg_ctx), QEDF_LOG_CONN, "Uploading connection "
 		   "port_id=%06x.\n", fcport->rdata->ids.port_id);
@@ -1717,6 +1728,9 @@ static void qedf_setup_fdmi(struct qedf_ctx *qedf)
 	    FW_MAJOR_VERSION, FW_MINOR_VERSION, FW_REVISION_VERSION,
 	    FW_ENGINEERING_VERSION);
 
+	snprintf(fc_host_vendor_identifier(lport->host),
+		FC_VENDOR_IDENTIFIER, "%s", "Marvell");
+
 }
 
 static int qedf_lport_setup(struct qedf_ctx *qedf)
@@ -1878,6 +1892,7 @@ static int qedf_vport_create(struct fc_vport *vport, bool disabled)
 	vn_port->host->max_lun = qedf_max_lun;
 	vn_port->host->sg_tablesize = QEDF_MAX_BDS_PER_CMD;
 	vn_port->host->max_cmd_len = QEDF_MAX_CDB_LEN;
+	vn_port->host->max_id = QEDF_MAX_SESSIONS;
 
 	rc = scsi_add_host(vn_port->host, &vport->dev);
 	if (rc) {
@@ -2188,7 +2203,7 @@ static bool qedf_fp_has_work(struct qedf_fastpath *fp)
 	struct qedf_ctx *qedf = fp->qedf;
 	struct global_queue *que;
 	struct qed_sb_info *sb_info = fp->sb_info;
-	struct status_block_e4 *sb = sb_info->sb_virt;
+	struct status_block *sb = sb_info->sb_virt;
 	u16 prod_idx;
 
 	/* Get the pointer to the global CQ this completion is on */
@@ -2215,12 +2230,11 @@ static bool qedf_process_completions(struct qedf_fastpath *fp)
 {
 	struct qedf_ctx *qedf = fp->qedf;
 	struct qed_sb_info *sb_info = fp->sb_info;
-	struct status_block_e4 *sb = sb_info->sb_virt;
+	struct status_block *sb = sb_info->sb_virt;
 	struct global_queue *que;
 	u16 prod_idx;
 	struct fcoe_cqe *cqe;
 	struct qedf_io_work *io_work;
-	int num_handled = 0;
 	unsigned int cpu;
 	struct qedf_ioreq *io_req = NULL;
 	u16 xid;
@@ -2243,7 +2257,6 @@ static bool qedf_process_completions(struct qedf_fastpath *fp)
 
 	while (new_cqes) {
 		fp->completions++;
-		num_handled++;
 		cqe = &que->cq[que->cq_cons_idx];
 
 		comp_type = (cqe->cqe_data >> FCOE_CQE_CQE_TYPE_SHIFT) &
@@ -2706,12 +2719,12 @@ void qedf_fp_io_handler(struct work_struct *work)
 static int qedf_alloc_and_init_sb(struct qedf_ctx *qedf,
 	struct qed_sb_info *sb_info, u16 sb_id)
 {
-	struct status_block_e4 *sb_virt;
+	struct status_block *sb_virt;
 	dma_addr_t sb_phys;
 	int ret;
 
 	sb_virt = dma_alloc_coherent(&qedf->pdev->dev,
-	    sizeof(struct status_block_e4), &sb_phys, GFP_KERNEL);
+	    sizeof(struct status_block), &sb_phys, GFP_KERNEL);
 
 	if (!sb_virt) {
 		QEDF_ERR(&qedf->dbg_ctx,
@@ -2802,6 +2815,8 @@ void qedf_process_cqe(struct qedf_ctx *qedf, struct fcoe_cqe *cqe)
 	struct qedf_ioreq *io_req;
 	struct qedf_rport *fcport;
 	u32 comp_type;
+	u8 io_comp_type;
+	unsigned long flags;
 
 	comp_type = (cqe->cqe_data >> FCOE_CQE_CQE_TYPE_SHIFT) &
 	    FCOE_CQE_CQE_TYPE_MASK;
@@ -2835,11 +2850,14 @@ void qedf_process_cqe(struct qedf_ctx *qedf, struct fcoe_cqe *cqe)
 		return;
 	}
 
+	spin_lock_irqsave(&fcport->rport_lock, flags);
+	io_comp_type = io_req->cmd_type;
+	spin_unlock_irqrestore(&fcport->rport_lock, flags);
 
 	switch (comp_type) {
 	case FCOE_GOOD_COMPLETION_CQE_TYPE:
 		atomic_inc(&fcport->free_sqes);
-		switch (io_req->cmd_type) {
+		switch (io_comp_type) {
 		case QEDF_SCSI_CMD:
 			qedf_scsi_completion(qedf, cqe, io_req);
 			break;
@@ -2947,7 +2965,6 @@ static int qedf_alloc_bdq(struct qedf_ctx *qedf)
 	int i;
 	struct scsi_bd *pbl;
 	u64 *list;
-	dma_addr_t page;
 
 	/* Alloc dma memory for BDQ buffers */
 	for (i = 0; i < QEDF_BDQ_SIZE; i++) {
@@ -3008,11 +3025,9 @@ static int qedf_alloc_bdq(struct qedf_ctx *qedf)
 	qedf->bdq_pbl_list_num_entries = qedf->bdq_pbl_mem_size /
 	    QEDF_PAGE_SIZE;
 	list = (u64 *)qedf->bdq_pbl_list;
-	page = qedf->bdq_pbl_list_dma;
 	for (i = 0; i < qedf->bdq_pbl_list_num_entries; i++) {
 		*list = qedf->bdq_pbl_dma;
 		list++;
-		page += QEDF_PAGE_SIZE;
 	}
 
 	return 0;
@@ -3042,9 +3057,8 @@ static int qedf_alloc_global_queues(struct qedf_ctx *qedf)
 	 * addresses of our queues
 	 */
 	if (!qedf->p_cpuq) {
-		status = -EINVAL;
 		QEDF_ERR(&qedf->dbg_ctx, "p_cpuq is NULL.\n");
-		goto mem_alloc_failure;
+		return -EINVAL;
 	}
 
 	qedf->global_queues = kzalloc((sizeof(struct global_queue *)
@@ -3273,6 +3287,7 @@ static struct pci_driver qedf_pci_driver = {
 	.probe = qedf_probe,
 	.remove = qedf_remove,
 	.shutdown = qedf_shutdown,
+	.suspend = qedf_suspend,
 };
 
 static int __qedf_probe(struct pci_dev *pdev, int mode)
@@ -3430,6 +3445,16 @@ retry_probe:
 		goto err2;
 	}
 
+	if (mode != QEDF_MODE_RECOVERY) {
+		qedf->devlink = qed_ops->common->devlink_register(qedf->cdev);
+		if (IS_ERR(qedf->devlink)) {
+			QEDF_ERR(&qedf->dbg_ctx, "Cannot register devlink\n");
+			rc = PTR_ERR(qedf->devlink);
+			qedf->devlink = NULL;
+			goto err2;
+		}
+	}
+
 	/* Record BDQ producer doorbell addresses */
 	qedf->bdq_primary_prod = qedf->dev_info.primary_dbq_rq_addr;
 	qedf->bdq_secondary_prod = qedf->dev_info.secondary_bdq_rq_addr;
@@ -3447,6 +3472,7 @@ retry_probe:
 	}
 
 	/* Start the Slowpath-process */
+	memset(&slowpath_params, 0, sizeof(struct qed_slowpath_params));
 	slowpath_params.int_mode = QED_INT_MODE_MSIX;
 	slowpath_params.drv_major = QEDF_DRIVER_MAJOR_VER;
 	slowpath_params.drv_minor = QEDF_DRIVER_MINOR_VER;
@@ -3542,6 +3568,7 @@ retry_probe:
 		host->transportt = qedf_fc_transport_template;
 		host->max_lun = qedf_max_lun;
 		host->max_cmd_len = QEDF_MAX_CDB_LEN;
+		host->max_id = QEDF_MAX_SESSIONS;
 		host->can_queue = FCOE_PARAMS_NUM_TASKS;
 		rc = scsi_add_host(host, &pdev->dev);
 		if (rc) {
@@ -3704,6 +3731,7 @@ static void __qedf_remove(struct pci_dev *pdev, int mode)
 {
 	struct qedf_ctx *qedf;
 	int rc;
+	int cnt = 0;
 
 	if (!pdev) {
 		QEDF_ERR(NULL, "pdev is NULL.\n");
@@ -3721,6 +3749,17 @@ static void __qedf_remove(struct pci_dev *pdev, int mode)
 		return;
 	}
 
+stag_in_prog:
+	if (test_bit(QEDF_STAG_IN_PROGRESS, &qedf->flags)) {
+		QEDF_ERR(&qedf->dbg_ctx, "Stag in progress, cnt=%d.\n", cnt);
+		cnt++;
+
+		if (cnt < 5) {
+			msleep(500);
+			goto stag_in_prog;
+		}
+	}
+
 	if (mode != QEDF_MODE_RECOVERY)
 		set_bit(QEDF_UNLOADING, &qedf->flags);
 
@@ -3730,7 +3769,7 @@ static void __qedf_remove(struct pci_dev *pdev, int mode)
 	else
 		fc_fabric_logoff(qedf->lport);
 
-	if (qedf_wait_for_upload(qedf) == false)
+	if (!qedf_wait_for_upload(qedf))
 		QEDF_ERR(&qedf->dbg_ctx, "Could not upload all sessions.\n");
 
 #ifdef CONFIG_DEBUG_FS
@@ -3806,6 +3845,11 @@ static void __qedf_remove(struct pci_dev *pdev, int mode)
 		QEDF_ERR(&(qedf->dbg_ctx),
 			"Failed to send drv state to MFW.\n");
 
+	if (mode != QEDF_MODE_RECOVERY && qedf->devlink) {
+		qed_ops->common->devlink_unregister(qedf->devlink);
+		qedf->devlink = NULL;
+	}
+
 	qed_ops->common->slowpath_stop(qedf->cdev);
 	qed_ops->common->remove(qedf->cdev);
 
@@ -3863,8 +3907,9 @@ void qedf_schedule_hw_err_handler(void *dev, enum qed_hw_err_type err_type)
 		/* Prevent HW attentions from being reasserted */
 		qed_ops->common->attn_clr_enable(qedf->cdev, true);
 
-		if (qedf_enable_recovery)
-			qed_ops->common->recovery_process(qedf->cdev);
+		if (qedf_enable_recovery && qedf->devlink)
+			qed_ops->common->report_fatal_error(qedf->devlink,
+				err_type);
 
 		break;
 	default:
@@ -3975,16 +4020,48 @@ void qedf_stag_change_work(struct work_struct *work)
 	    container_of(work, struct qedf_ctx, stag_work.work);
 
 	if (!qedf) {
-		QEDF_ERR(NULL, "qedf is NULL");
+		QEDF_ERR(&qedf->dbg_ctx, "qedf is NULL");
 		return;
 	}
-	QEDF_ERR(&qedf->dbg_ctx, "Performing software context reset.\n");
+
+	if (test_bit(QEDF_IN_RECOVERY, &qedf->flags)) {
+		QEDF_ERR(&qedf->dbg_ctx,
+			 "Already is in recovery, hence not calling software context reset.\n");
+		return;
+	}
+
+	if (test_bit(QEDF_UNLOADING, &qedf->flags)) {
+		QEDF_ERR(&qedf->dbg_ctx, "Driver unloading\n");
+		return;
+	}
+
+	set_bit(QEDF_STAG_IN_PROGRESS, &qedf->flags);
+
+	printk_ratelimited("[%s]:[%s:%d]:%d: Performing software context reset.",
+			dev_name(&qedf->pdev->dev), __func__, __LINE__,
+			qedf->dbg_ctx.host_no);
 	qedf_ctx_soft_reset(qedf->lport);
 }
 
 static void qedf_shutdown(struct pci_dev *pdev)
 {
 	__qedf_remove(pdev, QEDF_MODE_NORMAL);
+}
+
+static int qedf_suspend(struct pci_dev *pdev, pm_message_t state)
+{
+	struct qedf_ctx *qedf;
+
+	if (!pdev) {
+		QEDF_ERR(NULL, "pdev is NULL.\n");
+		return -ENODEV;
+	}
+
+	qedf = pci_get_drvdata(pdev);
+
+	QEDF_ERR(&qedf->dbg_ctx, "%s: Device does not support suspend operation\n", __func__);
+
+	return -EPERM;
 }
 
 /*
