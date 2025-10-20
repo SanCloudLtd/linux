@@ -45,11 +45,33 @@
 			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_OUTPUT_PULLUP, MUX_MODE7)     /* rmii1_refclk.gpio0_29 */
 		>;
 	};
+
+	davinci_mdio_sc_default: davinci-mdio-sc-default-pins {
+		pinctrl-single,pins = <
+			/* MDIO */
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP | SLEWCTRL_FAST, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	davinci_mdio_sc_sleep: davinci-mdio-sc-sleep-pins {
+		pinctrl-single,pins = <
+			/* MDIO reset value */
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLDOWN, MUX_MODE7)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_INPUT_PULLDOWN, MUX_MODE7)
+		>;
+	};	
 };
 
 &mac_sw {
 	pinctrl-0 = <&cpsw_default>;
 	pinctrl-1 = <&cpsw_sleep>;
+};
+
+&davinci_mdio_sw {
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&davinci_mdio_sc_default>;
+	pinctrl-1 = <&davinci_mdio_sc_sleep>;
 };
 
 &cpsw_port1 {
