@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only or MIT
 /* Texas Instruments CPSW Proxy Client Driver
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024-2025 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 
@@ -937,17 +937,12 @@ static int init_rx_chans(struct cpsw_proxy_priv *proxy_priv)
 {
 	struct k3_udma_glue_rx_channel_cfg rx_cfg = {0};
 	struct device *dev = proxy_priv->dev;
-	u32 hdesc_size, rx_chn_num, i, j;
-	u32  max_desc_num = MAX_RX_DESC;
-	char rx_chn_name[CHAN_NAME_LEN];
-	struct rx_dma_chan *rx_chn;
-	struct virtual_port *vport;
-	struct k3_ring_cfg rxring_cfg = {
+	struct k3_ring_cfg fdqring_cfg = {
 		.elm_size = K3_RINGACC_RING_ELSIZE_8,
 		.mode = K3_RINGACC_RING_MODE_RING,
 		.flags = 0,
 	};
-	struct k3_ring_cfg fdqring_cfg = {
+	struct k3_ring_cfg rxring_cfg = {
 		.elm_size = K3_RINGACC_RING_ELSIZE_8,
 		.mode = K3_RINGACC_RING_MODE_RING,
 		.flags = 0,
@@ -959,6 +954,11 @@ static int init_rx_chans(struct cpsw_proxy_priv *proxy_priv)
 		.ring_rxfdq0_id = K3_RINGACC_RING_ID_ANY,
 		.src_tag_lo_sel = K3_UDMA_GLUE_SRC_TAG_LO_USE_REMOTE_SRC_TAG,
 	};
+	u32 hdesc_size, rx_chn_num, i, j;
+	u32  max_desc_num = MAX_RX_DESC;
+	char rx_chn_name[CHAN_NAME_LEN];
+	struct rx_dma_chan *rx_chn;
+	struct virtual_port *vport;
 	int ret = 0, ret1;
 
 	hdesc_size = cppi5_hdesc_calc_size(true, PS_DATA_SIZE, SW_DATA_SIZE);
@@ -1031,8 +1031,7 @@ err:
 	return ret;
 }
 
-static void vport_xmit_free(struct tx_dma_chan *tx_chn,
-			    struct cppi5_host_desc_t *desc)
+static void vport_xmit_free(struct tx_dma_chan *tx_chn, struct cppi5_host_desc_t *desc)
 {
 	struct cppi5_host_desc_t *first_desc, *next_desc;
 	dma_addr_t buf_dma, next_desc_dma;
@@ -1054,8 +1053,7 @@ static void vport_xmit_free(struct tx_dma_chan *tx_chn,
 		cppi5_hdesc_get_obuf(next_desc, &buf_dma, &buf_dma_len);
 		k3_udma_glue_tx_cppi5_to_dma_addr(tx_chn->tx_chan, &buf_dma);
 
-		dma_unmap_page(tx_chn->dma_dev, buf_dma, buf_dma_len,
-			       DMA_TO_DEVICE);
+		dma_unmap_page(tx_chn->dma_dev, buf_dma, buf_dma_len, DMA_TO_DEVICE);
 
 		next_desc_dma = cppi5_hdesc_get_next_hbdesc(next_desc);
 		k3_udma_glue_tx_cppi5_to_dma_addr(tx_chn->tx_chan, &next_desc_dma);
@@ -1834,8 +1832,8 @@ static int vport_ndo_open(struct net_device *ndev)
 
 static netdev_tx_t vport_ndo_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
-	struct virtual_port *vport = vport_ndev_to_vport(ndev);
 	struct cppi5_host_desc_t *first_desc, *next_desc, *cur_desc;
+	struct virtual_port *vport = vport_ndev_to_vport(ndev);
 	struct cpsw_proxy_priv *proxy_priv = vport->proxy_priv;
 	struct device *dev = proxy_priv->dev;
 	struct netdev_queue *netif_txq;
@@ -1855,8 +1853,7 @@ static netdev_tx_t vport_ndo_xmit(struct sk_buff *skb, struct net_device *ndev)
 	netif_txq = netdev_get_tx_queue(ndev, q);
 
 	/* Map the linear buffer */
-	buf_dma = dma_map_single(tx_chn->dma_dev, skb->data, pkt_len,
-				 DMA_TO_DEVICE);
+	buf_dma = dma_map_single(tx_chn->dma_dev, skb->data, pkt_len, DMA_TO_DEVICE);
 	if (unlikely(dma_mapping_error(tx_chn->dma_dev, buf_dma))) {
 		dev_err(dev, "Failed to map tx skb buffer\n");
 		ndev->stats.tx_errors++;
@@ -1874,8 +1871,15 @@ static netdev_tx_t vport_ndo_xmit(struct sk_buff *skb, struct net_device *ndev)
 			 PS_DATA_SIZE);
 	cppi5_desc_set_pktids(&first_desc->hdr, 0, 0x3FFF);
 	cppi5_hdesc_set_pkttype(first_desc, 0x7);
-	/* target port has to be 0 */
-	cppi5_desc_set_tags_ids(&first_desc->hdr, 0, vport->port_type);
+
+	/* For Virtual Switch Ports, ALE will determine the destination.
+	 * For Virtual MAC Ports, a directed packet (ALE Bypass) should
+	 * be sent to the physical MAC Port.
+	 */
+	if (vport->port_type == VIRT_SWITCH_PORT)
+		cppi5_desc_set_tags_ids(&first_desc->hdr, 0, 0);
+	else
+		cppi5_desc_set_tags_ids(&first_desc->hdr, 0, vport->port_id);
 
 	k3_udma_glue_tx_dma_to_cppi5_addr(tx_chn->tx_chan, &buf_dma);
 	cppi5_hdesc_attach_buf(first_desc, buf_dma, pkt_len, buf_dma, pkt_len);
@@ -1913,8 +1917,7 @@ static netdev_tx_t vport_ndo_xmit(struct sk_buff *skb, struct net_device *ndev)
 			goto busy_free_descs;
 		}
 
-		buf_dma = skb_frag_dma_map(tx_chn->dma_dev, frag, 0, frag_size,
-					   DMA_TO_DEVICE);
+		buf_dma = skb_frag_dma_map(tx_chn->dma_dev, frag, 0, frag_size, DMA_TO_DEVICE);
 		if (unlikely(dma_mapping_error(tx_chn->dma_dev, buf_dma))) {
 			dev_err(dev, "Failed to map tx skb page\n");
 			k3_cppi_desc_pool_free(tx_chn->desc_pool, next_desc);
@@ -1924,11 +1927,9 @@ static netdev_tx_t vport_ndo_xmit(struct sk_buff *skb, struct net_device *ndev)
 
 		cppi5_hdesc_reset_hbdesc(next_desc);
 		k3_udma_glue_tx_dma_to_cppi5_addr(tx_chn->tx_chan, &buf_dma);
-		cppi5_hdesc_attach_buf(next_desc,
-				       buf_dma, frag_size, buf_dma, frag_size);
+		cppi5_hdesc_attach_buf(next_desc, buf_dma, frag_size, buf_dma, frag_size);
 
-		desc_dma = k3_cppi_desc_pool_virt2dma(tx_chn->desc_pool,
-						      next_desc);
+		desc_dma = k3_cppi_desc_pool_virt2dma(tx_chn->desc_pool, next_desc);
 		k3_udma_glue_tx_dma_to_cppi5_addr(tx_chn->tx_chan, &desc_dma);
 		cppi5_hdesc_link_hbdesc(cur_desc, desc_dma);
 

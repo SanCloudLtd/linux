@@ -331,7 +331,7 @@ static const struct of_device_id rockchip_saradc_match[] = {
 		.compatible = "rockchip,rk3588-saradc",
 		.data = &rk3588_saradc_data,
 	},
-	{},
+	{ }
 };
 MODULE_DEVICE_TABLE(of, rockchip_saradc_match);
 
@@ -368,9 +368,11 @@ static irqreturn_t rockchip_saradc_trigger_handler(int irq, void *p)
 	int ret;
 	int i, j = 0;
 
+	memset(&data, 0, sizeof(data));
+
 	mutex_lock(&info->lock);
 
-	for_each_set_bit(i, i_dev->active_scan_mask, i_dev->masklength) {
+	iio_for_each_active_channel(i_dev, i) {
 		const struct iio_chan_spec *chan = &i_dev->channels[i];
 
 		ret = rockchip_saradc_conversion(info, chan);
@@ -450,16 +452,11 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 	 * The reset should be an optional property, as it should work
 	 * with old devicetrees as well
 	 */
-	info->reset = devm_reset_control_get_exclusive(&pdev->dev,
-						       "saradc-apb");
+	info->reset = devm_reset_control_get_optional_exclusive(&pdev->dev,
+								"saradc-apb");
 	if (IS_ERR(info->reset)) {
 		ret = PTR_ERR(info->reset);
-		if (ret != -ENOENT)
-			return dev_err_probe(&pdev->dev, ret,
-					     "failed to get saradc-apb\n");
-
-		dev_dbg(&pdev->dev, "no reset control found\n");
-		info->reset = NULL;
+		return dev_err_probe(&pdev->dev, ret, "failed to get saradc-apb\n");
 	}
 
 	init_completion(&info->completion);
@@ -482,15 +479,6 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 
 	if (info->reset)
 		rockchip_saradc_reset_controller(info->reset);
-
-	/*
-	 * Use a default value for the converter clock.
-	 * This may become user-configurable in the future.
-	 */
-	ret = clk_set_rate(info->clk, info->data->clk_rate);
-	if (ret < 0)
-		return dev_err_probe(&pdev->dev, ret,
-				     "failed to set adc clk rate\n");
 
 	ret = regulator_enable(info->vref);
 	if (ret < 0)
@@ -518,6 +506,14 @@ static int rockchip_saradc_probe(struct platform_device *pdev)
 	if (IS_ERR(info->clk))
 		return dev_err_probe(&pdev->dev, PTR_ERR(info->clk),
 				     "failed to get adc clock\n");
+	/*
+	 * Use a default value for the converter clock.
+	 * This may become user-configurable in the future.
+	 */
+	ret = clk_set_rate(info->clk, info->data->clk_rate);
+	if (ret < 0)
+		return dev_err_probe(&pdev->dev, ret,
+				     "failed to set adc clk rate\n");
 
 	platform_set_drvdata(pdev, indio_dev);
 

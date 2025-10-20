@@ -55,7 +55,7 @@ enum tas_state {
  * @config_change: Set to true when application trigger updating of admin list
  *		   to active list, cleared when configChangeTime is updated
  */
-struct tas_config_list {
+struct __packed tas_config_list {
 	u64 config_change_time;
 	u32 config_change_error_counter;
 	u8 config_pending;
@@ -73,7 +73,7 @@ struct tas_max_sdu_table {
  * @win_end_time_list: Window end time list
  * @gate_close_time_list: Array of gate close time for each queue in each window
  */
-struct tas_firmware_list {
+struct __packed tas_firmware_list {
 	u8 gate_mask_list[TAS_MAX_CMD_LISTS];
 	u32 win_end_time_list[TAS_MAX_CMD_LISTS];
 	u32 gate_close_time_list[TAS_MAX_CMD_LISTS][TAS_MAX_NUM_QUEUES];
@@ -99,7 +99,6 @@ struct tas_config {
 
 struct prueth_qos_tas {
 	struct tc_taprio_qopt_offload *taprio_admin;
-	struct tc_taprio_qopt_offload *taprio_oper;
 	struct tas_config config;
 };
 
@@ -125,8 +124,8 @@ struct prueth_qos_iet {
 };
 
 struct prueth_qos {
-	struct prueth_qos_iet iet;
 	struct prueth_qos_tas tas;
+	struct prueth_qos_iet iet;
 };
 
 void icssg_qos_init(struct net_device *ndev);

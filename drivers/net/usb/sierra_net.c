@@ -30,7 +30,7 @@ static const char driver_name[] = "sierra_net";
 #include <linux/usb/cdc.h>
 #include <net/ip.h>
 #include <net/udp.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/usb/usbnet.h>
 
 #define SWI_USB_REQUEST_GET_FW_ATTR	0x06
@@ -687,6 +687,10 @@ static int sierra_net_bind(struct usbnet *dev, struct usb_interface *intf)
 	if (status < 0) {
 		dev_err(&dev->udev->dev, "Error in usbnet_get_endpoints (%d)",
 			status);
+		return -ENODEV;
+	}
+	if (!dev->status) {
+		dev_err(&dev->udev->dev, "No status endpoint found");
 		return -ENODEV;
 	}
 	/* Initialize sierra private data */

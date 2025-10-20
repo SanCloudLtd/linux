@@ -384,7 +384,7 @@ static void wave5_vpu_dec_finish_decode(struct vpu_instance *inst)
 
 	ret = wave5_vpu_dec_get_output_info(inst, &dec_info);
 	if (ret) {
-		dev_warn(inst->dev->dev, "%s: could not get output info.", __func__);
+		dev_dbg(inst->dev->dev, "%s: could not get output info.", __func__);
 		v4l2_m2m_job_finish(inst->v4l2_m2m_dev, m2m_ctx);
 		return;
 	}
@@ -421,7 +421,7 @@ static void wave5_vpu_dec_finish_decode(struct vpu_instance *inst)
 						       dec_info.index_frame_decoded);
 		if (vb) {
 			dec_buf = to_vb2_v4l2_buffer(vb);
-			// dec_buf->vb2_buf.timestamp = inst->timestamp;
+			//dec_buf->vb2_buf.timestamp = inst->timestamp;
 		} else {
 			dev_warn(inst->dev->dev, "%s: invalid decoded frame index %i",
 				 __func__, dec_info.index_frame_decoded);
@@ -437,7 +437,6 @@ static void wave5_vpu_dec_finish_decode(struct vpu_instance *inst)
 		} else
 			disp_buf = v4l2_m2m_dst_buf_remove_by_idx(m2m_ctx,
 					dec_info.index_frame_display);
-
 		if (!disp_buf)
 			dev_warn(inst->dev->dev, "%s: invalid display frame index %i",
 				 __func__, dec_info.index_frame_display);
@@ -498,6 +497,7 @@ static void wave5_vpu_dec_finish_decode(struct vpu_instance *inst)
 		}
 		spin_unlock_irqrestore(&inst->state_spinlock, flags);
 	}
+
 }
 
 static int wave5_vpu_dec_querycap(struct file *file, void *fh, struct v4l2_capability *cap)
@@ -531,6 +531,7 @@ static void wave5_vpu_dec_feed_remaining(struct vpu_instance *inst)
 
 	v4l2_m2m_job_finish(inst->v4l2_m2m_dev, m2m_ctx);
 }
+
 
 static int wave5_vpu_dec_enum_framesizes(struct file *f, void *fh, struct v4l2_frmsizeenum *fsize)
 {
@@ -865,7 +866,6 @@ static int wave5_vpu_dec_stop(struct vpu_instance *inst)
 	if (inst->state != VPU_INST_STATE_NONE) {
 		struct vb2_v4l2_buffer *vbuf;
 		struct vpu_src_buffer *vpu_buf;
-
 		/*
 		 * Temporarily release the state_spinlock so that subsequent
 		 * calls do not block on a mutex while inside this spinlock.
@@ -1069,6 +1069,22 @@ static int wave5_prepare_fb(struct vpu_instance *inst)
 	int ret, i, buffers_ready;
 	struct v4l2_m2m_buffer *buf, *n;
 	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
+	u32 bitdepth = inst->codec_info->dec_info.initial_info.luma_bitdepth;
+
+	switch (bitdepth) {
+	case 8:
+		break;
+	case 10:
+		if (inst->std == W_HEVC_DEC &&
+		    inst->dev->attr.support_hevc10bit_dec)
+			break;
+
+		fallthrough;
+	default:
+		dev_err(inst->dev->dev, "no support for %d bit depth\n", bitdepth);
+
+		return -EINVAL;
+	}
 
 	buffers_ready = v4l2_m2m_num_dst_bufs_ready(m2m_ctx);
 
@@ -1086,7 +1102,7 @@ static int wave5_prepare_fb(struct vpu_instance *inst)
 		struct frame_buffer *frame = &inst->frame_buf[i];
 		struct vpu_buf *vframe = &inst->frame_vbuf[i];
 
-		fb_stride = inst->dst_fmt.width;
+		fb_stride = ALIGN(inst->dst_fmt.width * bitdepth / 8, 32);
 		fb_height = ALIGN(inst->dst_fmt.height, 32);
 		luma_size = fb_stride * fb_height;
 
@@ -1185,7 +1201,6 @@ static int wave5_prepare_fb(struct vpu_instance *inst)
 	 * Mark all frame buffers as out of display, to avoid using them before
 	 * the application have them queued.
 	 */
-
 	if (inst->cap_io_mode != VB2_MEMORY_DMABUF) {
 		for (i = 0; i < v4l2_m2m_num_dst_bufs_ready(m2m_ctx); i++) {
 			ret = wave5_vpu_dec_set_disp_flag(inst, i);
@@ -1214,6 +1229,7 @@ static int wave5_prepare_fb(struct vpu_instance *inst)
 					__func__, i, ret);
 		}
 	}
+
 
 	return 0;
 }
@@ -1346,6 +1362,7 @@ static void wave5_vpu_dec_buf_queue_src(struct vb2_buffer *vb)
 	mutex_lock(&inst->feed_lock);
 	list_add_tail(&vpu_buf->list, &inst->avail_src_bufs);
 	mutex_unlock(&inst->feed_lock);
+
 }
 
 static void wave5_vpu_dec_buf_queue_dst(struct vb2_buffer *vb)
@@ -1545,18 +1562,13 @@ static int wave5_vpu_dec_start_streaming(struct vb2_queue *q, unsigned int count
 		struct dec_initial_info *initial_info =
 			&inst->codec_info->dec_info.initial_info;
 
-		inst->frame_rate = (initial_info->f_rate_numerator /
-							initial_info->f_rate_denominator);
-
-		if (inst->dev->opp_table_detected)
-			wave5_instance_set_clk(inst);
-
 		if (inst->state == VPU_INST_STATE_STOP)
 			ret = switch_state(inst, VPU_INST_STATE_INIT_SEQ);
 		if (ret)
 			goto return_buffers;
 
-		if (inst->state == VPU_INST_STATE_INIT_SEQ) {
+		if (inst->state == VPU_INST_STATE_INIT_SEQ &&
+		    inst->dev->product_code == WAVE521C_CODE) {
 			if (initial_info->luma_bitdepth != 8) {
 				dev_info(inst->dev->dev, "%s: no support for %d bit depth",
 					 __func__, initial_info->luma_bitdepth);
@@ -1564,9 +1576,12 @@ static int wave5_vpu_dec_start_streaming(struct vb2_queue *q, unsigned int count
 				goto return_buffers;
 			}
 		}
+
 	}
+
 	pm_runtime_mark_last_busy(inst->dev->dev);
 	pm_runtime_put_autosuspend(inst->dev->dev);
+
 	return ret;
 
 free_bitstream_vbuf:
@@ -1691,7 +1706,7 @@ static void wave5_vpu_dec_stop_streaming(struct vb2_queue *q)
 		wave5_vpu_dec_give_command(inst, DEC_GET_QUEUE_STATUS, &q_status);
 
 		if ((inst->state == VPU_INST_STATE_STOP || q_status.instance_queue_count == 0) &&
-		    q_status.report_queue_count == 0)
+			q_status.report_queue_count == 0)
 			break;
 
 		if (wave5_vpu_dec_get_output_info(inst, &dec_output_info))
@@ -1707,6 +1722,7 @@ static void wave5_vpu_dec_stop_streaming(struct vb2_queue *q)
 
 	pm_runtime_mark_last_busy(inst->dev->dev);
 	pm_runtime_put_autosuspend(inst->dev->dev);
+
 }
 
 static const struct vb2_ops wave5_vpu_dec_vb2_ops = {
@@ -1795,6 +1811,7 @@ static void wave5_vpu_dec_device_run(void *priv)
 
 	dev_dbg(inst->dev->dev, "%s: Fill the ring buffer with new bitstream data", __func__);
 	pm_runtime_resume_and_get(inst->dev->dev);
+
 	if (!inst->retry) {
 		mutex_lock(&inst->feed_lock);
 		ret = fill_ringbuffer(inst);
@@ -1891,8 +1908,8 @@ static void wave5_vpu_dec_device_run(void *priv)
 		}
 		break;
 	default:
-		WARN(1, "Execution of a job in state %s illegal.\n", state_to_str(inst->state));
-		break;
+		dev_dbg(inst->dev->dev, "Execution of a job in state %s illegal.\n",
+			state_to_str(inst->state));
 	}
 
 finish_job_and_return:
@@ -2056,7 +2073,12 @@ static int wave5_vpu_open_dec(struct file *filp)
 		goto cleanup_inst;
 	}
 
-	wave5_vdi_allocate_sram(inst->dev);
+	/*
+	 * For Wave515 SRAM memory was already allocated
+	 * at wave5_vpu_dec_register_device()
+	 */
+	if (inst->dev->product_code != WAVE515_CODE)
+		wave5_vdi_allocate_sram(inst->dev);
 
 	sema_init(&inst->run_sem, 1);
 	inst->run_thread = kthread_run(run_thread, inst, "run thread");
@@ -2095,6 +2117,13 @@ int wave5_vpu_dec_register_device(struct vpu_device *dev)
 	struct video_device *vdev_dec;
 	int ret;
 
+	/*
+	 * Secondary AXI setup for Wave515 is done by INIT_VPU command,
+	 * i.e. wave5_vpu_init(), that's why we allocate SRAM memory early.
+	 */
+	if (dev->product_code == WAVE515_CODE)
+		wave5_vdi_allocate_sram(dev);
+
 	vdev_dec = devm_kzalloc(dev->v4l2_dev.dev, sizeof(*vdev_dec), GFP_KERNEL);
 	if (!vdev_dec)
 		return -ENOMEM;
@@ -2128,6 +2157,13 @@ int wave5_vpu_dec_register_device(struct vpu_device *dev)
 
 void wave5_vpu_dec_unregister_device(struct vpu_device *dev)
 {
+	/*
+	 * Here is a freeing pair for Wave515 SRAM memory allocation
+	 * happened at wave5_vpu_dec_register_device().
+	 */
+	if (dev->product_code == WAVE515_CODE)
+		wave5_vdi_free_sram(dev);
+
 	video_unregister_device(dev->video_dev_dec);
 	if (dev->v4l2_m2m_dec_dev)
 		v4l2_m2m_release(dev->v4l2_m2m_dec_dev);

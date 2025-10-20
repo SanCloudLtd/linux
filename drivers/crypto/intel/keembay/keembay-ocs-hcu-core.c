@@ -68,6 +68,7 @@ struct ocs_hcu_ctx {
  * @sg_data_total:  Total data in the SG list at any time.
  * @sg_data_offset: Offset into the data of the current individual SG node.
  * @sg_dma_nents:   Number of sg entries mapped in dma_list.
+ * @nents:          Number of entries in the scatterlist.
  */
 struct ocs_hcu_rctx {
 	struct ocs_hcu_dev	*hcu_dev;
@@ -91,6 +92,7 @@ struct ocs_hcu_rctx {
 	unsigned int		sg_data_total;
 	unsigned int		sg_data_offset;
 	unsigned int		sg_dma_nents;
+	unsigned int		nents;
 };
 
 /**
@@ -199,7 +201,7 @@ static void kmb_ocs_hcu_dma_cleanup(struct ahash_request *req,
 
 	/* Unmap req->src (if mapped). */
 	if (rctx->sg_dma_nents) {
-		dma_unmap_sg(dev, req->src, rctx->sg_dma_nents, DMA_TO_DEVICE);
+		dma_unmap_sg(dev, req->src, rctx->nents, DMA_TO_DEVICE);
 		rctx->sg_dma_nents = 0;
 	}
 
@@ -260,6 +262,10 @@ static int kmb_ocs_dma_prepare(struct ahash_request *req)
 			rc = -ENOMEM;
 			goto cleanup;
 		}
+
+		/* Save the value of nents to pass to dma_unmap_sg. */
+		rctx->nents = nents;
+
 		/*
 		 * The value returned by dma_map_sg() can be < nents; so update
 		 * nents accordingly.
@@ -1150,25 +1156,19 @@ static const struct of_device_id kmb_ocs_hcu_of_match[] = {
 	},
 	{}
 };
+MODULE_DEVICE_TABLE(of, kmb_ocs_hcu_of_match);
 
-static int kmb_ocs_hcu_remove(struct platform_device *pdev)
+static void kmb_ocs_hcu_remove(struct platform_device *pdev)
 {
-	struct ocs_hcu_dev *hcu_dev;
-	int rc;
-
-	hcu_dev = platform_get_drvdata(pdev);
-	if (!hcu_dev)
-		return -ENODEV;
+	struct ocs_hcu_dev *hcu_dev = platform_get_drvdata(pdev);
 
 	crypto_engine_unregister_ahashes(ocs_hcu_algs, ARRAY_SIZE(ocs_hcu_algs));
 
-	rc = crypto_engine_exit(hcu_dev->engine);
+	crypto_engine_exit(hcu_dev->engine);
 
 	spin_lock_bh(&ocs_hcu.lock);
 	list_del(&hcu_dev->list);
 	spin_unlock_bh(&ocs_hcu.lock);
-
-	return rc;
 }
 
 static int kmb_ocs_hcu_probe(struct platform_device *pdev)
@@ -1249,7 +1249,7 @@ list_del:
 /* The OCS driver is a platform device. */
 static struct platform_driver kmb_ocs_hcu_driver = {
 	.probe = kmb_ocs_hcu_probe,
-	.remove = kmb_ocs_hcu_remove,
+	.remove_new = kmb_ocs_hcu_remove,
 	.driver = {
 			.name = DRV_NAME,
 			.of_match_table = kmb_ocs_hcu_of_match,

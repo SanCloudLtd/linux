@@ -56,6 +56,7 @@ void prueth_cleanup_rx_chns(struct prueth_emac *emac,
 	if (rx_chn->rx_chn)
 		k3_udma_glue_release_rx_chn(rx_chn->rx_chn);
 }
+EXPORT_SYMBOL_GPL(prueth_cleanup_rx_chns);
 
 void prueth_cleanup_tx_chns(struct prueth_emac *emac)
 {
@@ -76,6 +77,7 @@ void prueth_cleanup_tx_chns(struct prueth_emac *emac)
 		memset(tx_chn, 0, sizeof(*tx_chn));
 	}
 }
+EXPORT_SYMBOL_GPL(prueth_cleanup_tx_chns);
 
 void prueth_ndev_del_tx_napi(struct prueth_emac *emac, int num)
 {
@@ -89,24 +91,17 @@ void prueth_ndev_del_tx_napi(struct prueth_emac *emac, int num)
 		netif_napi_del(&tx_chn->napi_tx);
 	}
 }
+EXPORT_SYMBOL_GPL(prueth_ndev_del_tx_napi);
 
 void prueth_xmit_free(struct prueth_tx_chn *tx_chn,
 		      struct cppi5_host_desc_t *desc)
 {
 	struct cppi5_host_desc_t *first_desc, *next_desc;
 	dma_addr_t buf_dma, next_desc_dma;
-	struct prueth_swdata *swdata;
 	u32 buf_dma_len;
 
 	first_desc = desc;
 	next_desc = first_desc;
-
-	swdata = cppi5_hdesc_get_swdata(desc);
-	if (swdata->type == PRUETH_SWDATA_PAGE) {
-		page_pool_recycle_direct(swdata->rx_chn->pg_pool,
-					 swdata->data.page);
-		goto free_desc;
-	}
 
 	cppi5_hdesc_get_obuf(first_desc, &buf_dma, &buf_dma_len);
 	k3_udma_glue_tx_cppi5_to_dma_addr(tx_chn->tx_chn, &buf_dma);
@@ -131,9 +126,9 @@ void prueth_xmit_free(struct prueth_tx_chn *tx_chn,
 		k3_cppi_desc_pool_free(tx_chn->desc_pool, next_desc);
 	}
 
-free_desc:
 	k3_cppi_desc_pool_free(tx_chn->desc_pool, first_desc);
 }
+EXPORT_SYMBOL_GPL(prueth_xmit_free);
 
 int emac_tx_complete_packets(struct prueth_emac *emac, int chn,
 			     int budget, bool *tdown)
@@ -168,31 +163,22 @@ int emac_tx_complete_packets(struct prueth_emac *emac, int chn,
 						     desc_dma);
 		swdata = cppi5_hdesc_get_swdata(desc_tx);
 
-		/* was this command's TX complete? */
-		if (emac->is_sr1 && (void *)(swdata) == emac->cmd_data) {
-			prueth_xmit_free(tx_chn, desc_tx);
-			continue;
-		}
-
 		switch (swdata->type) {
 		case PRUETH_SWDATA_SKB:
 			skb = swdata->data.skb;
-			ndev->stats.tx_bytes += skb->len;
-			ndev->stats.tx_packets++;
+			dev_sw_netstats_tx_add(skb->dev, 1, skb->len);
 			total_bytes += skb->len;
 			napi_consume_skb(skb, budget);
 			break;
 		case PRUETH_SWDATA_XDPF:
 			xdpf = swdata->data.xdpf;
-			ndev->stats.tx_bytes += xdpf->len;
-			ndev->stats.tx_packets++;
+			dev_sw_netstats_tx_add(ndev, 1, xdpf->len);
 			total_bytes += xdpf->len;
 			xdp_return_frame(xdpf);
 			break;
 		default:
-			netdev_err(ndev, "tx_complete: invalid swdata type %d\n", swdata->type);
 			prueth_xmit_free(tx_chn, desc_tx);
-			budget++;
+			ndev->stats.tx_dropped++;
 			continue;
 		}
 
@@ -294,6 +280,7 @@ fail:
 	prueth_ndev_del_tx_napi(emac, i);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(prueth_ndev_add_tx_napi);
 
 int prueth_init_tx_chns(struct prueth_emac *emac)
 {
@@ -374,6 +361,7 @@ fail:
 	prueth_cleanup_tx_chns(emac);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(prueth_init_tx_chns);
 
 int prueth_init_rx_chns(struct prueth_emac *emac,
 			struct prueth_rx_chn *rx_chn,
@@ -469,12 +457,12 @@ int prueth_init_rx_chns(struct prueth_emac *emac,
 		if (!i)
 			fdqring_id = k3_udma_glue_rx_flow_get_fdq_id(rx_chn->rx_chn,
 								     i);
-		rx_chn->irq[i] = k3_udma_glue_rx_get_irq(rx_chn->rx_chn, i);
-		if (rx_chn->irq[i] <= 0) {
-			ret = rx_chn->irq[i];
+		ret = k3_udma_glue_rx_get_irq(rx_chn->rx_chn, i);
+		if (ret < 0) {
 			netdev_err(ndev, "Failed to get rx dma irq");
 			goto fail;
 		}
+		rx_chn->irq[i] = ret;
 	}
 
 	return 0;
@@ -483,10 +471,11 @@ fail:
 	prueth_cleanup_rx_chns(emac, rx_chn, max_rflows);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(prueth_init_rx_chns);
 
-static int prueth_dma_rx_push_mapped(struct prueth_emac *emac,
-				     struct prueth_rx_chn *rx_chn,
-				     struct page *page, u32 buf_len)
+int prueth_dma_rx_push_mapped(struct prueth_emac *emac,
+			      struct prueth_rx_chn *rx_chn,
+			      struct page *page, u32 buf_len)
 {
 	struct net_device *ndev = emac->ndev;
 	struct cppi5_host_desc_t *desc_rx;
@@ -510,11 +499,11 @@ static int prueth_dma_rx_push_mapped(struct prueth_emac *emac,
 	swdata = cppi5_hdesc_get_swdata(desc_rx);
 	swdata->type = PRUETH_SWDATA_PAGE;
 	swdata->data.page = page;
-	swdata->rx_chn = rx_chn;
 
-	return k3_udma_glue_push_rx_chn(rx_chn->rx_chn, 0,
+	return k3_udma_glue_push_rx_chn(rx_chn->rx_chn, PRUETH_RX_FLOW_DATA,
 					desc_rx, desc_dma);
 }
+EXPORT_SYMBOL_GPL(prueth_dma_rx_push_mapped);
 
 u64 icssg_ts_to_ns(u32 hi_sw, u32 hi, u32 lo, u32 cycle_time_ns)
 {
@@ -530,6 +519,7 @@ u64 icssg_ts_to_ns(u32 hi_sw, u32 hi, u32 lo, u32 cycle_time_ns)
 
 	return ns;
 }
+EXPORT_SYMBOL_GPL(icssg_ts_to_ns);
 
 void emac_rx_timestamp(struct prueth_emac *emac,
 		       struct sk_buff *skb, u32 *psdata)
@@ -551,15 +541,161 @@ void emac_rx_timestamp(struct prueth_emac *emac,
 	ssh->hwtstamp = ns_to_ktime(ns);
 }
 
-static unsigned int prueth_rxbuf_total_len(unsigned int len)
+/**
+ * emac_xmit_xdp_frame - transmits an XDP frame
+ * @emac: emac device
+ * @xdpf: data to transmit
+ * @page: page from page pool if already DMA mapped
+ * @q_idx: queue id
+ *
+ * Return: XDP state
+ */
+u32 emac_xmit_xdp_frame(struct prueth_emac *emac,
+			struct xdp_frame *xdpf,
+			struct page *page,
+			unsigned int q_idx)
 {
-	len += PRUETH_HEADROOM;
-	len += SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+	struct cppi5_host_desc_t *first_desc;
+	struct net_device *ndev = emac->ndev;
+	struct netdev_queue *netif_txq;
+	struct prueth_tx_chn *tx_chn;
+	dma_addr_t desc_dma, buf_dma;
+	struct prueth_swdata *swdata;
+	u32 *epib;
+	int ret;
 
-	return SKB_DATA_ALIGN(len);
+	if (q_idx >= PRUETH_MAX_TX_QUEUES) {
+		netdev_err(ndev, "xdp tx: invalid q_id %d\n", q_idx);
+		return ICSSG_XDP_CONSUMED;	/* drop */
+	}
+
+	tx_chn = &emac->tx_chns[q_idx];
+
+	first_desc = k3_cppi_desc_pool_alloc(tx_chn->desc_pool);
+	if (!first_desc) {
+		netdev_dbg(ndev, "xdp tx: failed to allocate descriptor\n");
+		return ICSSG_XDP_CONSUMED;	/* drop */
+	}
+
+	if (page) { /* already DMA mapped by page_pool */
+		buf_dma = page_pool_get_dma_addr(page);
+		buf_dma += xdpf->headroom + sizeof(struct xdp_frame);
+	} else { /* Map the linear buffer */
+		buf_dma = dma_map_single(tx_chn->dma_dev, xdpf->data, xdpf->len, DMA_TO_DEVICE);
+		if (dma_mapping_error(tx_chn->dma_dev, buf_dma)) {
+			netdev_err(ndev, "xdp tx: failed to map data buffer\n");
+			goto drop_free_descs;	/* drop */
+		}
+	}
+
+	cppi5_hdesc_init(first_desc, CPPI5_INFO0_HDESC_EPIB_PRESENT,
+			 PRUETH_NAV_PS_DATA_SIZE);
+	cppi5_hdesc_set_pkttype(first_desc, 0);
+	epib = first_desc->epib;
+	epib[0] = 0;
+	epib[1] = 0;
+
+	/* set dst tag to indicate internal qid at the firmware which is at
+	 * bit8..bit15. bit0..bit7 indicates port num for directed
+	 * packets in case of switch mode operation
+	 */
+	cppi5_desc_set_tags_ids(&first_desc->hdr, 0, (emac->port_id | (q_idx << 8)));
+	k3_udma_glue_tx_dma_to_cppi5_addr(tx_chn->tx_chn, &buf_dma);
+	cppi5_hdesc_attach_buf(first_desc, buf_dma, xdpf->len, buf_dma, xdpf->len);
+	swdata = cppi5_hdesc_get_swdata(first_desc);
+	swdata->type = PRUETH_SWDATA_XDPF;
+	swdata->data.xdpf = xdpf;
+
+	/* Report BQL before sending the packet */
+	netif_txq = netdev_get_tx_queue(ndev, tx_chn->id);
+	netdev_tx_sent_queue(netif_txq, xdpf->len);
+
+	cppi5_hdesc_set_pktlen(first_desc, xdpf->len);
+	desc_dma = k3_cppi_desc_pool_virt2dma(tx_chn->desc_pool, first_desc);
+
+	ret = k3_udma_glue_push_tx_chn(tx_chn->tx_chn, first_desc, desc_dma);
+	if (ret) {
+		netdev_err(ndev, "xdp tx: push failed: %d\n", ret);
+		netdev_tx_completed_queue(netif_txq, 1, xdpf->len);
+		goto drop_free_descs;
+	}
+
+	return ICSSG_XDP_TX;
+
+drop_free_descs:
+	prueth_xmit_free(tx_chn, first_desc);
+	return ICSSG_XDP_CONSUMED;
+}
+EXPORT_SYMBOL_GPL(emac_xmit_xdp_frame);
+
+/**
+ * emac_run_xdp - run an XDP program
+ * @emac: emac device
+ * @xdp: XDP buffer containing the frame
+ * @page: page with RX data if already DMA mapped
+ * @len: Rx descriptor packet length
+ *
+ * Return: XDP state
+ */
+static u32 emac_run_xdp(struct prueth_emac *emac, struct xdp_buff *xdp,
+			struct page *page, u32 *len)
+{
+	struct net_device *ndev = emac->ndev;
+	struct netdev_queue *netif_txq;
+	int cpu = smp_processor_id();
+	struct bpf_prog *xdp_prog;
+	struct xdp_frame *xdpf;
+	u32 pkt_len = *len;
+	u32 act, result;
+	int q_idx, err;
+
+	xdp_prog = READ_ONCE(emac->xdp_prog);
+	act = bpf_prog_run_xdp(xdp_prog, xdp);
+	switch (act) {
+	case XDP_PASS:
+		return ICSSG_XDP_PASS;
+	case XDP_TX:
+		/* Send packet to TX ring for immediate transmission */
+		xdpf = xdp_convert_buff_to_frame(xdp);
+		if (unlikely(!xdpf)) {
+			ndev->stats.tx_dropped++;
+			goto drop;
+		}
+
+		q_idx = cpu % emac->tx_ch_num;
+		netif_txq = netdev_get_tx_queue(ndev, q_idx);
+		__netif_tx_lock(netif_txq, cpu);
+		result = emac_xmit_xdp_frame(emac, xdpf, page, q_idx);
+		__netif_tx_unlock(netif_txq);
+		if (result == ICSSG_XDP_CONSUMED) {
+			ndev->stats.tx_dropped++;
+			goto drop;
+		}
+
+		dev_sw_netstats_rx_add(ndev, xdpf->len);
+		return result;
+	case XDP_REDIRECT:
+		err = xdp_do_redirect(emac->ndev, xdp, xdp_prog);
+		if (err)
+			goto drop;
+
+		dev_sw_netstats_rx_add(ndev, pkt_len);
+		return ICSSG_XDP_REDIR;
+	default:
+		bpf_warn_invalid_xdp_action(emac->ndev, xdp_prog, act);
+		fallthrough;
+	case XDP_ABORTED:
+drop:
+		trace_xdp_exception(emac->ndev, xdp_prog, act);
+		fallthrough; /* handle aborts by dropping packet */
+	case XDP_DROP:
+		ndev->stats.rx_dropped++;
+		page_pool_recycle_direct(emac->rx_chns.pg_pool, page);
+		return ICSSG_XDP_CONSUMED;
+	}
 }
 
-static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id, int *xdp_state)
+static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id, u32 *xdp_state)
 {
 	struct prueth_rx_chn *rx_chn = &emac->rx_chns;
 	u32 buf_dma_len, pkt_len, port_id = 0;
@@ -588,14 +724,15 @@ static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id, int *xdp_state)
 		return 0;
 
 	desc_rx = k3_cppi_desc_pool_dma2virt(rx_chn->desc_pool, desc_dma);
-
 	swdata = cppi5_hdesc_get_swdata(desc_rx);
 	if (swdata->type != PRUETH_SWDATA_PAGE) {
-		netdev_err(ndev, "rx_pkt: invliad swdata->type %d\n", swdata->type);
+		netdev_err(ndev, "rx_pkt: invalid swdata->type %d\n", swdata->type);
+		k3_cppi_desc_pool_free(rx_chn->desc_pool, desc_rx);
 		return 0;
 	}
-	page = swdata->data.page;
 
+	page = swdata->data.page;
+	page_pool_dma_sync_for_cpu(pool, page, 0, PAGE_SIZE);
 	cppi5_hdesc_get_obuf(desc_rx, &buf_dma, &buf_dma_len);
 	k3_udma_glue_rx_cppi5_to_dma_addr(rx_chn->rx_chn, &buf_dma);
 	pkt_len = cppi5_hdesc_get_pktlen(desc_rx);
@@ -620,13 +757,13 @@ static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id, int *xdp_state)
 		xdp_init_buff(&xdp, PAGE_SIZE, &rx_chn->xdp_rxq);
 		xdp_prepare_buff(&xdp, pa, PRUETH_HEADROOM, pkt_len, false);
 
-		*xdp_state = emac_run_xdp(emac, &xdp, page);
+		*xdp_state = emac_run_xdp(emac, &xdp, page, &pkt_len);
 		if (*xdp_state != ICSSG_XDP_PASS)
 			goto requeue;
 	}
 
 	/* prepare skb and send to n/w stack */
-	skb = build_skb(pa, prueth_rxbuf_total_len(pkt_len));
+	skb = napi_build_skb(pa, PAGE_SIZE);
 	if (!skb) {
 		ndev->stats.rx_dropped++;
 		page_pool_recycle_direct(pool, page);
@@ -646,7 +783,8 @@ static int emac_rx_packet(struct prueth_emac *emac, u32 flow_id, int *xdp_state)
 		skb->offload_fwd_mark = emac->offload_fwd_mark;
 	skb->protocol = eth_type_trans(skb, ndev);
 
-	netif_receive_skb(skb);
+	skb_mark_for_recycle(skb);
+	napi_gro_receive(&emac->napi_rx, skb);
 	ndev->stats.rx_bytes += pkt_len;
 	ndev->stats.rx_packets++;
 
@@ -672,13 +810,13 @@ static void prueth_rx_cleanup(void *data, dma_addr_t desc_dma)
 	struct page *page;
 
 	pool = rx_chn->pg_pool;
-
 	desc_rx = k3_cppi_desc_pool_dma2virt(rx_chn->desc_pool, desc_dma);
 	swdata = cppi5_hdesc_get_swdata(desc_rx);
 	if (swdata->type == PRUETH_SWDATA_PAGE) {
 		page = swdata->data.page;
 		page_pool_recycle_direct(pool, page);
 	}
+
 	k3_cppi_desc_pool_free(rx_chn->desc_pool, desc_rx);
 }
 
@@ -698,7 +836,7 @@ static int prueth_tx_ts_cookie_get(struct prueth_emac *emac)
 }
 
 /**
- * emac_ndo_start_xmit - EMAC Transmit function
+ * icssg_ndo_start_xmit - EMAC Transmit function
  * @skb: SKB pointer
  * @ndev: EMAC network adapter
  *
@@ -709,7 +847,7 @@ static int prueth_tx_ts_cookie_get(struct prueth_emac *emac)
  *
  * Return: enum netdev_tx
  */
-enum netdev_tx emac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+enum netdev_tx icssg_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	struct cppi5_host_desc_t *first_desc, *next_desc, *cur_desc;
 	struct prueth_emac *emac = netdev_priv(ndev);
@@ -834,6 +972,7 @@ enum netdev_tx emac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	ret = k3_udma_glue_push_tx_chn(tx_chn->tx_chn, first_desc, desc_dma);
 	if (ret) {
 		netdev_err(ndev, "tx: push failed: %d\n", ret);
+		netdev_tx_completed_queue(netif_txq, 1, pkt_len);
 		goto drop_free_descs;
 	}
 
@@ -881,6 +1020,7 @@ drop_stop_q_busy:
 	netif_tx_stop_queue(netif_txq);
 	return NETDEV_TX_BUSY;
 }
+EXPORT_SYMBOL_GPL(icssg_ndo_start_xmit);
 
 static void prueth_tx_cleanup(void *data, dma_addr_t desc_dma)
 {
@@ -918,30 +1058,7 @@ irqreturn_t prueth_rx_irq(int irq, void *dev_id)
 
 	return IRQ_HANDLED;
 }
-
-void prueth_emac_stop(struct prueth_emac *emac)
-{
-	struct prueth *prueth = emac->prueth;
-	int slice;
-
-	switch (emac->port_id) {
-	case PRUETH_PORT_MII0:
-		slice = ICSS_SLICE0;
-		break;
-	case PRUETH_PORT_MII1:
-		slice = ICSS_SLICE1;
-		break;
-	default:
-		netdev_err(emac->ndev, "invalid port\n");
-		return;
-	}
-
-	emac->fw_running = 0;
-	if (!emac->is_sr1)
-		rproc_shutdown(prueth->txpru[slice]);
-	rproc_shutdown(prueth->rtu[slice]);
-	rproc_shutdown(prueth->pru[slice]);
-}
+EXPORT_SYMBOL_GPL(prueth_rx_irq);
 
 void prueth_cleanup_tx_ts(struct prueth_emac *emac)
 {
@@ -954,8 +1071,9 @@ void prueth_cleanup_tx_ts(struct prueth_emac *emac)
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(prueth_cleanup_tx_ts);
 
-int emac_napi_rx_poll(struct napi_struct *napi_rx, int budget)
+int icssg_napi_rx_poll(struct napi_struct *napi_rx, int budget)
 {
 	struct prueth_emac *emac = prueth_napi_to_emac(napi_rx);
 	int rx_flow = emac->is_sr1 ?
@@ -965,7 +1083,7 @@ int emac_napi_rx_poll(struct napi_struct *napi_rx, int budget)
 	int xdp_state_or = 0;
 	int num_rx = 0;
 	int cur_budget;
-	int xdp_state;
+	u32 xdp_state;
 	int ret;
 
 	while (flow--) {
@@ -998,6 +1116,7 @@ int emac_napi_rx_poll(struct napi_struct *napi_rx, int budget)
 
 	return num_rx;
 }
+EXPORT_SYMBOL_GPL(icssg_napi_rx_poll);
 
 static struct page_pool *prueth_create_page_pool(struct prueth_emac *emac,
 						 struct device *dma_dev,
@@ -1007,12 +1126,13 @@ static struct page_pool *prueth_create_page_pool(struct prueth_emac *emac,
 	struct page_pool *pool;
 
 	pp_params.order = 0;
-	pp_params.flags = PP_FLAG_DMA_MAP;
+	pp_params.flags = PP_FLAG_DMA_MAP | PP_FLAG_DMA_SYNC_DEV;
 	pp_params.pool_size = size;
 	pp_params.nid = dev_to_node(emac->prueth->dev);
 	pp_params.dma_dir = DMA_BIDIRECTIONAL;
 	pp_params.dev = dma_dev;
 	pp_params.napi = &emac->napi_rx;
+	pp_params.max_len = PAGE_SIZE;
 
 	pool = page_pool_create(&pp_params);
 	if (IS_ERR(pool))
@@ -1021,28 +1141,13 @@ static struct page_pool *prueth_create_page_pool(struct prueth_emac *emac,
 	return pool;
 }
 
-static struct page *prueth_get_page_from_rx_chn(struct prueth_rx_chn *chn)
-{
-	struct cppi5_host_desc_t *desc_rx;
-	struct prueth_swdata *swdata;
-	dma_addr_t desc_dma;
-	struct page *page;
-
-	k3_udma_glue_pop_rx_chn(chn->rx_chn, 0, &desc_dma);
-	desc_rx = k3_cppi_desc_pool_dma2virt(chn->desc_pool, desc_dma);
-	swdata = cppi5_hdesc_get_swdata(desc_rx);
-	page = swdata->data.page;
-
-	return page;
-}
-
 int prueth_prepare_rx_chan(struct prueth_emac *emac,
 			   struct prueth_rx_chn *chn,
 			   int buf_size)
 {
 	struct page_pool *pool;
 	struct page *page;
-	int i, ret, j;
+	int i, ret;
 
 	pool = prueth_create_page_pool(emac, chn->dma_dev, chn->descs_num);
 	if (IS_ERR(pool))
@@ -1065,7 +1170,7 @@ int prueth_prepare_rx_chan(struct prueth_emac *emac,
 		ret = prueth_dma_rx_push_mapped(emac, chn, page, buf_size);
 		if (ret < 0) {
 			netdev_err(emac->ndev,
-				   "cannot submit skb for rx chan %s ret %d\n",
+				   "cannot submit page for rx chan %s ret %d\n",
 				   chn->name, ret);
 			page_pool_recycle_direct(pool, page);
 			goto recycle_alloc_pg;
@@ -1075,15 +1180,11 @@ int prueth_prepare_rx_chan(struct prueth_emac *emac,
 	return 0;
 
 recycle_alloc_pg:
-	for (j = 0; j < i; j++) {
-		page = prueth_get_page_from_rx_chn(chn);
-		page_pool_recycle_direct(pool, page);
-	}
-	page_pool_destroy(pool);
-	chn->pg_pool = NULL;
+	prueth_reset_rx_chan(&emac->rx_chns, PRUETH_MAX_RX_FLOWS, false);
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(prueth_prepare_rx_chan);
 
 void prueth_reset_tx_chan(struct prueth_emac *emac, int ch_num,
 			  bool free_skb)
@@ -1098,6 +1199,7 @@ void prueth_reset_tx_chan(struct prueth_emac *emac, int ch_num,
 		k3_udma_glue_disable_tx_chn(emac->tx_chns[i].tx_chn);
 	}
 }
+EXPORT_SYMBOL_GPL(prueth_reset_tx_chan);
 
 void prueth_reset_rx_chan(struct prueth_rx_chn *chn,
 			  int num_flows, bool disable)
@@ -1110,11 +1212,13 @@ void prueth_reset_rx_chan(struct prueth_rx_chn *chn,
 	if (disable)
 		k3_udma_glue_disable_rx_chn(chn->rx_chn);
 }
+EXPORT_SYMBOL_GPL(prueth_reset_rx_chan);
 
-void emac_ndo_tx_timeout(struct net_device *ndev, unsigned int txqueue)
+void icssg_ndo_tx_timeout(struct net_device *ndev, unsigned int txqueue)
 {
 	ndev->stats.tx_errors++;
 }
+EXPORT_SYMBOL_GPL(icssg_ndo_tx_timeout);
 
 static int emac_set_ts_config(struct net_device *ndev, struct ifreq *ifr)
 {
@@ -1178,7 +1282,7 @@ static int emac_get_ts_config(struct net_device *ndev, struct ifreq *ifr)
 			    -EFAULT : 0;
 }
 
-int emac_ndo_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
+int icssg_ndo_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
 {
 	switch (cmd) {
 	case SIOCGHWTSTAMP:
@@ -1191,9 +1295,10 @@ int emac_ndo_ioctl(struct net_device *ndev, struct ifreq *ifr, int cmd)
 
 	return phy_do_ioctl(ndev, ifr, cmd);
 }
+EXPORT_SYMBOL_GPL(icssg_ndo_ioctl);
 
-void emac_ndo_get_stats64(struct net_device *ndev,
-			  struct rtnl_link_stats64 *stats)
+void icssg_ndo_get_stats64(struct net_device *ndev,
+			   struct rtnl_link_stats64 *stats)
 {
 	struct prueth_emac *emac = netdev_priv(ndev);
 
@@ -1212,6 +1317,21 @@ void emac_ndo_get_stats64(struct net_device *ndev,
 	stats->tx_errors  = ndev->stats.tx_errors;
 	stats->tx_dropped = ndev->stats.tx_dropped;
 }
+EXPORT_SYMBOL_GPL(icssg_ndo_get_stats64);
+
+int icssg_ndo_get_phys_port_name(struct net_device *ndev, char *name,
+				 size_t len)
+{
+	struct prueth_emac *emac = netdev_priv(ndev);
+	int ret;
+
+	ret = snprintf(name, len, "p%d", emac->port_id);
+	if (ret >= len)
+		return -EINVAL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(icssg_ndo_get_phys_port_name);
 
 /* get emac_port corresponding to eth_node name */
 int prueth_node_port(struct device_node *eth_node)
@@ -1230,6 +1350,7 @@ int prueth_node_port(struct device_node *eth_node)
 	else
 		return PRUETH_PORT_INVALID;
 }
+EXPORT_SYMBOL_GPL(prueth_node_port);
 
 /* get MAC instance corresponding to eth_node name */
 int prueth_node_mac(struct device_node *eth_node)
@@ -1248,6 +1369,7 @@ int prueth_node_mac(struct device_node *eth_node)
 	else
 		return PRUETH_MAC_INVALID;
 }
+EXPORT_SYMBOL_GPL(prueth_node_mac);
 
 void prueth_netdev_exit(struct prueth *prueth,
 			struct device_node *eth_node)
@@ -1273,6 +1395,7 @@ void prueth_netdev_exit(struct prueth *prueth,
 	free_netdev(emac->ndev);
 	prueth->emac[mac] = NULL;
 }
+EXPORT_SYMBOL_GPL(prueth_netdev_exit);
 
 int prueth_get_cores(struct prueth *prueth, int slice, bool is_sr1)
 {
@@ -1323,6 +1446,7 @@ int prueth_get_cores(struct prueth *prueth, int slice, bool is_sr1)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(prueth_get_cores);
 
 void prueth_put_cores(struct prueth *prueth, int slice)
 {
@@ -1335,6 +1459,7 @@ void prueth_put_cores(struct prueth *prueth, int slice)
 	if (prueth->pru[slice])
 		pru_rproc_put(prueth->pru[slice]);
 }
+EXPORT_SYMBOL_GPL(prueth_put_cores);
 
 #ifdef CONFIG_PM_SLEEP
 static int prueth_suspend(struct device *dev)
@@ -1391,3 +1516,9 @@ static int prueth_resume(struct device *dev)
 const struct dev_pm_ops prueth_dev_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(prueth_suspend, prueth_resume)
 };
+EXPORT_SYMBOL_GPL(prueth_dev_pm_ops);
+
+MODULE_AUTHOR("Roger Quadros <rogerq@ti.com>");
+MODULE_AUTHOR("Md Danish Anwar <danishanwar@ti.com>");
+MODULE_DESCRIPTION("PRUSS ICSSG Ethernet Driver Common Module");
+MODULE_LICENSE("GPL");

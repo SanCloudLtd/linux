@@ -64,7 +64,7 @@ static void mux_chip_release(struct device *dev)
 {
 	struct mux_chip *mux_chip = to_mux_chip(dev);
 
-	ida_simple_remove(&mux_ida, mux_chip->id);
+	ida_free(&mux_ida, mux_chip->id);
 	kfree(mux_chip);
 }
 
@@ -111,7 +111,7 @@ struct mux_chip *mux_chip_alloc(struct device *dev,
 	mux_chip->dev.of_node = dev->of_node;
 	dev_set_drvdata(&mux_chip->dev, mux_chip);
 
-	mux_chip->id = ida_simple_get(&mux_ida, 0, 0, GFP_KERNEL);
+	mux_chip->id = ida_alloc(&mux_ida, GFP_KERNEL);
 	if (mux_chip->id < 0) {
 		int err = mux_chip->id;
 
@@ -214,35 +214,6 @@ void mux_chip_free(struct mux_chip *mux_chip)
 	put_device(&mux_chip->dev);
 }
 EXPORT_SYMBOL_GPL(mux_chip_free);
-
-/**
- * mux_chip_resume() - restores the mux-chip state
- * @mux_chip: The mux-chip to resume.
- *
- * Restores the mux-chip state.
- *
- * Return: Zero on success or a negative errno on error.
- */
-int mux_chip_resume(struct mux_chip *mux_chip)
-{
-	int ret, i;
-
-	for (i = 0; i < mux_chip->controllers; ++i) {
-		struct mux_control *mux = &mux_chip->mux[i];
-
-		if (mux->cached_state == MUX_CACHE_UNKNOWN)
-			continue;
-
-		ret = mux_control_set(mux, mux->cached_state);
-		if (ret < 0) {
-			dev_err(&mux_chip->dev, "unable to restore state\n");
-			return ret;
-		}
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(mux_chip_resume);
 
 static void devm_mux_chip_release(struct device *dev, void *res)
 {

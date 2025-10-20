@@ -4,9 +4,9 @@
  *
  * Communication protocol with TI SCI hardware
  * The system works in a message response protocol
- * See: http://processors.wiki.ti.com/index.php/TISCI for details
+ * See: https://software-dl.ti.com/tisci/esd/latest/index.html for details
  *
- * Copyright (C)  2015-2022 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C)  2015-2025 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 #ifndef __TI_SCI_H
@@ -37,11 +37,12 @@
 #define TI_SCI_MSG_GET_CLOCK_FREQ	0x010e
 
 /* Low Power Mode Requests */
-#define TI_SCI_MSG_PREPARE_SLEEP       0x0300
+#define TI_SCI_MSG_PREPARE_SLEEP	0x0300
 #define TI_SCI_MSG_LPM_WAKE_REASON	0x0306
 #define TI_SCI_MSG_SET_IO_ISOLATION	0x0307
 #define TI_SCI_MSG_LPM_SET_DEVICE_CONSTRAINT	0x0309
 #define TI_SCI_MSG_LPM_SET_LATENCY_CONSTRAINT	0x030A
+#define TI_SCI_MSG_LPM_ABORT	0x0311
 
 /* Resource Management Requests */
 #define TI_SCI_MSG_GET_RESOURCE_RANGE	0x1500
@@ -145,10 +146,8 @@ struct ti_sci_msg_req_reboot {
  * @hdr:	Generic header
  * @fw_caps:	Each bit in fw_caps indicating one FW/SOC capability
  *		MSG_FLAG_CAPS_GENERIC: Generic capability (LPM not supported)
- *		MSG_FLAG_CAPS_LPM_DEEP_SLEEP: Deep Sleep LPM
- *		MSG_FLAG_CAPS_LPM_MCU_ONLY: MCU only LPM
- *		MSG_FLAG_CAPS_LPM_STANDBY: Standby LPM
  *		MSG_FLAG_CAPS_LPM_PARTIAL_IO: Partial IO in LPM
+ *		MSG_FLAG_CAPS_LPM_DM_MANAGED: LPM can be managed by DM
  *
  * Response to a generic message with message type TI_SCI_MSG_QUERY_FW_CAPS
  * providing currently available SOC/firmware capabilities. SoC that don't
@@ -157,9 +156,6 @@ struct ti_sci_msg_req_reboot {
 struct ti_sci_msg_resp_query_fw_caps {
 	struct ti_sci_msg_hdr hdr;
 #define MSG_FLAG_CAPS_GENERIC		TI_SCI_MSG_FLAG(0)
-#define MSG_FLAG_CAPS_LPM_DEEP_SLEEP	TI_SCI_MSG_FLAG(1)
-#define MSG_FLAG_CAPS_LPM_MCU_ONLY	TI_SCI_MSG_FLAG(2)
-#define MSG_FLAG_CAPS_LPM_STANDBY	TI_SCI_MSG_FLAG(3)
 #define MSG_FLAG_CAPS_LPM_PARTIAL_IO	TI_SCI_MSG_FLAG(4)
 #define MSG_FLAG_CAPS_LPM_DM_MANAGED	TI_SCI_MSG_FLAG(5)
 #define MSG_MASK_CAPS_LPM		GENMASK_ULL(4, 1)
@@ -579,14 +575,8 @@ struct ti_sci_msg_resp_get_clock_freq {
 	u64 freq_hz;
 } __packed;
 
-#define TISCI_MSG_VALUE_SLEEP_MODE_DEEP_SLEEP				0x0
-#define TISCI_MSG_VALUE_SLEEP_MODE_MCU_ONLY				0x1
-#define TISCI_MSG_VALUE_SLEEP_MODE_STANDBY				0x2
-#define TISCI_MSG_VALUE_SLEEP_MODE_PARTIAL_IO				0x3
-#define TISCI_MSG_VALUE_SLEEP_MODE_DM_MANAGED				0xfd
-
 /**
- * struct tisci_msg_prepare_sleep_req - Request for TISCI_MSG_PREPARE_SLEEP.
+ * struct tisci_msg_req_prepare_sleep - Request for TISCI_MSG_PREPARE_SLEEP.
  *
  * @hdr				TISCI header to provide ACK/NAK flags to the host.
  * @mode			Low power mode to enter.
@@ -602,26 +592,17 @@ struct ti_sci_msg_resp_get_clock_freq {
  */
 struct ti_sci_msg_req_prepare_sleep {
 	struct ti_sci_msg_hdr	hdr;
+
+/*
+ * When sending perpare_sleep with MODE_PARTIAL_IO no response will be sent,
+ * no further steps are required.
+ */
+#define TISCI_MSG_VALUE_SLEEP_MODE_PARTIAL_IO				0x03
+#define TISCI_MSG_VALUE_SLEEP_MODE_DM_MANAGED				0xfd
 	u8			mode;
 	u32			ctx_lo;
 	u32			ctx_hi;
 	u32			debug_flags;
-} __packed;
-
-/**
- * struct ti_sci_msg_resp_lpm_wake_reason - Response for TI_SCI_MSG_LPM_WAKE_REASON.
- *
- * @hdr:		Generic header.
- * @wake_source:	The wake up source that woke soc from LPM.
- * @wake_timestamp:	Timestamp at which soc woke.
- *
- * Response to a generic message with message type TI_SCI_MSG_LPM_WAKE_REASON,
- * used to query the wake up source from low power mode.
- */
-struct ti_sci_msg_resp_lpm_wake_reason {
-	struct ti_sci_msg_hdr hdr;
-	u32 wake_source;
-	u64 wake_timestamp;
 } __packed;
 
 /**
@@ -636,6 +617,28 @@ struct ti_sci_msg_resp_lpm_wake_reason {
 struct ti_sci_msg_req_set_io_isolation {
 	struct ti_sci_msg_hdr hdr;
 	u8 state;
+} __packed;
+
+/**
+ * struct ti_sci_msg_resp_lpm_wake_reason - Response for TI_SCI_MSG_LPM_WAKE_REASON.
+ *
+ * @hdr:		Generic header.
+ * @wake_source:	The wake up source that woke soc from LPM.
+ * @wake_timestamp:	Timestamp at which soc woke.
+ * @wake_pin: The pin that has triggered wake up.
+ * @mode: The last entered low power mode.
+ * @rsvd:	Reserved for future use.
+ *
+ * Response to a generic message with message type TI_SCI_MSG_LPM_WAKE_REASON,
+ * used to query the wake up source, pin and entered low power mode.
+ */
+struct ti_sci_msg_resp_lpm_wake_reason {
+	struct ti_sci_msg_hdr hdr;
+	u32 wake_source;
+	u64 wake_timestamp;
+	u8 wake_pin;
+	u8 mode;
+	u32 rsvd[2];
 } __packed;
 
 /**

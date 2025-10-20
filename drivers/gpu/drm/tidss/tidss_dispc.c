@@ -136,6 +136,29 @@ static const u16 tidss_am65x_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
 	[DISPC_SECURE_DISABLE_OFF] =		0xac,
 };
 
+static const u16 tidss_am62l_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+	[DSS_REVISION_OFF] =			0x4,
+	[DSS_SYSCONFIG_OFF] =			0x8,
+	[DSS_SYSSTATUS_OFF] =			0x20,
+	[DISPC_IRQ_EOI_OFF] =			0x24,
+	[DISPC_IRQSTATUS_RAW_OFF] =		0x28,
+	[DISPC_IRQSTATUS_OFF] =			0x2c,
+	[DISPC_IRQENABLE_SET_OFF] =		0x30,
+	[DISPC_IRQENABLE_CLR_OFF] =		0x40,
+	[DISPC_VID_IRQENABLE_OFF] =		0x48,
+	[DISPC_VID_IRQSTATUS_OFF] =		0x5c,
+	[DISPC_VP_IRQENABLE_OFF] =		0x70,
+	[DISPC_VP_IRQSTATUS_OFF] =		0x7c,
+
+	[DISPC_GLOBAL_MFLAG_ATTRIBUTE_OFF] =	0x90,
+	[DISPC_GLOBAL_OUTPUT_ENABLE_OFF] =	0x94,
+	[DSS_CBA_CFG_OFF] =			0x9c,
+	[DISPC_DBG_CONTROL_OFF] =		0xa0,
+	[DISPC_DBG_STATUS_OFF] =		0xa4,
+	[DISPC_CLKGATING_DISABLE_OFF] =		0xa8,
+	[DISPC_SECURE_DISABLE_OFF] =		0xac,
+};
+
 const struct dispc_features dispc_am65x_feats = {
 	.max_pclk_khz = {
 		[DISPC_VP_DPI] = 165000,
@@ -486,6 +509,35 @@ const struct dispc_features dispc_am62p52_feats = {
 	.vid_order = { 1, 0 },
 };
 
+const struct dispc_features dispc_am62l_feats = {
+	.max_pclk_khz = {
+		[DISPC_VP_DPI] = 165000,
+	},
+
+	.subrev = DISPC_AM62L,
+
+	.common = "common",
+	.common_regs = tidss_am62l_common_regs,
+
+	.num_vps = 1,
+	.vp_name = { "vp1" },
+	.ovr_name = { "ovr1" },
+	.vpclk_name =  { "vp1" },
+	.vp_bus_type = { DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 1,
+	.vid_name = { "vidl1" },
+	.vid_lite = { true },
+	.vid_order = { 0 },
+};
+
 static const u16 *dispc_common_regmap;
 
 struct dss_vp_data {
@@ -576,14 +628,23 @@ static u32 dispc_vp_read(struct dispc_device *dispc, u32 hw_videoport, u16 reg)
 	return ioread32(base + reg);
 }
 
-u32 tidss_get_status(struct tidss_device *tidss)
+void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport,
+			  u32 oldi_cfg)
 {
-	return dispc_read(tidss->dispc, DSS_SYSSTATUS);
-}
+	u32 count = 0;
+	u32 oldi_reset_bit = BIT(5 + hw_videoport);
 
-void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport, u32 val)
-{
-	return dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, val);
+	dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, oldi_cfg);
+
+	if (oldi_cfg != 0) {
+		while (!(oldi_reset_bit & dispc_read(tidss->dispc, DSS_SYSSTATUS)) &&
+		       count < 10000)
+			count++;
+
+		if (!(oldi_reset_bit & dispc_read(tidss->dispc, DSS_SYSSTATUS)))
+			dev_warn(tidss->dispc->dev, "%s: timeout waiting OLDI reset done\n",
+				 __func__);
+	}
 }
 
 /*
@@ -921,6 +982,41 @@ void dispc_k3_clear_irqstatus(struct dispc_device *dispc, dispc_irq_t clearmask)
 }
 
 static
+void dispc_am62l_clear_irqstatus(struct dispc_device *dispc, dispc_irq_t clearmask)
+{
+	u32 top_clear = 0;
+
+	if (clearmask & DSS_IRQ_VP_MASK(0)) {
+		dispc_k3_vp_write_irqstatus(dispc, 0, clearmask);
+		top_clear |= BIT(0);
+	}
+
+	if (clearmask & DSS_IRQ_PLANE_MASK(0)) {
+		dispc_k3_vid_write_irqstatus(dispc, 0, clearmask);
+		top_clear |= BIT(5);
+	}
+
+	/* always clear the top level irqstatus */
+	dispc_write(dispc, DISPC_IRQSTATUS, dispc_read(dispc, DISPC_IRQSTATUS));
+
+	/* Flush posted writes */
+	dispc_read(dispc, DISPC_IRQSTATUS);
+}
+
+static
+dispc_irq_t dispc_am62l_read_and_clear_irqstatus(struct dispc_device *dispc)
+{
+	dispc_irq_t status = 0;
+
+	status |= dispc_k3_vp_read_irqstatus(dispc, 0);
+	status |= dispc_k3_vid_read_irqstatus(dispc, 0);
+
+	dispc_am62l_clear_irqstatus(dispc, status);
+
+	return status;
+}
+
+static
 dispc_irq_t dispc_k3_read_and_clear_irqstatus(struct dispc_device *dispc)
 {
 	dispc_irq_t status = 0;
@@ -949,6 +1045,39 @@ static dispc_irq_t dispc_k3_read_irqenable(struct dispc_device *dispc)
 		enable |= dispc_k3_vid_read_irqenable(dispc, i);
 
 	return enable;
+}
+
+static void dispc_am62l_set_irqenable(struct dispc_device *dispc,
+				      dispc_irq_t mask)
+{
+	u32 main_enable = 0, main_disable = 0;
+	dispc_irq_t old_mask;
+
+	old_mask = dispc_k3_read_irqenable(dispc);
+
+	/* clear the irqstatus for newly enabled irqs */
+	dispc_am62l_clear_irqstatus(dispc, (old_mask ^ mask) & mask);
+
+	dispc_k3_vp_set_irqenable(dispc, 0, mask);
+	if (mask & DSS_IRQ_VP_MASK(0))
+		main_enable |= BIT(0);		/* VP IRQ */
+	else
+		main_disable |= BIT(0);		/* VP IRQ */
+
+	dispc_k3_vid_set_irqenable(dispc, 0, mask);
+	if (mask & DSS_IRQ_PLANE_MASK(0))
+		main_enable |= BIT(5);	/* VIDL IRQ */
+	else
+		main_disable |= BIT(5);	/* VIDL IRQ */
+
+	if (main_enable)
+		dispc_write(dispc, DISPC_IRQENABLE_SET, main_enable);
+
+	if (main_disable)
+		dispc_write(dispc, DISPC_IRQENABLE_CLR, main_disable);
+
+	/* Flush posted writes */
+	dispc_read(dispc, DISPC_IRQENABLE_SET);
 }
 
 static void dispc_k3_set_irqenable(struct dispc_device *dispc,
@@ -997,6 +1126,8 @@ dispc_irq_t dispc_read_and_clear_irqstatus(struct dispc_device *dispc)
 	switch (dispc->feat->subrev) {
 	case DISPC_K2G:
 		return dispc_k2g_read_and_clear_irqstatus(dispc);
+	case DISPC_AM62L:
+		return dispc_am62l_read_and_clear_irqstatus(dispc);
 	case DISPC_AM625:
 	case DISPC_AM62A7:
 	case DISPC_AM62P51:
@@ -1015,6 +1146,9 @@ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
 	switch (dispc->feat->subrev) {
 	case DISPC_K2G:
 		dispc_k2g_set_irqenable(dispc, mask);
+		break;
+	case DISPC_AM62L:
+		dispc_am62l_set_irqenable(dispc, mask);
 		break;
 	case DISPC_AM625:
 	case DISPC_AM62A7:
@@ -1208,13 +1342,13 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
 
 	dispc_set_num_datalines(dispc, hw_videoport, fmt->data_width);
 
-	hfp = mode->hsync_start - mode->hdisplay;
-	hsw = mode->hsync_end - mode->hsync_start;
-	hbp = mode->htotal - mode->hsync_end;
+	hfp = mode->crtc_hsync_start - mode->crtc_hdisplay;
+	hsw = mode->crtc_hsync_end - mode->crtc_hsync_start;
+	hbp = mode->crtc_htotal - mode->crtc_hsync_end;
 
-	vfp = mode->vsync_start - mode->vdisplay;
-	vsw = mode->vsync_end - mode->vsync_start;
-	vbp = mode->vtotal - mode->vsync_end;
+	vfp = mode->crtc_vsync_start - mode->crtc_vdisplay;
+	vsw = mode->crtc_vsync_end - mode->crtc_vsync_start;
+	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
 
 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_TIMING_H,
 		       FLD_VAL(hsw - 1, 7, 0) |
@@ -1256,8 +1390,8 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
 		       FLD_VAL(ivs, 12, 12));
 
 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN,
-		       FLD_VAL(mode->hdisplay - 1, 11, 0) |
-		       FLD_VAL(mode->vdisplay - 1, 27, 16));
+		       FLD_VAL(mode->crtc_hdisplay - 1, 11, 0) |
+		       FLD_VAL(mode->crtc_vdisplay - 1, 27, 16));
 
 	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 0, 0);
 }
@@ -1497,6 +1631,17 @@ static void dispc_k2g_ovr_set_plane(struct dispc_device *dispc,
 			x | (y << 16));
 }
 
+static void dispc_am62l_ovr_set_plane(struct dispc_device *dispc,
+				      u32 x, u32 y)
+{
+	OVR_REG_FLD_MOD(dispc, 0, DISPC_OVR_ATTRIBUTES(0),
+			1, 4, 1);
+	OVR_REG_FLD_MOD(dispc, 0, DISPC_OVR_ATTRIBUTES(0),
+			x, 17, 6);
+	OVR_REG_FLD_MOD(dispc, 0, DISPC_OVR_ATTRIBUTES(0),
+			y, 30, 19);
+}
+
 static void dispc_am65x_ovr_set_plane(struct dispc_device *dispc,
 				      u32 hw_plane, u32 hw_videoport,
 				      u32 x, u32 y, u32 layer)
@@ -1528,6 +1673,9 @@ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
 	case DISPC_K2G:
 		dispc_k2g_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					x, y, layer);
+		break;
+	case DISPC_AM62L:
+		dispc_am62l_ovr_set_plane(dispc, x, y);
 		break;
 	case DISPC_AM625:
 	case DISPC_AM62A7:
@@ -2453,6 +2601,7 @@ static void dispc_plane_init(struct dispc_device *dispc)
 		break;
 	case DISPC_AM625:
 	case DISPC_AM62A7:
+	case DISPC_AM62L:
 	case DISPC_AM62P51:
 	case DISPC_AM62P52:
 	case DISPC_AM65X:
@@ -2565,6 +2714,7 @@ static void dispc_vp_write_gamma_table(struct dispc_device *dispc,
 	case DISPC_AM62A7:
 	case DISPC_AM62P51:
 	case DISPC_AM62P52:
+	case DISPC_AM62L:
 	case DISPC_AM65X:
 		dispc_am65x_vp_write_gamma_table(dispc, hw_videoport);
 		break;

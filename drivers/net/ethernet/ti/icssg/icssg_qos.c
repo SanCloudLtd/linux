@@ -77,8 +77,11 @@ static void tas_update_maxsdu_table(struct prueth_emac *emac)
 	/* update the maxsdu table */
 	max_sdu_tbl_ptr = emac->dram.va + TAS_QUEUE_MAX_SDU_LIST;
 
-	for (gate_idx = 0; gate_idx < TAS_MAX_NUM_QUEUES; gate_idx++)
+	for (gate_idx = 0; gate_idx < TAS_MAX_NUM_QUEUES; gate_idx++) {
+		if (!tas->max_sdu_table.max_sdu[gate_idx])
+			tas->max_sdu_table.max_sdu[gate_idx] = PRUETH_MAX_MTU;
 		writew(tas->max_sdu_table.max_sdu[gate_idx], &max_sdu_tbl_ptr[gate_idx]);
+	}
 }
 
 static void tas_reset(struct prueth_emac *emac)
@@ -87,11 +90,9 @@ static void tas_reset(struct prueth_emac *emac)
 	int i;
 
 	for (i = 0; i < TAS_MAX_NUM_QUEUES; i++)
-		tas->max_sdu_table.max_sdu[i] = 2048;
+		tas->max_sdu_table.max_sdu[i] = PRUETH_MAX_MTU;
 
 	tas_update_maxsdu_table(emac);
-
-	writeb(TAS_LIST0, tas->active_list);
 
 	memset_io(tas->fw_active_list, 0, sizeof(*tas->fw_active_list));
 	memset_io(tas->fw_shadow_list, 0, sizeof(*tas->fw_shadow_list));
@@ -108,25 +109,19 @@ static int tas_set_state(struct prueth_emac *emac, enum tas_state state)
 	switch (state) {
 	case TAS_STATE_RESET:
 		tas_reset(emac);
-		ret = emac_set_port_state(emac, ICSSG_EMAC_PORT_TAS_RESET);
-		tas->state = TAS_STATE_RESET;
+		ret = icssg_set_port_state(emac, ICSSG_EMAC_PORT_TAS_RESET);
 		break;
 	case TAS_STATE_ENABLE:
-		ret = emac_set_port_state(emac, ICSSG_EMAC_PORT_TAS_ENABLE);
-		tas->state = TAS_STATE_ENABLE;
+		ret = icssg_set_port_state(emac, ICSSG_EMAC_PORT_TAS_ENABLE);
 		break;
 	case TAS_STATE_DISABLE:
-		ret = emac_set_port_state(emac, ICSSG_EMAC_PORT_TAS_DISABLE);
-		tas->state = TAS_STATE_DISABLE;
-		break;
-	default:
-		netdev_err(emac->ndev, "%s: unsupported state\n", __func__);
-		ret = -EINVAL;
+		ret = icssg_set_port_state(emac, ICSSG_EMAC_PORT_TAS_DISABLE);
 		break;
 	}
 
-	if (ret)
-		netdev_err(emac->ndev, "TAS set state failed %d\n", ret);
+	if (!ret)
+		tas->state = state;
+
 	return ret;
 }
 
@@ -134,11 +129,10 @@ static int tas_set_trigger_list_change(struct prueth_emac *emac)
 {
 	struct tc_taprio_qopt_offload *admin_list = emac->qos.tas.taprio_admin;
 	struct tas_config *tas = &emac->qos.tas.config;
-	struct ptp_system_timestamp sts;
 	u32 change_cycle_count;
+	u32 extension_time;
 	u32 cycle_time;
 	u64 base_time;
-	u64 cur_time;
 
 	/* IEP clock has a hardware errata due to which it wraps around exactly
 	 * once every taprio cycle. To compensate for that, adjust cycle time
@@ -146,32 +140,21 @@ static int tas_set_trigger_list_change(struct prueth_emac *emac)
 	 */
 	cycle_time = admin_list->cycle_time - emac->iep->def_inc;
 	base_time = admin_list->base_time;
-	cur_time = prueth_iep_gettime(emac, &sts);
 
-	/* If base_time is in future, schedule will start at base_time.
-	 * If base_time is in past, the schedule will start at
-	 * base-time + (N * cycle-time) where N is the smallest integer so the
-	 * resulting time is greater than cur_time. For resulting time to be
-	 * greater than cur_time, N > (cur_time - base_time) / cycle_time.
-	 * Schedule will now start at a time greater than
-	 * base-time + ((cur_time - base_time) / cycle_time * cycle-time)
-	 * i.e. greater than cur_time
-	 */
-	if (base_time > cur_time)
-		change_cycle_count = base_time / cycle_time;
-	else
-		change_cycle_count = cur_time / cycle_time + 1;
+	change_cycle_count = base_time / cycle_time;
+	extension_time = base_time % cycle_time;
 
 	writel(cycle_time, emac->dram.va + TAS_ADMIN_CYCLE_TIME);
 	writel(change_cycle_count, emac->dram.va + TAS_CONFIG_CHANGE_CYCLE_COUNT);
 	writeb(admin_list->num_entries, emac->dram.va + TAS_ADMIN_LIST_LENGTH);
+	writel(extension_time, emac->dram.va + TAS_CONFIG_EXTN_TIME);
 
 	/* config_change cleared by f/w to ack reception of new shadow list */
 	writeb(1, &tas->config_list->config_change);
 	/* config_pending cleared by f/w when new shadow list is copied to active list */
 	writeb(1, &tas->config_list->config_pending);
 
-	return emac_set_port_state(emac, ICSSG_EMAC_PORT_TAS_TRIGGER);
+	return icssg_set_port_state(emac, ICSSG_EMAC_PORT_TAS_TRIGGER);
 }
 
 static int tas_update_oper_list(struct prueth_emac *emac)
@@ -181,9 +164,6 @@ static int tas_update_oper_list(struct prueth_emac *emac)
 	u32 tas_acc_gate_close_time = 0;
 	u8 idx, gate_idx, val;
 	int ret;
-
-	if (admin_list->cycle_time > TAS_MAX_CYCLE_TIME)
-		return -EINVAL;
 
 	tas_update_fw_list_pointers(emac);
 
@@ -222,6 +202,9 @@ static int tas_update_oper_list(struct prueth_emac *emac)
 		}
 	}
 
+	/* Update the maxsdu table for firmware */
+	tas_update_maxsdu_table(emac);
+
 	/* tell f/w to swap active & shadow list */
 	ret = tas_set_trigger_list_change(emac);
 	if (ret) {
@@ -237,8 +220,6 @@ static int tas_update_oper_list(struct prueth_emac *emac)
 		return ret;
 	}
 
-	tas_update_fw_list_pointers(emac);
-
 	return 0;
 }
 
@@ -251,6 +232,12 @@ static int emac_taprio_replace(struct net_device *ndev,
 	if (taprio->cycle_time_extension) {
 		NL_SET_ERR_MSG_MOD(taprio->extack, "Cycle time extension not supported");
 		return -EOPNOTSUPP;
+	}
+
+	if (taprio->cycle_time > TAS_MAX_CYCLE_TIME) {
+		NL_SET_ERR_MSG_FMT_MOD(taprio->extack, "cycle_time %llu is more than max supported cycle_time",
+				       taprio->cycle_time);
+		return -EINVAL;
 	}
 
 	if (taprio->cycle_time < TAS_MIN_CYCLE_TIME) {
@@ -277,6 +264,8 @@ static int emac_taprio_replace(struct net_device *ndev,
 	if (ret)
 		goto clear_taprio;
 
+	return 0;
+
 clear_taprio:
 	emac->qos.tas.taprio_admin = NULL;
 	taprio_offload_free(taprio);
@@ -290,13 +279,11 @@ static int emac_taprio_destroy(struct net_device *ndev,
 	struct prueth_emac *emac = netdev_priv(ndev);
 	int ret;
 
-	taprio_offload_free(taprio);
-
-	ret = tas_set_state(emac, TAS_STATE_RESET);
+	ret = tas_set_state(emac, TAS_STATE_DISABLE);
 	if (ret)
 		return ret;
 
-	return tas_set_state(emac, TAS_STATE_DISABLE);
+	return tas_set_state(emac, TAS_STATE_RESET);
 }
 
 static int emac_setup_taprio(struct net_device *ndev, void *type_data)
@@ -318,16 +305,36 @@ static int emac_setup_taprio(struct net_device *ndev, void *type_data)
 	return ret;
 }
 
+static int emac_tc_query_caps(struct net_device *ndev, void *type_data)
+{
+	struct tc_query_caps_base *base = type_data;
+
+	switch (base->type) {
+	case TC_SETUP_QDISC_TAPRIO: {
+		struct tc_taprio_caps *caps = base->caps;
+
+		caps->gate_mask_per_txq = true;
+
+		return 0;
+	}
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
 int icssg_qos_ndo_setup_tc(struct net_device *ndev, enum tc_setup_type type,
 			   void *type_data)
 {
 	switch (type) {
 	case TC_SETUP_QDISC_TAPRIO:
 		return emac_setup_taprio(ndev, type_data);
+	case TC_QUERY_CAPS:
+		return emac_tc_query_caps(ndev, type_data);
 	default:
 		return -EOPNOTSUPP;
 	}
 }
+EXPORT_SYMBOL_GPL(icssg_qos_ndo_setup_tc);
 
 static void icssg_qos_tas_init(struct net_device *ndev)
 {
@@ -362,12 +369,12 @@ static int icssg_config_ietfpe(struct prueth_qos_iet *iet, bool enable)
 	}
 
 	/* Send command to enable FPE Tx side. Rx is always enabled */
-	ret = emac_set_port_state(iet->emac,
-				  enable ? ICSSG_EMAC_PORT_PREMPT_TX_ENABLE :
-					   ICSSG_EMAC_PORT_PREMPT_TX_DISABLE);
+	ret = icssg_set_port_state(iet->emac,
+				   enable ? ICSSG_EMAC_PORT_PREMPT_TX_ENABLE :
+					    ICSSG_EMAC_PORT_PREMPT_TX_DISABLE);
 	if (ret) {
-		netdev_err(iet->emac->ndev, "TX pre-empt %s command failed\n",
-			   enable ? "enable" : "disable");
+		netdev_err(iet->emac->ndev, "TX preempt %s command failed\n",
+			   str_enable_disable(enable));
 		writeb(0, config + PRE_EMPTION_ENABLE_VERIFY);
 		return ret;
 	}

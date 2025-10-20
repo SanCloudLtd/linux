@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/kfifo.h>
 #include <linux/err.h>
+#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -374,7 +375,7 @@ static int omap_mbox_resume(struct device *dev)
 #endif
 
 static const struct dev_pm_ops omap_mbox_pm_ops = {
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(omap_mbox_suspend, omap_mbox_resume)
+	SET_SYSTEM_SLEEP_PM_OPS(omap_mbox_suspend, omap_mbox_resume)
 };
 
 static const struct omap_mbox_match_data omap2_data = { MBOX_INTR_CFG_TYPE1 };
@@ -603,7 +604,7 @@ static struct platform_driver omap_mbox_driver = {
 	.driver	= {
 		.name = "omap-mailbox",
 		.pm = &omap_mbox_pm_ops,
-		.of_match_table = of_match_ptr(omap_mailbox_of_match),
+		.of_match_table = omap_mailbox_of_match,
 	},
 };
 module_platform_driver(omap_mbox_driver);
