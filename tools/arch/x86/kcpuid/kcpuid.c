@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 #define _GNU_SOURCE
 
-#include <stdio.h>
+#include <err.h>
+#include <getopt.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
 
 #define ARRAY_SIZE(x)	(sizeof(x) / sizeof((x)[0]))
 #define min(a, b)	(((a) < (b)) ? (a) : (b))
@@ -77,7 +78,6 @@ struct cpuid_range {
  */
 struct cpuid_range *leafs_basic, *leafs_ext;
 
-static int num_leafs;
 static bool is_amd;
 static bool show_details;
 static bool show_raw;
@@ -99,27 +99,17 @@ static inline void cpuid(u32 *eax, u32 *ebx, u32 *ecx, u32 *edx)
 
 static inline bool has_subleafs(u32 f)
 {
-	if (f == 0x7 || f == 0xd)
-		return true;
+	u32 with_subleaves[] = {
+		0x4,  0x7,  0xb,  0xd,  0xf,  0x10, 0x12,
+		0x14, 0x17, 0x18, 0x1b, 0x1d, 0x1f, 0x23,
+		0x8000001d, 0x80000020, 0x80000026,
+	};
 
-	if (is_amd) {
-		if (f == 0x8000001d)
+	for (unsigned i = 0; i < ARRAY_SIZE(with_subleaves); i++)
+		if (f == with_subleaves[i])
 			return true;
-		return false;
-	}
 
-	switch (f) {
-	case 0x4:
-	case 0xb:
-	case 0xf:
-	case 0x10:
-	case 0x14:
-	case 0x18:
-	case 0x1f:
-		return true;
-	default:
-		return false;
-	}
+	return false;
 }
 
 static void leaf_print_raw(struct subleaf *leaf)
@@ -156,14 +146,14 @@ static bool cpuid_store(struct cpuid_range *range, u32 f, int subleaf,
 	if (!func->leafs) {
 		func->leafs = malloc(sizeof(struct subleaf));
 		if (!func->leafs)
-			perror("malloc func leaf");
+			err(EXIT_FAILURE, NULL);
 
 		func->nr = 1;
 	} else {
 		s = func->nr;
 		func->leafs = realloc(func->leafs, (s + 1) * sizeof(*leaf));
 		if (!func->leafs)
-			perror("realloc f->leafs");
+			err(EXIT_FAILURE, NULL);
 
 		func->nr++;
 	}
@@ -205,7 +195,7 @@ static void raw_dump_range(struct cpuid_range *range)
 	}
 }
 
-#define MAX_SUBLEAF_NUM		32
+#define MAX_SUBLEAF_NUM		64
 struct cpuid_range *setup_cpuid_range(u32 input_eax)
 {
 	u32 max_func, idx_func, subleaf, max_subleaf;
@@ -222,7 +212,7 @@ struct cpuid_range *setup_cpuid_range(u32 input_eax)
 
 	range = malloc(sizeof(struct cpuid_range));
 	if (!range)
-		perror("malloc range");
+		err(EXIT_FAILURE, NULL);
 
 	if (input_eax & 0x80000000)
 		range->is_ext = true;
@@ -231,7 +221,7 @@ struct cpuid_range *setup_cpuid_range(u32 input_eax)
 
 	range->funcs = malloc(sizeof(struct cpuid_func) * idx_func);
 	if (!range->funcs)
-		perror("malloc range->funcs");
+		err(EXIT_FAILURE, NULL);
 
 	range->nr = idx_func;
 	memset(range->funcs, 0, sizeof(struct cpuid_func) * idx_func);
@@ -244,7 +234,6 @@ struct cpuid_range *setup_cpuid_range(u32 input_eax)
 		allzero = cpuid_store(range, f, subleaf, eax, ebx, ecx, edx);
 		if (allzero)
 			continue;
-		num_leafs++;
 
 		if (!has_subleafs(f))
 			continue;
@@ -255,11 +244,18 @@ struct cpuid_range *setup_cpuid_range(u32 input_eax)
 		 * Some can provide the exact number of subleafs,
 		 * others have to be tried (0xf)
 		 */
-		if (f == 0x7 || f == 0x14 || f == 0x17 || f == 0x18)
+		if (f == 0x7 || f == 0x14 || f == 0x17 || f == 0x18 || f == 0x1d)
 			max_subleaf = min((eax & 0xff) + 1, max_subleaf);
-
 		if (f == 0xb)
 			max_subleaf = 2;
+		if (f == 0x1f)
+			max_subleaf = 6;
+		if (f == 0x23)
+			max_subleaf = 4;
+		if (f == 0x80000020)
+			max_subleaf = 4;
+		if (f == 0x80000026)
+			max_subleaf = 5;
 
 		for (subleaf = 1; subleaf < max_subleaf; subleaf++) {
 			eax = f;
@@ -270,7 +266,6 @@ struct cpuid_range *setup_cpuid_range(u32 input_eax)
 						eax, ebx, ecx, edx);
 			if (allzero)
 				continue;
-			num_leafs++;
 		}
 
 	}
@@ -311,6 +306,8 @@ static int parse_line(char *line)
 	struct bits_desc *bdesc;
 	int reg_index;
 	char *start, *end;
+	u32 subleaf_start, subleaf_end;
+	unsigned bit_start, bit_end;
 
 	/* Skip comments and NULL line */
 	if (line[0] == '#' || line[0] == '\n')
@@ -349,13 +346,25 @@ static int parse_line(char *line)
 		return 0;
 
 	/* subleaf */
-	sub = strtoul(tokens[1], NULL, 0);
-	if ((int)sub > func->nr)
-		return -1;
+	buf = tokens[1];
+	end = strtok(buf, ":");
+	start = strtok(NULL, ":");
+	subleaf_end = strtoul(end, NULL, 0);
 
-	leaf = &func->leafs[sub];
+	/* A subleaf range is given? */
+	if (start) {
+		subleaf_start = strtoul(start, NULL, 0);
+		subleaf_end = min(subleaf_end, (u32)(func->nr - 1));
+		if (subleaf_start > subleaf_end)
+			return 0;
+	} else {
+		subleaf_start = subleaf_end;
+		if (subleaf_start > (u32)(func->nr - 1))
+			return 0;
+	}
+
+	/* register */
 	buf = tokens[2];
-
 	if (strcasestr(buf, "EAX"))
 		reg_index = R_EAX;
 	else if (strcasestr(buf, "EBX"))
@@ -367,28 +376,28 @@ static int parse_line(char *line)
 	else
 		goto err_exit;
 
-	reg = &leaf->info[reg_index];
-	bdesc = &reg->descs[reg->nr++];
-
 	/* bit flag or bits field */
 	buf = tokens[3];
-
 	end = strtok(buf, ":");
-	bdesc->end = strtoul(end, NULL, 0);
-	bdesc->start = bdesc->end;
-
-	/* start != NULL means it is bit fields */
 	start = strtok(NULL, ":");
-	if (start)
-		bdesc->start = strtoul(start, NULL, 0);
+	bit_end = strtoul(end, NULL, 0);
+	bit_start = (start) ? strtoul(start, NULL, 0) : bit_end;
 
-	strcpy(bdesc->simp, tokens[4]);
-	strcpy(bdesc->detail, tokens[5]);
+	for (sub = subleaf_start; sub <= subleaf_end; sub++) {
+		leaf = &func->leafs[sub];
+		reg = &leaf->info[reg_index];
+		bdesc = &reg->descs[reg->nr++];
+
+		bdesc->end = bit_end;
+		bdesc->start = bit_start;
+		strcpy(bdesc->simp, strtok(tokens[4], " \t"));
+		strcpy(bdesc->detail, tokens[5]);
+	}
 	return 0;
 
 err_exit:
-	printf("Warning: wrong line format:\n");
-	printf("\tline[%d]: %s\n", flines, line);
+	warnx("Wrong line format:\n"
+	      "\tline[%d]: %s", flines, line);
 	return -1;
 }
 
@@ -410,10 +419,8 @@ static void parse_text(void)
 		file = fopen("./cpuid.csv", "r");
 	}
 
-	if (!file) {
-		printf("Fail to open '%s'\n", filename);
-		return;
-	}
+	if (!file)
+		err(EXIT_FAILURE, "%s", filename);
 
 	while (1) {
 		ret = getline(&line, &len, file);
@@ -450,8 +457,9 @@ static void decode_bits(u32 value, struct reg_desc *rdesc, enum cpuid_reg reg)
 		if (start == end) {
 			/* single bit flag */
 			if (value & (1 << start))
-				printf("\t%-20s %s%s\n",
+				printf("\t%-20s %s%s%s\n",
 					bdesc->simp,
+				        show_flags_only ? "" : "\t\t\t",
 					show_details ? "-" : "",
 					show_details ? bdesc->detail : ""
 					);
@@ -521,7 +529,7 @@ static inline struct cpuid_func *index_to_func(u32 index)
 	func_idx = index & 0xffff;
 
 	if ((func_idx + 1) > (u32)range->nr) {
-		printf("ERR: invalid input index (0x%x)\n", index);
+		warnx("Invalid input index (0x%x)", index);
 		return NULL;
 	}
 	return &range->funcs[func_idx];
@@ -553,7 +561,7 @@ static void show_info(void)
 				return;
 			}
 
-			printf("ERR: invalid input subleaf (0x%x)\n", user_sub);
+			warnx("Invalid input subleaf (0x%x)", user_sub);
 		}
 
 		show_func(func);
@@ -584,15 +592,15 @@ static void setup_platform_cpuid(void)
 
 static void usage(void)
 {
-	printf("kcpuid [-abdfhr] [-l leaf] [-s subleaf]\n"
-		"\t-a|--all             Show both bit flags and complex bit fields info\n"
-		"\t-b|--bitflags        Show boolean flags only\n"
-		"\t-d|--detail          Show details of the flag/fields (default)\n"
-		"\t-f|--flags           Specify the cpuid csv file\n"
-		"\t-h|--help            Show usage info\n"
-		"\t-l|--leaf=index      Specify the leaf you want to check\n"
-		"\t-r|--raw             Show raw cpuid data\n"
-		"\t-s|--subleaf=sub     Specify the subleaf you want to check\n"
+	warnx("kcpuid [-abdfhr] [-l leaf] [-s subleaf]\n"
+	      "\t-a|--all             Show both bit flags and complex bit fields info\n"
+	      "\t-b|--bitflags        Show boolean flags only\n"
+	      "\t-d|--detail          Show details of the flag/fields (default)\n"
+	      "\t-f|--flags           Specify the CPUID CSV file\n"
+	      "\t-h|--help            Show usage info\n"
+	      "\t-l|--leaf=index      Specify the leaf you want to check\n"
+	      "\t-r|--raw             Show raw CPUID data\n"
+	      "\t-s|--subleaf=sub     Specify the subleaf you want to check"
 	);
 }
 
@@ -643,7 +651,7 @@ static int parse_options(int argc, char *argv[])
 			user_sub = strtoul(optarg, NULL, 0);
 			break;
 		default:
-			printf("%s: Invalid option '%c'\n", argv[0], optopt);
+			warnx("Invalid option '%c'", optopt);
 			return -1;
 	}
 
