@@ -4,6 +4,7 @@
  *
  * Derived from menuconfig.
  */
+#include <xalloc.h>
 #include "nconf.h"
 #include "lkc.h"
 
@@ -349,6 +350,7 @@ int dialog_inputbox(WINDOW *main_window,
 	x = (columns-win_cols)/2;
 
 	strncpy(result, init, *result_len);
+	result[*result_len - 1] = '\0';
 
 	/* create the windows */
 	win = newwin(win_lines, win_cols, y, x);

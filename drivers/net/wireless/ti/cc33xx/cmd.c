@@ -110,10 +110,6 @@ static int __cc33xx_cmd_send(struct cc33xx *cc, u16 id, void *buf,
 	case CMD_DEBUG_READ:
 	case CMD_TEST_MODE:
 	case CMD_BM_READ_DEVICE_INFO:
-		cc33xx_debug(DEBUG_CMD,
-			     "Response len %d, allocated buffer len %zu",
-			     cc->result_length, res_len);
-
 		if (!res_len)
 			break; /* Response should be discarded */
 
@@ -143,8 +139,6 @@ static int cc33xx_cmd_send_failsafe(struct cc33xx *cc, u16 id, void *buf,
 				    unsigned long valid_rets)
 {
 	int ret = __cc33xx_cmd_send(cc, id, buf, len, res_len, true);
-
-	cc33xx_debug(DEBUG_TESTMODE, "CMD# %d, len=%zu", id, len);
 
 	if (ret < 0)
 		goto fail;
@@ -230,20 +224,13 @@ int cc33xx_cmd_role_enable(struct cc33xx *cc, u8 *addr,
 
 	role_count = *cc->roles_map;
 	ret = cc33xx_count_role_set_bits(role_count);
-	cc33xx_debug(DEBUG_CMD, "cmd roles enabled: bitmap before: %ld, ret=%d",
-		     role_count, ret);
 
 	/* do not enable more than 2 roles at once, exception is device role */
 	if (ret >= 2 && role_type != CC33XX_ROLE_DEVICE) {
-		cc33xx_debug(DEBUG_CMD,
-			     "cmd role enable: 2 roles already have beed allocated");
 		cc33xx_error("failed to initiate cmd role enable");
 		ret = -EBUSY;
 		goto out;
 	}
-
-	cc33xx_debug(DEBUG_CMD, "cmd role enable, role type %d, addr = %pM",
-		     role_type, addr);
 
 	if (WARN_ON(*role_id != CC33XX_INVALID_ROLE_ID))
 		return -EBUSY;
@@ -262,8 +249,6 @@ int cc33xx_cmd_role_enable(struct cc33xx *cc, u8 *addr,
 		cc33xx_error("failed to initiate cmd role enable");
 		goto out_free;
 	}
-	cc33xx_debug(DEBUG_CMD, "complete role_id = %d",
-		     command_complete->role_id);
 	__set_bit(command_complete->role_id, cc->roles_map);
 	*role_id = command_complete->role_id;
 
@@ -277,8 +262,6 @@ int cc33xx_cmd_role_disable(struct cc33xx *cc, u8 *role_id)
 {
 	struct cc33xx_cmd_role_disable *cmd;
 	int ret;
-
-	cc33xx_debug(DEBUG_CMD, "cmd role disable");
 
 	if (WARN_ON(*role_id == CC33XX_INVALID_ROLE_ID))
 		return -ENOENT;
@@ -407,8 +390,6 @@ static int cc33xx_cmd_role_start_dev(struct cc33xx *cc, struct cc33xx_vif *wlvif
 		goto out;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd role start dev %d", wlvif->dev_role_id);
-
 	cmd->role_id = wlvif->dev_role_id;
 	cmd->role_type = CC33XX_ROLE_DEVICE;
 	if (band == NL80211_BAND_5GHZ)
@@ -457,7 +438,6 @@ int cc33xx_cmd_role_stop_transceiver(struct cc33xx *cc)
 		ret = -ENOMEM;
 		goto out;
 	}
-	cc33xx_debug(DEBUG_CMD, "cmd role stop transceiver");
 
 	cmd->role_id = cc->plt_role_id;
 
@@ -489,8 +469,6 @@ int cc33xx_cmd_plt_disable(struct cc33xx *cc)
 	if (ret < 0) {
 		cc33xx_error("transceiver: failed to disable Transceiver mode");
 		goto out_free;
-	} else {
-		cc33xx_debug(DEBUG_CMD, "Succeed to disable Transceiver mode");
 	}
 
 out_free:
@@ -514,8 +492,6 @@ static int cc333xx_cmd_role_stop_dev(struct cc33xx *cc,
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	cc33xx_debug(DEBUG_CMD, "cmd role stop dev");
 
 	cmd->role_id = wlvif->dev_role_id;
 
@@ -550,7 +526,6 @@ int cc33xx_cmd_plt_enable(struct cc33xx *cc, u8 role_id)
 		cc33xx_error("Failed to send CMD_PLT_ENABLE");
 		goto out_free;
 	}
-	cc33xx_debug(DEBUG_CMD, "Success to send CMD_PLT_ENABLE");
 
 out_free:
 	kfree(cmd);
@@ -585,8 +560,6 @@ int cc33xx_cmd_role_start_transceiver(struct cc33xx *cc, u8 role_id)
 		goto out_free;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd role start PLT. Role ID number: %u", role_id);
-
 out_free:
 	kfree(cmd);
 out:
@@ -609,8 +582,6 @@ int cc33xx_cmd_role_start_sta(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	cc33xx_debug(DEBUG_CMD, "cmd role start sta %d", wlvif->role_id);
 
 	cmd->role_id = wlvif->role_id;
 	cmd->role_type = CC33XX_ROLE_STA;
@@ -689,8 +660,6 @@ int cc33xx_cmd_role_stop_sta(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 		goto out;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd role stop sta %d", wlvif->role_id);
-
 	cmd->role_id = wlvif->role_id;
 
 	ret = cc33xx_cmd_send(cc, CMD_ROLE_STOP, cmd, sizeof(*cmd), 0);
@@ -718,10 +687,6 @@ int cc33xx_cmd_role_start_ap(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 
 	struct cc33xx_cmd_complete_role_start *command_complete =
 		(struct cc33xx_cmd_complete_role_start *)&cc->command_result;
-
-	cc33xx_debug(DEBUG_CMD, "cmd role start ap %d", wlvif->role_id);
-	cc33xx_debug(DEBUG_CMD, "cmd role start ap basic rateset: 0x%x",
-		     wlvif->basic_rate_set);
 
 	/* If MESH --> ssid_len is always 0 */
 	if (!ieee80211_vif_is_mesh(vif)) {
@@ -751,9 +716,6 @@ int cc33xx_cmd_role_start_ap(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 	supported_rates = CONF_TX_ENABLED_RATES | CONF_TX_MCS_RATES;
 	if (wlvif->p2p)
 		supported_rates &= ~CONF_TX_CCK_RATES;
-
-	cc33xx_debug(DEBUG_CMD, "cmd role start ap with supported_rates 0x%08x",
-		     supported_rates);
 
 	cmd->ap.local_rates = cpu_to_le32(supported_rates);
 
@@ -816,8 +778,6 @@ int cc33xx_cmd_role_stop_ap(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 		goto out;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd role stop ap %d", wlvif->role_id);
-
 	cmd->role_id = wlvif->role_id;
 
 	ret = cc33xx_cmd_send(cc, CMD_ROLE_STOP, cmd, sizeof(*cmd), 0);
@@ -848,8 +808,6 @@ int cc33xx_cmd_role_start_ibss(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	cc33xx_debug(DEBUG_CMD, "cmd role start ibss %d", wlvif->role_id);
 
 	cmd->role_id = wlvif->role_id;
 	cmd->role_type = CC33XX_ROLE_IBSS;
@@ -904,8 +862,6 @@ int cc33xx_cmd_test(struct cc33xx *cc, void *buf, size_t buf_len, u8 answer)
 	int ret;
 	size_t res_len = 0;
 
-	cc33xx_debug(DEBUG_CMD, "cmd test");
-
 	if (answer)
 		res_len = buf_len;
 
@@ -932,8 +888,6 @@ int cc33xx_cmd_interrogate(struct cc33xx *cc, u16 id, void *buf,
 	struct acx_header *acx = buf;
 	int ret;
 
-	cc33xx_debug(DEBUG_CMD, "cmd interrogate");
-
 	acx->id = cpu_to_le16(id);
 
 	/* response payload length, does not include any headers */
@@ -958,8 +912,6 @@ int cc33xx_cmd_debug_inter(struct cc33xx *cc, u16 id, void *buf,
 {
 	struct acx_header *acx = buf;
 	int ret;
-
-	cc33xx_debug(DEBUG_CMD, "cmd debug interrogate");
 
 	acx->id = cpu_to_le16(id);
 
@@ -987,9 +939,6 @@ int cc33xx_cmd_configure_failsafe(struct cc33xx *cc, u16 id, void *buf,
 {
 	struct acx_header *acx = buf;
 	int ret;
-
-	cc33xx_debug(DEBUG_CMD, "cmd configure (%d), TSFL %x",
-		     id, cc->core_status->tsf);
 
 	if (WARN_ON_ONCE(len < sizeof(*acx)))
 		return -EIO;
@@ -1036,8 +985,6 @@ static int cc33xx_cmd_debug_failsafe(struct cc33xx *cc, u16 id, void *buf,
 	struct debug_header *acx = buf;
 	int ret;
 
-	cc33xx_debug(DEBUG_CMD, "cmd debug (%d)", id);
-
 	if (WARN_ON_ONCE(len < sizeof(*acx)))
 		return -EIO;
 
@@ -1074,8 +1021,6 @@ int cc33xx_cmd_ps_mode(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	struct cc33xx_cmd_ps_params *ps_params = NULL;
 	int ret = 0;
 
-	cc33xx_debug(DEBUG_CMD, "cmd set ps mode");
-
 	ps_params = kzalloc(sizeof(*ps_params), GFP_KERNEL);
 	if (!ps_params) {
 		ret = -ENOMEM;
@@ -1102,8 +1047,6 @@ int cc33xx_cmd_set_default_wep_key(struct cc33xx *cc, u8 id, u8 hlid)
 {
 	struct cc33xx_cmd_set_keys *cmd;
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_CMD, "cmd set_default_wep_key %d", id);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -1179,8 +1122,6 @@ int cc33xx_cmd_set_sta_key(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 		memcpy(cmd->key, key, key_size);
 	}
 
-	cc33xx_dump(DEBUG_CRYPT, "TARGET KEY: ", cmd, sizeof(*cmd));
-
 	ret = cc33xx_cmd_send(cc, CMD_SET_KEYS, cmd, sizeof(*cmd), 0);
 	if (ret < 0) {
 		cc33xx_warning("could not set keys");
@@ -1213,10 +1154,6 @@ int cc33xx_cmd_set_ap_key(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	} else {
 		lid_type = UNICAST_LID_TYPE;
 	}
-
-	cc33xx_debug(DEBUG_CRYPT, "ap key action: %d id: %d lid: %d type: %d hlid: %d",
-		     (int)action, (int)id, (int)lid_type,
-		     (int)key_type, (int)hlid);
 
 	cmd->lid_key_type = lid_type;
 	cmd->hlid = hlid;
@@ -1259,8 +1196,6 @@ int cc33xx_cmd_set_peer_state(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	struct cc33xx_cmd_set_peer_state *cmd;
 	int ret = 0;
 
-	cc33xx_debug(DEBUG_CMD, "cmd set peer state (hlid=%d)", hlid);
-
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
@@ -1301,7 +1236,6 @@ int cc33xx_cmd_add_peer(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 		goto out;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd add peer is ap %d", is_connected);
 	cmd->is_connected = is_connected;
 	cmd->role_id = wlvif->role_id;
 	cmd->role_type = CC33XX_ROLE_AP;
@@ -1334,15 +1268,8 @@ int cc33xx_cmd_add_peer(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 		cpu_to_le32(cc33xx_tx_enabled_rates_get(cc, sta_rates,
 							wlvif->band));
 
-	if (!cmd->supported_rates) {
-		cc33xx_debug(DEBUG_CMD,
-			     "peer has no supported rates yet, configuring basic rates: 0x%x",
-			     wlvif->basic_rate_set);
+	if (!cmd->supported_rates)
 		cmd->supported_rates = cpu_to_le32(wlvif->basic_rate_set);
-	}
-
-	cc33xx_debug(DEBUG_CMD, "new peer rates=0x%x queues=0x%x",
-		     cmd->supported_rates, sta->uapsd_queues);
 
 	if (sta->deflink.ht_cap.ht_supported) {
 		cmd->ht_capabilities = cpu_to_le32(sta->deflink.ht_cap.cap);
@@ -1364,13 +1291,9 @@ int cc33xx_cmd_add_peer(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 			*hlid = command_complete->hlid;
 			cc->links[*hlid].allocated_pkts = 0;
 			cc->session_ids[*hlid] = command_complete->session_id;
-			cc33xx_debug(DEBUG_CMD, "new peer hlid=%d session_ids=%d",
-				     command_complete->hlid, command_complete->session_id);
 		} else {
 			ret = -EMLINK;
 		}
-	} else {
-		cc33xx_debug(DEBUG_CMD, "update peer done !");
 	}
 out_free:
 	kfree(cmd);
@@ -1385,8 +1308,6 @@ int cc33xx_cmd_remove_peer(struct cc33xx *cc,
 	struct cc33xx_cmd_remove_peer *cmd;
 	int ret;
 	bool timeout = false;
-
-	cc33xx_debug(DEBUG_CMD, "cmd remove peer %d", (int)hlid);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -1487,8 +1408,6 @@ int cc33xx_cmd_regdomain_config_locked(struct cc33xx *cc)
 	if (!(cc->quirks & CC33XX_QUIRK_REGDOMAIN_CONF))
 		return 0;
 
-	cc33xx_debug(DEBUG_CMD, "cmd reg domain config");
-
 	memcpy(tmp_ch_bitmap, cc->reg_ch_conf_pending, sizeof(tmp_ch_bitmap));
 
 	for (b = NL80211_BAND_2GHZ; b <= NL80211_BAND_5GHZ; b++) {
@@ -1527,10 +1446,6 @@ int cc33xx_cmd_regdomain_config_locked(struct cc33xx *cc)
 	cmd->ch_bit_map2 = tmp_ch_bitmap[1];
 	cmd->dfs_region = cc->dfs_region;
 
-	cc33xx_debug(DEBUG_CMD,
-		     "cmd reg domain bitmap1: 0x%08x, bitmap2: 0x%08x",
-		     cmd->ch_bit_map1, cmd->ch_bit_map2);
-
 	ret = cc33xx_cmd_send(cc, CMD_DFS_CHANNEL_CONFIG, cmd, sizeof(*cmd), 0);
 	if (ret < 0) {
 		cc33xx_error("failed to send reg domain dfs config");
@@ -1559,8 +1474,6 @@ int cc33xx_cmd_config_fwlog(struct cc33xx *cc)
 {
 	struct cc33xx_cmd_config_fwlog *cmd;
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_CMD, "cmd config firmware logger");
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -1592,8 +1505,6 @@ static int cc33xx_cmd_roc(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 {
 	struct cc33xx_cmd_roc *cmd;
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_CMD, "cmd roc %d (%d)", channel, role_id);
 
 	if (WARN_ON(role_id == CC33XX_INVALID_ROLE_ID))
 		return -EINVAL;
@@ -1636,8 +1547,6 @@ static int cc33xx_cmd_croc(struct cc33xx *cc, u8 role_id)
 {
 	struct cc33xx_cmd_croc *cmd;
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_CMD, "cmd croc (%d)", role_id);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -1705,8 +1614,6 @@ int cc33xx_cmd_stop_channel_switch(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 	struct cc33xx_cmd_stop_channel_switch *cmd;
 	int ret;
 
-	cc33xx_debug(DEBUG_ACX, "cmd stop channel switch");
-
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
 		ret = -ENOMEM;
@@ -1750,12 +1657,10 @@ int cc33xx_start_dev(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 			goto out;
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd role start dev");
 	ret = cc33xx_cmd_role_start_dev(cc, wlvif, band, channel);
 	if (ret < 0)
 		goto out_disable;
 
-	cc33xx_debug(DEBUG_CMD, "cmd roc");
 	ret = cc33xx_roc(cc, wlvif, wlvif->dev_role_id, band, channel);
 	if (ret < 0)
 		goto out_stop;
@@ -1811,10 +1716,6 @@ int cc33xx_cmd_generic_cfg(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	struct cc33xx_cmd_generic_cfg *cmd;
 	int ret;
 
-	cc33xx_debug(DEBUG_CMD,
-		     "cmd generic cfg (role %d feature %d enable %d value %d)",
-		     wlvif->role_id, feature, enable, value);
-
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
@@ -1840,10 +1741,6 @@ int cmd_channel_switch(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	struct cmd_channel_switch *cmd;
 	u32 supported_rates;
 	int ret;
-
-	cc33xx_debug(DEBUG_ACX, "cmd channel switch (role_id=%d, new channel=%d, count=%d, block tx=%d",
-		     wlvif->role_id, ch_switch->chandef.chan->hw_value,
-		     ch_switch->count, ch_switch->block_tx);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -1894,9 +1791,6 @@ int cmd_dfs_master_restart(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 	struct cmd_dfs_master_restart *cmd;
 	int ret = 0;
 
-	cc33xx_debug(DEBUG_CMD, "cmd dfs master restart (role %d)",
-		     wlvif->role_id);
-
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
 		return -ENOMEM;
@@ -1918,9 +1812,6 @@ int cmd_set_cac(struct cc33xx *cc, struct cc33xx_vif *wlvif, bool start)
 {
 	struct cmd_cac_start *cmd;
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_CMD, "cmd cac (channel %d) %s",
-		     wlvif->channel, start ? "start" : "stop");
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd)
@@ -2022,7 +1913,6 @@ int cmd_download_container_chunk(struct cc33xx *cc, u8 *chunk,
 
 	if (is_last_chunk) {
 		msleep(CC33XX_REBOOT_TIMEOUT_MSEC);
-		cc33xx_debug(DEBUG_BOOT, "Resuming IRQ");
 		cc33xx_enable_interrupts(cc);
 	}
 

@@ -1088,7 +1088,7 @@ static int nvsw_sn2201_i2c_completion_notify(void *handle, int id)
 	if (!nvsw_sn2201->main_mux_devs->adapter) {
 		err = -ENODEV;
 		dev_err(nvsw_sn2201->dev, "Failed to get adapter for bus %d\n",
-			nvsw_sn2201->cpld_devs->nr);
+			nvsw_sn2201->main_mux_devs->nr);
 		goto i2c_get_adapter_main_fail;
 	}
 
@@ -1220,7 +1220,7 @@ static int nvsw_sn2201_probe(struct platform_device *pdev)
 	return nvsw_sn2201_config_pre_init(nvsw_sn2201);
 }
 
-static int nvsw_sn2201_remove(struct platform_device *pdev)
+static void nvsw_sn2201_remove(struct platform_device *pdev)
 {
 	struct nvsw_sn2201 *nvsw_sn2201 = platform_get_drvdata(pdev);
 
@@ -1242,8 +1242,6 @@ static int nvsw_sn2201_remove(struct platform_device *pdev)
 	/* Unregister I2C controller. */
 	if (nvsw_sn2201->pdev_i2c)
 		platform_device_unregister(nvsw_sn2201->pdev_i2c);
-
-	return 0;
 }
 
 static const struct acpi_device_id nvsw_sn2201_acpi_ids[] = {
@@ -1255,7 +1253,7 @@ MODULE_DEVICE_TABLE(acpi, nvsw_sn2201_acpi_ids);
 
 static struct platform_driver nvsw_sn2201_driver = {
 	.probe = nvsw_sn2201_probe,
-	.remove = nvsw_sn2201_remove,
+	.remove_new = nvsw_sn2201_remove,
 	.driver = {
 		.name = "nvsw-sn2201",
 	.acpi_match_table = nvsw_sn2201_acpi_ids,

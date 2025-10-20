@@ -88,7 +88,6 @@ void deffer_event(struct cc33xx *cc,
 		  const void *event_payload, size_t event_length)
 {
 	struct event_node *event_node;
-	bool ret;
 
 	if (WARN_ON(event_length != sizeof(event_node->event_data)))
 		return;
@@ -101,9 +100,7 @@ void deffer_event(struct cc33xx *cc,
 	       event_payload, sizeof(event_node->event_data));
 
 	llist_add(&event_node->node, &cc->event_list);
-	ret = queue_work(cc->freezable_wq, &cc->irq_deferred_work);
-
-	cc33xx_debug(DEBUG_IRQ, "Queued deferred work (%d)", ret);
+	queue_work(cc->freezable_wq, &cc->irq_deferred_work);
 }
 
 static inline struct llist_node *get_event_list(struct cc33xx *cc)
@@ -144,8 +141,6 @@ static int wait_for_event_or_timeout(struct cc33xx *cc, u32 mask, bool *timeout)
 
 	do {
 		if (time_after(jiffies, timeout_time)) {
-			cc33xx_debug(DEBUG_CMD, "timeout waiting for event %d",
-				     (int)mask);
 			*timeout = true;
 			goto out;
 		}
@@ -193,9 +188,6 @@ int cc33xx_wait_for_event(struct cc33xx *cc, enum cc33xx_wait_event event,
 
 static void cc33xx_event_sched_scan_completed(struct cc33xx *cc, u8 status)
 {
-	cc33xx_debug(DEBUG_EVENT,
-		     "PERIODIC_SCAN_COMPLETE_EVENT (status 0x%0x)", status);
-
 	if (cc->mac80211_scan_stopped) {
 		cc->mac80211_scan_stopped = false;
 	} else {
@@ -213,9 +205,6 @@ static void cc33xx_event_channel_switch(struct cc33xx *cc,
 	struct cc33xx_vif *wlvif;
 	struct ieee80211_vif *vif;
 
-	cc33xx_debug(DEBUG_EVENT, "%s: roles=0x%lx success=%d",
-		     __func__, roles_bitmap, success);
-
 	cc33xx_for_each_wlvif(cc, wlvif) {
 		if (wlvif->role_id == CC33XX_INVALID_ROLE_ID ||
 		    !test_bit(wlvif->role_id, &roles_bitmap))
@@ -228,11 +217,11 @@ static void cc33xx_event_channel_switch(struct cc33xx *cc,
 		vif = cc33xx_wlvif_to_vif(wlvif);
 
 		if (wlvif->bss_type == BSS_TYPE_STA_BSS) {
-			ieee80211_chswitch_done(vif, success);
+			ieee80211_chswitch_done(vif, success, 0);
 			cancel_delayed_work(&wlvif->channel_switch_work);
 		} else {
 			set_bit(WLVIF_FLAG_BEACON_DISABLED, &wlvif->flags);
-			ieee80211_csa_finish(vif);
+			ieee80211_csa_finish(vif, 0);
 		}
 	}
 }
@@ -263,10 +252,9 @@ static void cc33xx_disconnect_sta(struct cc33xx *cc, unsigned long sta_bitmap)
 
 		rcu_read_lock();
 		sta = ieee80211_find_sta(vif, addr);
-		if (sta) {
-			cc33xx_debug(DEBUG_EVENT, "remove sta %d", h);
+		if (sta)
 			ieee80211_report_low_ack(sta, num_packets);
-		}
+
 		rcu_read_unlock();
 	}
 }
@@ -294,8 +282,6 @@ static void cc33xx_event_beacon_loss(struct cc33xx *cc,
 	int delay = cc->conf.host_conf.conn.synch_fail_thold;
 
 	delay *= cc->conf.host_conf.conn.bss_lose_timeout;
-
-	cc33xx_info("Beacon loss detected. roles:0x%lx", roles_bitmap);
 
 	cc33xx_for_each_wlvif_sta(cc, wlvif) {
 		if (wlvif->role_id == CC33XX_INVALID_ROLE_ID ||
@@ -336,12 +322,8 @@ void process_deferred_events(struct cc33xx *cc)
 		event_data = &event_node->event_data;
 
 		vector = le32_to_cpu(event_node->event_data.events_vector);
-		cc33xx_debug(DEBUG_EVENT, "MBOX vector: 0x%x", vector);
 
 		if (vector & SCAN_COMPLETE_EVENT_ID) {
-			cc33xx_debug(DEBUG_EVENT, "scan results: %d",
-				     event_node->event_data.number_of_scan_results);
-
 			if (cc->scan_wlvif)
 				cc33xx_scan_completed(cc, cc->scan_wlvif);
 		}
@@ -362,13 +344,8 @@ void process_deferred_events(struct cc33xx *cc)
 			cc33xx_event_max_tx_failure(cc, tx_retry_exceeded_bitmap);
 		}
 
-		if (vector & PERIODIC_SCAN_REPORT_EVENT_ID) {
-			cc33xx_debug(DEBUG_EVENT,
-				     "PERIODIC_SCAN_REPORT (results %d)",
-				     event_data->number_of_sched_scan_results);
-
+		if (vector & PERIODIC_SCAN_REPORT_EVENT_ID)
 			cc33xx_scan_sched_scan_results(cc);
-		}
 
 		if (vector & CHANNEL_SWITCH_COMPLETE_EVENT_ID) {
 			u16 channel_switch_role_id_bitmap =

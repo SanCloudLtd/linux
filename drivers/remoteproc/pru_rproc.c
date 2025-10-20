@@ -68,6 +68,8 @@
 
 #define MAX_PRU_SYS_EVENTS 160
 
+static const char *pru_names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
+
 /**
  * enum pru_iomem - PRU core memory/register range identifiers
  *
@@ -536,13 +538,12 @@ static void pru_rproc_kick(struct rproc *rproc, int vq_id)
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
 	int ret;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 
 	if (list_empty(&pru->rproc->rvdevs))
 		return;
 
 	dev_dbg(dev, "kicking vqid %d on %s%d\n", vq_id,
-		names[pru->data->type], pru->id);
+		pru_names[pru->data->type], pru->id);
 
 	ret = irq_set_irqchip_state(pru->mapped_irq[0], IRQCHIP_STATE_PENDING, true);
 	if (ret < 0)
@@ -562,14 +563,8 @@ static int pru_vring_interrupt_setup(struct rproc *rproc)
 
 	/* get vring interrupts for supporting virtio rpmsg */
 	pru->irq_vring = platform_get_irq_byname(pdev, "vring");
-	if (pru->irq_vring <= 0) {
-		ret = pru->irq_vring;
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "unable to get vring interrupt, status = %d\n",
-				ret);
-
-		return ret;
-	}
+	if (pru->irq_vring <= 0)
+		return dev_err_probe(dev, pru->irq_vring, "unable to get vring interrupt\n");
 
 	ret = request_threaded_irq(pru->irq_vring, NULL,
 				   pru_rproc_vring_interrupt, IRQF_ONESHOT,
@@ -677,12 +672,11 @@ static int pru_rproc_start(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 	u32 val;
 	int ret;
 
 	dev_dbg(dev, "starting %s%d: entry-point = 0x%llx\n",
-		names[pru->data->type], pru->id, (rproc->bootaddr >> 2));
+		pru_names[pru->data->type], pru->id, (rproc->bootaddr >> 2));
 
 	ret = pru_handle_intrmap(rproc);
 	/*
@@ -715,10 +709,9 @@ static int pru_rproc_stop(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 	u32 val;
 
-	dev_dbg(dev, "stopping %s%d\n", names[pru->data->type], pru->id);
+	dev_dbg(dev, "stopping %s%d\n", pru_names[pru->data->type], pru->id);
 
 	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
 	val &= ~CTRL_CTRL_EN;

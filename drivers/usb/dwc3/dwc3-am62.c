@@ -108,7 +108,7 @@
 
 #define DWC3_AM62_AUTOSUSPEND_DELAY	100
 
-#define USBSS_DEBUG_CFG_OFF		0x7
+#define USBSS_DEBUG_CFG_OFF		0x0
 #define USBSS_DEBUG_CFG_DISABLED	0x7
 
 struct dwc3_am62 {
@@ -120,7 +120,7 @@ struct dwc3_am62 {
 	unsigned int offset;
 	unsigned int vbus_divider;
 	u32 wakeup_stat;
-	void __iomem *phy;
+	void __iomem *phy_regs;
 };
 
 static const int dwc3_ti_rate_table[] = {	/* in KHZ */
@@ -170,6 +170,7 @@ static int phy_syscon_pll_refclk(struct dwc3_am62 *am62)
 	if (ret)
 		return ret;
 
+	of_node_put(args.np);
 	am62->offset = args.args[0];
 
 	/* Core voltage. PHY_CORE_VOLTAGE bit Recommended to be 0 always */
@@ -199,10 +200,10 @@ static int dwc3_ti_init(struct dwc3_am62 *am62)
 		return ret;
 
 	/* Workaround Errata i2409 */
-	if (am62->phy) {
-		reg = readl(am62->phy + USB_PHY_PLL_REG12);
+	if (am62->phy_regs) {
+		reg = readl(am62->phy_regs + USB_PHY_PLL_REG12);
 		reg |= USB_PHY_PLL_LDO_REF_EN | USB_PHY_PLL_LDO_REF_EN_EN;
-		writel(reg, am62->phy + USB_PHY_PLL_REG12);
+		writel(reg, am62->phy_regs + USB_PHY_PLL_REG12);
 	}
 
 	/* VBUS divider select */
@@ -264,10 +265,10 @@ static int dwc3_ti_probe(struct platform_device *pdev)
 
 	am62->rate_code = i;
 
-	am62->phy = devm_platform_ioremap_resource(pdev, 1);
-	if (IS_ERR(am62->phy)) {
+	am62->phy_regs = devm_platform_ioremap_resource(pdev, 1);
+	if (IS_ERR(am62->phy_regs)) {
 		dev_err(dev, "can't map PHY IOMEM resource. Won't apply i2409 fix.\n");
-		am62->phy = NULL;
+		am62->phy_regs = NULL;
 	}
 
 	am62->vbus_divider = device_property_read_bool(dev, "ti,vbus-divider");
@@ -327,6 +328,7 @@ static void dwc3_ti_remove(struct platform_device *pdev)
 
 	pm_runtime_put_sync(dev);
 	pm_runtime_disable(dev);
+	pm_runtime_dont_use_autosuspend(dev);
 	pm_runtime_set_suspended(dev);
 }
 

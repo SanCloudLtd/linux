@@ -104,12 +104,8 @@ static int cc33xx_init_ap_role(struct cc33xx *cc, struct cc33xx_vif *wlvif)
 int cc33xx_init_vif_specific(struct cc33xx *cc, struct ieee80211_vif *vif)
 {
 	struct cc33xx_vif *wlvif = cc33xx_vif_to_data(vif);
-	struct conf_tx_ac_category *conf_ac;
-	struct conf_tx_ac_category ac_conf[4];
-	struct conf_tx_tid tid_conf[8];
 	struct conf_tx_settings *tx_settings = &cc->conf.host_conf.tx;
-	struct conf_tx_ac_category *p_wl_host_ac_conf = &tx_settings->ac_conf0;
-	struct conf_tx_tid *p_wl_host_tid_conf = &tx_settings->tid_conf0;
+	struct conf_tx_ac_category *conf_ac = &tx_settings->ac_conf0;
 	bool is_ap = (wlvif->bss_type == BSS_TYPE_AP_BSS);
 	u8 ps_scheme = cc->conf.mac.ps_scheme;
 	int ret, i;
@@ -152,13 +148,11 @@ int cc33xx_init_vif_specific(struct cc33xx *cc, struct ieee80211_vif *vif)
 	cc33xx_init_phy_vif_config(cc, wlvif);
 
 	/* Default TID/AC configuration */
-	WARN_ON(tx_settings->tid_conf_count != tx_settings->ac_conf_count);
-	memcpy(ac_conf, p_wl_host_ac_conf, 4 * sizeof(struct conf_tx_ac_category));
-	memcpy(tid_conf, p_wl_host_tid_conf, 8 * sizeof(struct conf_tx_tid));
+	if (WARN_ON(tx_settings->ac_conf_count != tx_settings->tid_conf_count) ||
+	    WARN_ON(tx_settings->ac_conf_count != CONF_TX_MAX_AC_COUNT))
+		return -EINVAL;
 
 	for (i = 0; i < tx_settings->tid_conf_count; i++) {
-		conf_ac =  &ac_conf[i];
-
 		/* If no ps poll is used, send legacy ps scheme in cmd */
 		if (ps_scheme == PS_SCHEME_NOPSPOLL)
 			ps_scheme = PS_SCHEME_LEGACY;
@@ -173,6 +167,8 @@ int cc33xx_init_vif_specific(struct cc33xx *cc, struct ieee80211_vif *vif)
 
 		if (ret < 0)
 			return ret;
+
+		conf_ac++;
 	}
 
 	/* Mode specific init - post mem init */
@@ -192,7 +188,6 @@ int cc33xx_hw_init(struct cc33xx *cc)
 {
 	cc33xx_acx_init_mem_config(cc);
 
-	cc33xx_debug(DEBUG_TX, "available tx blocks: %d", 16);
 	cc->last_fw_rls_idx = 0;
 	cc->partial_rx.status = CURR_RX_START;
 	return 0;

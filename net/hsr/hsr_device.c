@@ -12,11 +12,19 @@
 #include <linux/etherdevice.h>
 #include <linux/rtnetlink.h>
 #include <linux/pkt_sched.h>
+#include <linux/net_tstamp.h>
+#include <linux/ethtool.h>
 #include "hsr_device.h"
 #include "hsr_slave.h"
 #include "hsr_framereg.h"
 #include "hsr_main.h"
 #include "hsr_forward.h"
+
+static inline bool is_slave_port(struct hsr_port *p)
+{
+	return (p->type == HSR_PT_SLAVE_A) ||
+	       (p->type == HSR_PT_SLAVE_B);
+}
 
 static bool is_admin_up(struct net_device *dev)
 {
@@ -28,29 +36,19 @@ static bool is_slave_up(struct net_device *dev)
 	return dev && is_admin_up(dev) && netif_oper_up(dev);
 }
 
-static void __hsr_set_operstate(struct net_device *dev, int transition)
-{
-	write_lock(&dev_base_lock);
-	if (READ_ONCE(dev->operstate) != transition) {
-		WRITE_ONCE(dev->operstate, transition);
-		write_unlock(&dev_base_lock);
-		netdev_state_change(dev);
-	} else {
-		write_unlock(&dev_base_lock);
-	}
-}
-
 static void hsr_set_operstate(struct hsr_port *master, bool has_carrier)
 {
-	if (!is_admin_up(master->dev)) {
-		__hsr_set_operstate(master->dev, IF_OPER_DOWN);
+	struct net_device *dev = master->dev;
+
+	if (!is_admin_up(dev)) {
+		netdev_set_operstate(dev, IF_OPER_DOWN);
 		return;
 	}
 
 	if (has_carrier)
-		__hsr_set_operstate(master->dev, IF_OPER_UP);
+		netdev_set_operstate(dev, IF_OPER_UP);
 	else
-		__hsr_set_operstate(master->dev, IF_OPER_LOWERLAYERDOWN);
+		netdev_set_operstate(dev, IF_OPER_LOWERLAYERDOWN);
 }
 
 static bool hsr_check_carrier(struct hsr_port *master)
@@ -83,9 +81,15 @@ static void hsr_check_announce(struct net_device *hsr_dev)
 			mod_timer(&hsr->announce_timer, jiffies +
 				  msecs_to_jiffies(HSR_ANNOUNCE_INTERVAL));
 		}
+
+		if (hsr->redbox && !timer_pending(&hsr->announce_proxy_timer))
+			mod_timer(&hsr->announce_proxy_timer, jiffies +
+				  msecs_to_jiffies(HSR_ANNOUNCE_INTERVAL) / 2);
 	} else {
 		/* Deactivate the announce timer  */
 		timer_delete(&hsr->announce_timer);
+		if (hsr->redbox)
+			timer_delete(&hsr->announce_proxy_timer);
 	}
 }
 
@@ -115,9 +119,142 @@ int hsr_get_max_mtu(struct hsr_priv *hsr)
 
 	if (mtu_max < HSR_HLEN)
 		return 0;
-	return mtu_max - HSR_HLEN;
+
+	/* For offloaded keep the mtu same as ETH_DATA_LEN as
+	 * h/w is expected to extend the frame to accommodate RCT
+	 * or TAG
+	 */
+	if (!hsr->fwd_offloaded)
+		return mtu_max - HSR_HLEN;
+
+	return mtu_max;
 }
 
+int hsr_lredev_attr_get(struct hsr_priv *hsr, struct lredev_attr *attr)
+{
+	struct hsr_port *port_a = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
+	struct net_device *slave_a_dev;
+
+	if (!port_a)
+		return -EINVAL;
+
+	slave_a_dev = port_a->dev;
+	if (slave_a_dev && slave_a_dev->lredev_ops &&
+	    slave_a_dev->lredev_ops->lredev_attr_get)
+		return slave_a_dev->lredev_ops->lredev_attr_get(slave_a_dev,
+								attr);
+	return -EINVAL;
+}
+
+int hsr_lredev_attr_set(struct hsr_priv *hsr, struct lredev_attr *attr)
+{
+	struct hsr_port *port_a = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
+	struct net_device *slave_a_dev;
+
+	if (!port_a)
+		return -EINVAL;
+
+	slave_a_dev = port_a->dev;
+	if (slave_a_dev && slave_a_dev->lredev_ops &&
+	    slave_a_dev->lredev_ops->lredev_attr_set)
+		return slave_a_dev->lredev_ops->lredev_attr_set(slave_a_dev,
+								attr);
+	return -EINVAL;
+}
+
+static int _hsr_lredev_get_node_table(struct hsr_priv *hsr,
+				      struct lre_node_table_entry table[],
+				      int size)
+{
+	struct hsr_node *node;
+	int i = 0;
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(node, &hsr->node_db, mac_list) {
+		if (hsr_addr_is_self(hsr, node->macaddress_A))
+			continue;
+		/* SANs are not shown as part of Node Table */
+		if (node->san_a || node->san_b)
+			continue;
+		memcpy(&table[i].mac_address[0],
+		       &node->macaddress_A[0], ETH_ALEN);
+		table[i].time_last_seen_a = node->time_in[HSR_PT_SLAVE_A];
+		table[i].time_last_seen_b = node->time_in[HSR_PT_SLAVE_B];
+		if (hsr->prot_version == PRP_V1)
+			table[i].node_type = IEC62439_3_DANP;
+		else if (hsr->prot_version <= HSR_V1)
+			table[i].node_type = IEC62439_3_DANH;
+		else
+			continue;
+		i++;
+	}
+	rcu_read_unlock();
+
+	return i;
+}
+
+int hsr_lredev_get_node_table(struct hsr_priv *hsr,
+			      struct lre_node_table_entry table[],
+			      int size)
+{
+	struct hsr_port *port_a = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
+	struct net_device *slave_a_dev;
+	int ret = -EINVAL;
+
+	if (!port_a)
+		return ret;
+
+	if (!hsr->fwd_offloaded)
+		return _hsr_lredev_get_node_table(hsr, table, size);
+
+	slave_a_dev = port_a->dev;
+
+	if (slave_a_dev && slave_a_dev->lredev_ops &&
+	    slave_a_dev->lredev_ops->lredev_get_node_table)
+		ret =
+		slave_a_dev->lredev_ops->lredev_get_node_table(slave_a_dev,
+							       table,
+							       size);
+	return ret;
+}
+
+static int hsr_set_sv_frame_vid(struct hsr_priv *hsr, u16 vid)
+{
+	struct hsr_port *port_a = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
+	struct net_device *slave_a_dev;
+	int ret = -EINVAL;
+
+	if (!port_a)
+		return ret;
+
+	slave_a_dev = port_a->dev;
+
+	/* TODO can we use vlan_vid_add() here?? */
+	if (slave_a_dev && slave_a_dev->lredev_ops &&
+	    slave_a_dev->lredev_ops->lredev_set_sv_vlan_id)
+		slave_a_dev->lredev_ops->lredev_set_sv_vlan_id(slave_a_dev,
+							       vid);
+	return 0;
+}
+
+int hsr_lredev_get_lre_stats(struct hsr_priv *hsr, struct lre_stats *stats)
+{
+	struct hsr_port *port_a = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
+	struct net_device *slave_a_dev;
+	int ret = -EINVAL;
+
+	if (!port_a)
+		return ret;
+
+	slave_a_dev = port_a->dev;
+
+	if (slave_a_dev && slave_a_dev->lredev_ops &&
+	    slave_a_dev->lredev_ops->lredev_get_stats)
+		ret =
+		slave_a_dev->lredev_ops->lredev_get_stats(slave_a_dev, stats);
+	return ret;
+}
 static int hsr_dev_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct hsr_priv *hsr;
@@ -130,7 +267,7 @@ static int hsr_dev_change_mtu(struct net_device *dev, int new_mtu)
 		return -EINVAL;
 	}
 
-	dev->mtu = new_mtu;
+	WRITE_ONCE(dev->mtu, new_mtu);
 
 	return 0;
 }
@@ -139,30 +276,32 @@ static int hsr_dev_open(struct net_device *dev)
 {
 	struct hsr_priv *hsr;
 	struct hsr_port *port;
-	char designation;
+	const char *designation = NULL;
 
 	hsr = netdev_priv(dev);
-	designation = '\0';
 
 	hsr_for_each_port(hsr, port) {
 		if (port->type == HSR_PT_MASTER)
 			continue;
 		switch (port->type) {
 		case HSR_PT_SLAVE_A:
-			designation = 'A';
+			designation = "Slave A";
 			break;
 		case HSR_PT_SLAVE_B:
-			designation = 'B';
+			designation = "Slave B";
+			break;
+		case HSR_PT_INTERLINK:
+			designation = "Interlink";
 			break;
 		default:
-			designation = '?';
+			designation = "Unknown";
 		}
 		if (!is_slave_up(port->dev))
-			netdev_warn(dev, "Slave %c (%s) is not up; please bring it up to get a fully working HSR network\n",
+			netdev_warn(dev, "%s (%s) is not up; please bring it up to get a fully working HSR network\n",
 				    designation, port->dev->name);
 	}
 
-	if (designation == '\0')
+	if (!designation)
 		netdev_warn(dev, "No slave devices configured\n");
 
 	return 0;
@@ -248,20 +387,22 @@ static const struct header_ops hsr_header_ops = {
 	.parse	 = eth_header_parse,
 };
 
-static struct sk_buff *hsr_init_skb(struct hsr_port *master)
+static struct sk_buff *hsr_init_skb(struct hsr_port *master, int extra)
 {
 	struct hsr_priv *hsr = master->hsr;
 	struct sk_buff *skb;
 	int hlen, tlen;
+	int len;
 
 	hlen = LL_RESERVED_SPACE(master->dev);
 	tlen = master->dev->needed_tailroom;
+	len = sizeof(struct hsr_sup_tag) + sizeof(struct hsr_sup_payload);
 	/* skb size is same for PRP/HSR frames, only difference
 	 * being, for PRP it is a trailer and for HSR it is a
-	 * header
+	 * header.
+	 * RedBox might use @extra more bytes.
 	 */
-	skb = dev_alloc_skb(sizeof(struct hsr_sup_tag) +
-			    sizeof(struct hsr_sup_payload) + hlen + tlen);
+	skb = dev_alloc_skb(len + extra + hlen + tlen);
 
 	if (!skb)
 		return skb;
@@ -270,6 +411,8 @@ static struct sk_buff *hsr_init_skb(struct hsr_port *master)
 	skb->dev = master->dev;
 	skb->priority = TC_PRIO_CONTROL;
 
+	skb_reset_network_header(skb);
+	skb_reset_transport_header(skb);
 	if (dev_hard_header(skb, skb->dev, ETH_P_PRP,
 			    hsr->sup_multicast_addr,
 			    skb->dev->dev_addr, skb->len) <= 0)
@@ -277,8 +420,6 @@ static struct sk_buff *hsr_init_skb(struct hsr_port *master)
 
 	skb_reset_mac_header(skb);
 	skb_reset_mac_len(skb);
-	skb_reset_network_header(skb);
-	skb_reset_transport_header(skb);
 
 	return skb;
 out:
@@ -287,14 +428,17 @@ out:
 	return NULL;
 }
 
-static void send_hsr_supervision_frame(struct hsr_port *master,
-				       unsigned long *interval)
+static void send_hsr_supervision_frame(struct hsr_port *port,
+				       unsigned long *interval,
+				       const unsigned char *addr)
 {
-	struct hsr_priv *hsr = master->hsr;
+	struct hsr_priv *hsr = port->hsr;
 	__u8 type = HSR_TLV_LIFE_CHECK;
 	struct hsr_sup_payload *hsr_sp;
+	struct hsr_sup_tlv *hsr_stlv;
 	struct hsr_sup_tag *hsr_stag;
 	struct sk_buff *skb;
+	int extra = 0;
 
 	*interval = msecs_to_jiffies(HSR_LIFE_CHECK_INTERVAL);
 	if (hsr->announce_count < 3 && hsr->prot_version == 0) {
@@ -303,9 +447,13 @@ static void send_hsr_supervision_frame(struct hsr_port *master,
 		hsr->announce_count++;
 	}
 
-	skb = hsr_init_skb(master);
+	if (hsr->redbox)
+		extra = sizeof(struct hsr_sup_tlv) +
+			sizeof(struct hsr_sup_payload);
+
+	skb = hsr_init_skb(port, extra);
 	if (!skb) {
-		netdev_warn_once(master->dev, "HSR: Could not send supervision frame\n");
+		netdev_warn_once(port->dev, "HSR: Could not send supervision frame\n");
 		return;
 	}
 
@@ -328,29 +476,41 @@ static void send_hsr_supervision_frame(struct hsr_port *master,
 	hsr_stag->tlv.HSR_TLV_length = hsr->prot_version ?
 				sizeof(struct hsr_sup_payload) : 12;
 
-	/* Payload: MacAddressA */
+	/* Payload: MacAddressA / SAN MAC from ProxyNodeTable */
 	hsr_sp = skb_put(skb, sizeof(struct hsr_sup_payload));
-	ether_addr_copy(hsr_sp->macaddress_A, master->dev->dev_addr);
+	ether_addr_copy(hsr_sp->macaddress_A, addr);
+
+	if (hsr->redbox &&
+	    hsr_is_node_in_db(&hsr->proxy_node_db, addr)) {
+		hsr_stlv = skb_put(skb, sizeof(struct hsr_sup_tlv));
+		hsr_stlv->HSR_TLV_type = PRP_TLV_REDBOX_MAC;
+		hsr_stlv->HSR_TLV_length = sizeof(struct hsr_sup_payload);
+
+		/* Payload: MacAddressRedBox */
+		hsr_sp = skb_put(skb, sizeof(struct hsr_sup_payload));
+		ether_addr_copy(hsr_sp->macaddress_A, hsr->macaddress_redbox);
+	}
 
 	if (skb_put_padto(skb, ETH_ZLEN)) {
 		spin_unlock_bh(&hsr->seqnr_lock);
 		return;
 	}
 
-	hsr_forward_skb(skb, master);
+	hsr_forward_skb(skb, port);
 	spin_unlock_bh(&hsr->seqnr_lock);
 	return;
 }
 
 static void send_prp_supervision_frame(struct hsr_port *master,
-				       unsigned long *interval)
+				       unsigned long *interval,
+				       const unsigned char *addr)
 {
 	struct hsr_priv *hsr = master->hsr;
 	struct hsr_sup_payload *hsr_sp;
 	struct hsr_sup_tag *hsr_stag;
 	struct sk_buff *skb;
 
-	skb = hsr_init_skb(master);
+	skb = hsr_init_skb(master, 0);
 	if (!skb) {
 		netdev_warn_once(master->dev, "PRP: Could not send supervision frame\n");
 		return;
@@ -393,7 +553,7 @@ static void hsr_announce(struct timer_list *t)
 
 	rcu_read_lock();
 	master = hsr_port_get_hsr(hsr, HSR_PT_MASTER);
-	hsr->proto_ops->send_sv_frame(master, &interval);
+	hsr->proto_ops->send_sv_frame(master, &interval, master->dev->dev_addr);
 
 	if (is_admin_up(master->dev))
 		mod_timer(&hsr->announce_timer, jiffies + interval);
@@ -401,15 +561,55 @@ static void hsr_announce(struct timer_list *t)
 	rcu_read_unlock();
 }
 
-void hsr_del_ports(struct hsr_priv *hsr)
+/* Announce (supervision frame) timer function for RedBox
+ */
+static void hsr_proxy_announce(struct timer_list *t)
+{
+	struct hsr_priv *hsr = from_timer(hsr, t, announce_proxy_timer);
+	struct hsr_port *interlink;
+	unsigned long interval = 0;
+	struct hsr_node *node;
+
+	rcu_read_lock();
+	/* RedBOX sends supervisory frames to HSR network with MAC addresses
+	 * of SAN nodes stored in ProxyNodeTable.
+	 */
+	interlink = hsr_port_get_hsr(hsr, HSR_PT_INTERLINK);
+	if (!interlink)
+		goto done;
+
+	list_for_each_entry_rcu(node, &hsr->proxy_node_db, mac_list) {
+		if (hsr_addr_is_redbox(hsr, node->macaddress_A))
+			continue;
+		hsr->proto_ops->send_sv_frame(interlink, &interval,
+					      node->macaddress_A);
+	}
+
+	if (is_admin_up(interlink->dev)) {
+		if (!interval)
+			interval = msecs_to_jiffies(HSR_ANNOUNCE_INTERVAL);
+
+		mod_timer(&hsr->announce_proxy_timer, jiffies + interval);
+	}
+
+done:
+	rcu_read_unlock();
+}
+
+void hsr_del_ports(struct hsr_priv *hsr, struct net_device *hsr_dev)
 {
 	struct hsr_port *port;
 
+	hsr_remove_procfs(hsr, hsr_dev);
 	port = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_A);
 	if (port)
 		hsr_del_port(port);
 
 	port = hsr_port_get_hsr(hsr, HSR_PT_SLAVE_B);
+	if (port)
+		hsr_del_port(port);
+
+	port = hsr_port_get_hsr(hsr, HSR_PT_INTERLINK);
 	if (port)
 		hsr_del_port(port);
 
@@ -513,6 +713,45 @@ static int hsr_ndo_vlan_rx_add_vid(struct net_device *dev,
 	return 0;
 }
 
+static int hsr_hwtstamp_config_set(struct net_device *ndev,
+				   struct kernel_hwtstamp_config *cfg,
+				   struct netlink_ext_ack *extack)
+{
+	struct hsr_priv *priv = netdev_priv(ndev);
+	const struct net_device_ops *ops;
+	struct hsr_port *port;
+	int ret = -EOPNOTSUPP;
+
+	hsr_for_each_port(priv, port) {
+		if (is_slave_port(port)) {
+			ops = port->dev->netdev_ops;
+			if (ops && ops->ndo_hwtstamp_set) {
+				ret = ops->ndo_hwtstamp_set(port->dev, cfg,
+							    extack);
+			}
+		}
+	}
+	return ret;
+}
+
+static int hsr_hwtstamp_config_get(struct net_device *ndev,
+				   struct kernel_hwtstamp_config *cfg)
+{
+	struct hsr_priv *priv = netdev_priv(ndev);
+	const struct net_device_ops *ops;
+	struct hsr_port *port;
+	int ret = -EOPNOTSUPP;
+
+	hsr_for_each_port(priv, port) {
+		if (is_slave_port(port)) {
+			ops = port->dev->netdev_ops;
+			if (ops && ops->ndo_hwtstamp_get)
+				return ops->ndo_hwtstamp_get(port->dev, cfg);
+		}
+	}
+	return ret;
+}
+
 static int hsr_ndo_vlan_rx_kill_vid(struct net_device *dev,
 				    __be16 proto, u16 vid)
 {
@@ -545,9 +784,36 @@ static const struct net_device_ops hsr_device_ops = {
 	.ndo_set_rx_mode = hsr_set_rx_mode,
 	.ndo_vlan_rx_add_vid = hsr_ndo_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid = hsr_ndo_vlan_rx_kill_vid,
+	.ndo_hwtstamp_get = hsr_hwtstamp_config_get,
+	.ndo_hwtstamp_set = hsr_hwtstamp_config_set,
 };
 
-static struct device_type hsr_type = {
+static int hsr_get_ts_info(struct net_device *dev,
+			   struct kernel_ethtool_ts_info *info)
+{
+	struct hsr_priv *priv = netdev_priv(dev);
+	struct hsr_port *port;
+	const struct ethtool_ops *ops;
+	int ret = -EOPNOTSUPP;
+
+	hsr_for_each_port(priv, port) {
+		if (is_slave_port(port)) {
+			ops = port->dev->ethtool_ops;
+			if (ops && ops->get_ts_info) {
+				ret = ops->get_ts_info(port->dev, info);
+				return ret;
+			}
+		}
+	}
+	return ret;
+}
+
+static const struct ethtool_ops hsr_ethtool_ops = {
+	.get_link = ethtool_op_get_link,
+	.get_ts_info = hsr_get_ts_info,
+};
+
+static const struct device_type hsr_type = {
 	.name = "hsr",
 };
 
@@ -558,6 +824,7 @@ static struct hsr_proto_ops hsr_ops = {
 	.drop_frame = hsr_drop_frame,
 	.fill_frame_info = hsr_fill_frame_info,
 	.invalid_dan_ingress_frame = hsr_invalid_dan_ingress_frame,
+	.register_frame_out = hsr_register_frame_out,
 };
 
 static struct hsr_proto_ops prp_ops = {
@@ -568,6 +835,7 @@ static struct hsr_proto_ops prp_ops = {
 	.fill_frame_info = prp_fill_frame_info,
 	.handle_san_frame = prp_handle_san_frame,
 	.update_san_info = prp_update_san_info,
+	.register_frame_out = prp_register_frame_out,
 };
 
 void hsr_dev_setup(struct net_device *dev)
@@ -578,8 +846,15 @@ void hsr_dev_setup(struct net_device *dev)
 	dev->min_mtu = 0;
 	dev->header_ops = &hsr_header_ops;
 	dev->netdev_ops = &hsr_device_ops;
+	dev->ethtool_ops = &hsr_ethtool_ops;
 	SET_NETDEV_DEVTYPE(dev, &hsr_type);
 	dev->priv_flags |= IFF_NO_QUEUE | IFF_DISABLE_NETPOLL;
+	/* Prevent recursive tx locking */
+	dev->lltx = true;
+	/* Not sure about this. Taken from bridge code. netdevice.h says
+	 * it means "Does not change network namespaces".
+	 */
+	dev->netns_local = true;
 
 	dev->needs_free_netdev = true;
 
@@ -589,13 +864,6 @@ void hsr_dev_setup(struct net_device *dev)
 			   NETIF_F_HW_VLAN_CTAG_FILTER;
 
 	dev->features = dev->hw_features;
-
-	/* Prevent recursive tx locking */
-	dev->features |= NETIF_F_LLTX;
-	/* Not sure about this. Taken from bridge code. netdev_features.h says
-	 * it means "Does not change network namespaces".
-	 */
-	dev->features |= NETIF_F_NETNS_LOCAL;
 }
 
 /* Return true if dev is a HSR master; return false otherwise.
@@ -606,14 +874,29 @@ bool is_hsr_master(struct net_device *dev)
 }
 EXPORT_SYMBOL(is_hsr_master);
 
+struct net_device *hsr_get_port_ndev(struct net_device *ndev,
+				     enum hsr_port_type pt)
+{
+	struct hsr_priv *hsr = netdev_priv(ndev);
+	struct hsr_port *port;
+
+	hsr_for_each_port(hsr, port)
+		if (port->type == pt)
+			return port->dev;
+	return NULL;
+}
+EXPORT_SYMBOL(hsr_get_port_ndev);
+
 /* Default multicast address for HSR Supervision frames */
 static const unsigned char def_multicast_addr[ETH_ALEN] __aligned(2) = {
 	0x01, 0x15, 0x4e, 0x00, 0x01, 0x00
 };
 
 int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
-		     unsigned char multicast_spec, u8 protocol_version,
-		     struct netlink_ext_ack *extack)
+		     struct net_device *interlink, unsigned char multicast_spec,
+		     u8 protocol_version, struct netlink_ext_ack *extack,
+		     bool sv_vlan_tag_needed, unsigned short vid,
+		     unsigned char pcp, unsigned char dei)
 {
 	bool unregister = false;
 	struct hsr_priv *hsr;
@@ -622,6 +905,7 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 	hsr = netdev_priv(hsr_dev);
 	INIT_LIST_HEAD(&hsr->ports);
 	INIT_LIST_HEAD(&hsr->node_db);
+	INIT_LIST_HEAD(&hsr->proxy_node_db);
 	spin_lock_init(&hsr->list_lock);
 
 	eth_hw_addr_set(hsr_dev, slave[0]->dev_addr);
@@ -633,8 +917,10 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 		 */
 		hsr->net_id = PRP_LAN_ID << 1;
 		hsr->proto_ops = &prp_ops;
+		hsr->dd_mode = IEC62439_3_DD;
 	} else {
 		hsr->proto_ops = &hsr_ops;
+		hsr->hsr_mode = IEC62439_3_HSR_MODE_H;
 	}
 
 	/* Make sure we recognize frames from ourselves in hsr_rcv() */
@@ -649,13 +935,20 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 	hsr->sup_sequence_nr = HSR_SUP_SEQNR_START;
 
 	timer_setup(&hsr->announce_timer, hsr_announce, 0);
-	timer_setup(&hsr->prune_timer, hsr_prune_nodes, 0);
+	if (!hsr->fwd_offloaded)
+		timer_setup(&hsr->prune_timer, hsr_prune_nodes, 0);
+	timer_setup(&hsr->prune_proxy_timer, hsr_prune_proxy_nodes, 0);
+	timer_setup(&hsr->announce_proxy_timer, hsr_proxy_announce, 0);
 
 	ether_addr_copy(hsr->sup_multicast_addr, def_multicast_addr);
 	hsr->sup_multicast_addr[ETH_ALEN - 1] = multicast_spec;
 
 	hsr->prot_version = protocol_version;
-
+	/* update vlan tag information for SV frames */
+	hsr->use_vlan_for_sv = sv_vlan_tag_needed;
+	hsr->sv_frame_vid = vid;
+	hsr->sv_frame_dei = dei;
+	hsr->sv_frame_pcp = pcp;
 	/* Make sure the 1st call to netif_carrier_on() gets through */
 	netif_carrier_off(hsr_dev);
 
@@ -686,16 +979,56 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 	if (res)
 		goto err_unregister;
 
+	if (interlink) {
+		res = hsr_add_port(hsr, interlink, HSR_PT_INTERLINK, extack);
+		if (res)
+			goto err_unregister;
+
+		hsr->redbox = true;
+		ether_addr_copy(hsr->macaddress_redbox, interlink->dev_addr);
+		mod_timer(&hsr->prune_proxy_timer,
+			  jiffies + msecs_to_jiffies(PRUNE_PROXY_PERIOD));
+	}
+
+	/* For LRE rx offload, pruning is expected to happen
+	 * at the hardware or firmware . So don't do this in software
+	 */
+	if (!hsr->fwd_offloaded)
+		mod_timer(&hsr->prune_timer,
+			  jiffies + msecs_to_jiffies(PRUNE_PERIOD));
+	/* for offloaded case, expect both slaves have the
+	 * same MAC address configured. If not fail.
+	 */
+	if (hsr->fwd_offloaded &&
+	    !ether_addr_equal(slave[0]->dev_addr,
+			      slave[1]->dev_addr)) {
+		netdev_err(hsr_dev,
+			   "Slave's MAC addr must be same. So change it\n");
+		res = -EINVAL;
+		goto err_add_slaves;
+	}
+
 	hsr_debugfs_init(hsr, hsr_dev);
 	mod_timer(&hsr->prune_timer, jiffies + msecs_to_jiffies(PRUNE_PERIOD));
 
-	return 0;
+	res = hsr_create_procfs(hsr, hsr_dev);
+	if (res)
+		goto err_add_slaves;
 
+	if (hsr->use_vlan_for_sv)
+		res = hsr_set_sv_frame_vid(hsr, hsr->sv_frame_vid);
+
+	if (res)
+		goto err_procfs;
+
+	return 0;
+err_procfs:
+	hsr_remove_procfs(hsr, hsr_dev);
 err_unregister:
-	hsr_del_ports(hsr);
+	hsr_del_ports(hsr, hsr_dev);
 err_add_master:
 	hsr_del_self_node(hsr);
-
+err_add_slaves:
 	if (unregister)
 		unregister_netdevice(hsr_dev);
 	return res;

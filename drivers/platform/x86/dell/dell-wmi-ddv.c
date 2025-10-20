@@ -31,7 +31,7 @@
 
 #include <acpi/battery.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #define DRIVER_NAME	"dell-wmi-ddv"
 
@@ -665,8 +665,10 @@ static ssize_t temp_show(struct device *dev, struct device_attribute *attr, char
 	if (ret < 0)
 		return ret;
 
-	/* Use 2731 instead of 2731.5 to avoid unnecessary rounding */
-	return sysfs_emit(buf, "%d\n", value - 2731);
+	/* Use 2732 instead of 2731.5 to avoid unnecessary rounding and to emulate
+	 * the behaviour of the OEM application which seems to round down the result.
+	 */
+	return sysfs_emit(buf, "%d\n", value - 2732);
 }
 
 static ssize_t eppid_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -882,6 +884,7 @@ static struct wmi_driver dell_wmi_ddv_driver = {
 	},
 	.id_table = dell_wmi_ddv_id_table,
 	.probe = dell_wmi_ddv_probe,
+	.no_singleton = true,
 };
 module_wmi_driver(dell_wmi_ddv_driver);
 

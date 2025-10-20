@@ -146,10 +146,8 @@ u8 cc33xx_tx_get_hlid(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 		return cc33xx_tx_get_hlid_ap(cc, wlvif, skb, sta);
 
 	control = IEEE80211_SKB_CB(skb);
-	if (control->flags & IEEE80211_TX_CTL_TX_OFFCHAN) {
-		cc33xx_debug(DEBUG_TX, "tx offchannel");
+	if (control->flags & IEEE80211_TX_CTL_TX_OFFCHAN)
 		return wlvif->dev_hlid;
-	}
 
 	return wlvif->sta.hlid;
 }

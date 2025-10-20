@@ -60,7 +60,7 @@ struct cc33xx {
 	struct device *dev;
 	struct platform_device *pdev;
 
-	struct cc33xx_if_operations *if_ops;
+	const struct cc33xx_if_operations *if_ops;
 
 	int wakeirq;
 
@@ -403,7 +403,7 @@ struct core_fw_status {
 	__le32	link_fast_bitmap;
 
 	/* A bitmap (where each bit represents a single HLID)
-	 * to indicate if a links is suspended/aboout to be suspended
+	 * to indicate if a links is suspended/about to be suspended
 	 */
 	__le32	link_suspend_bitmap;
 

@@ -20,7 +20,7 @@
 #include <linux/types.h>
 #include <linux/watchdog.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #define ZIIRAVE_TIMEOUT_MIN	3
 #define ZIIRAVE_TIMEOUT_MAX	255
@@ -301,6 +301,9 @@ static int ziirave_firm_verify(struct watchdog_device *wdd,
 	for (rec = (void *)fw->data; rec; rec = ihex_next_binrec(rec)) {
 		const u16 len = be16_to_cpu(rec->len);
 		const u32 addr = be32_to_cpu(rec->addr);
+
+		if (len > sizeof(data))
+			return -EINVAL;
 
 		if (ziirave_firm_addr_readonly(addr))
 			continue;

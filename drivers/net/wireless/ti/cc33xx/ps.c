@@ -16,9 +16,6 @@ int cc33xx_ps_set_mode(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	switch (mode) {
 	case STATION_AUTO_PS_MODE:
 	case STATION_POWER_SAVE_MODE:
-		cc33xx_debug(DEBUG_PSM, "entering psm (mode=%d,timeout=%u)",
-			     mode, timeout);
-
 		ret = cc33xx_cmd_ps_mode(cc, wlvif, mode, timeout);
 		if (ret < 0)
 			return ret;
@@ -27,8 +24,6 @@ int cc33xx_ps_set_mode(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 		break;
 
 	case STATION_ACTIVE_MODE:
-		cc33xx_debug(DEBUG_PSM, "leaving psm");
-
 		ret = cc33xx_cmd_ps_mode(cc, wlvif, mode, 0);
 		if (ret < 0)
 			return ret;
@@ -92,10 +87,6 @@ void cc33xx_ps_link_start(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	if (!test_bit(hlid, wlvif->ap.sta_hlid_map) ||
 	    test_bit(hlid, &cc->ap_ps_map))
 		return;
-
-	cc33xx_debug(DEBUG_PSM,
-		     "start mac80211 PSM on hlid %d pkts %d clean_queues %d",
-		     hlid, cc->links[hlid].allocated_pkts, clean_queues);
 
 	rcu_read_lock();
 	sta = ieee80211_find_sta(vif, cc->links[hlid].addr);

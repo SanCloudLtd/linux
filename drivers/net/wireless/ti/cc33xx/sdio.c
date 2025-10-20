@@ -19,19 +19,10 @@
 #define SDIO_DEVICE_ID_CC33XX_NO_EFUSE	0x4076
 #define SDIO_DEVICE_ID_TI_CC33XX	0x4077
 
-static bool dump;
-
 struct cc33xx_sdio_glue {
 	struct device *dev;
 	struct platform_device *core;
 };
-
-static const struct sdio_device_id cc33xx_devices[] = {
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_TI_CC33XX) },
-	{ SDIO_DEVICE(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_CC33XX_NO_EFUSE) },
-	{}
-};
-MODULE_DEVICE_TABLE(sdio, cc33xx_devices);
 
 static void cc33xx_sdio_claim(struct device *child)
 {
@@ -88,12 +79,6 @@ static int __must_check cc33xx_sdio_raw_read(struct device *child, int addr,
 	if (WARN_ON(ret))
 		dev_err(child->parent, "sdio read failed (%d)\n", ret);
 
-	if (unlikely(dump)) {
-		dev_dbg(glue->dev, "cc33xx_sdio: READ from 0x%04x\n", addr);
-		print_hex_dump(KERN_DEBUG, "cc33xx_sdio: READ ",
-			       DUMP_PREFIX_OFFSET, 16, 1, buf, len, false);
-	}
-
 	return ret;
 }
 
@@ -106,22 +91,9 @@ static int __must_check cc33xx_sdio_raw_write(struct device *child, int addr,
 
 	sdio_claim_host(func);
 
-	if (unlikely(dump)) {
-		dev_dbg(child->parent, "cc33xx_sdio: WRITE to 0x%04x length 0x%zx (first 64 Bytes):\n",
-			addr, len);
-		print_hex_dump(KERN_DEBUG, "cc33xx_sdio: WRITE ",
-			       DUMP_PREFIX_OFFSET, 16, 1, buf,
-			       min(len, (size_t)64), false);
-	}
-
 	if (unlikely(addr == HW_ACCESS_ELP_CTRL_REG)) {
 		sdio_f0_writeb(func, ((u8 *)buf)[0], addr, &ret);
-		dev_dbg(child->parent, "sdio write 52 addr 0x%x, byte 0x%02x\n",
-			addr, ((u8 *)buf)[0]);
 	} else {
-		dev_dbg(child->parent, "sdio write 53 addr 0x%x, %zu bytes\n",
-			addr, len);
-
 		if (fixed)
 			ret = sdio_writesb(func, addr, buf, len);
 		else
@@ -195,8 +167,6 @@ static void inband_irq_handler(struct sdio_func *func)
 	struct platform_device *pdev = glue->core;
 	struct cc33xx_platdev_data *pdev_data = dev_get_platdata(&pdev->dev);
 
-	dev_dbg(glue->dev, "Inband SDIO IRQ");
-
 	if (WARN_ON(!pdev_data->irq_handler))
 		return;
 
@@ -262,7 +232,7 @@ static void cc33xx_set_irq_handler(struct device *child, void *handler)
 	pdev_data->irq_handler = handler;
 }
 
-static struct cc33xx_if_operations sdio_ops_gpio_irq = {
+static const struct cc33xx_if_operations sdio_ops_gpio_irq = {
 	.interface_claim	= cc33xx_sdio_claim,
 	.interface_release	= cc33xx_sdio_release,
 	.read			= cc33xx_sdio_raw_read,
@@ -274,7 +244,7 @@ static struct cc33xx_if_operations sdio_ops_gpio_irq = {
 	.enable_irq		= cc33xx_enable_line_irq,
 };
 
-static struct cc33xx_if_operations sdio_ops_inband_irq = {
+static const struct cc33xx_if_operations sdio_ops_inband_irq = {
 	.interface_claim	= cc33xx_sdio_claim,
 	.interface_release	= cc33xx_sdio_release,
 	.read			= cc33xx_sdio_raw_read,
@@ -295,9 +265,6 @@ static const struct cc33xx_family_data cc33xx_data = {
 
 static const struct of_device_id cc33xx_sdio_of_match_table[] = {
 	{ .compatible = "ti,cc3300", .data = &cc33xx_data },
-	{ .compatible = "ti,cc3301", .data = &cc33xx_data },
-	{ .compatible = "ti,cc3350", .data = &cc33xx_data },
-	{ .compatible = "ti,cc3351", .data = &cc33xx_data },
 	{ }
 };
 
@@ -356,7 +323,6 @@ static int sdio_cc33xx_probe(struct sdio_func *func,
 	mmc_pm_flag_t mmcflags;
 	int ret = -ENOMEM;
 	int gpio_irq, wakeirq, irq_flags;
-	const char *chip_family;
 
 	/* We are only able to handle the wlan function */
 	if (func->num != 0x02)
@@ -384,16 +350,13 @@ static int sdio_cc33xx_probe(struct sdio_func *func,
 
 	/* if sdio can keep power while host is suspended, enable wow */
 	mmcflags = sdio_get_host_pm_caps(func);
-	dev_dbg(glue->dev, "sdio PM caps = 0x%x\n", mmcflags);
 
 	sdio_set_drvdata(func, glue);
 
 	/* Tell PM core that we don't need the card to be powered now */
 	pm_runtime_put_noidle(&func->dev);
 
-	chip_family = "cc33xx";
-
-	glue->core = platform_device_alloc(chip_family, PLATFORM_DEVID_AUTO);
+	glue->core = platform_device_alloc("cc33xx", PLATFORM_DEVID_AUTO);
 	if (!glue->core) {
 		dev_err(glue->dev, "can't allocate platform_device");
 		ret = -ENOMEM;
@@ -403,8 +366,6 @@ static int sdio_cc33xx_probe(struct sdio_func *func,
 	glue->core->dev.parent = &func->dev;
 
 	if (gpio_irq) {
-		dev_info(glue->dev, "Using GPIO as IRQ\n");
-
 		irq_flags = irqd_get_trigger_type(irq_get_irq_data(gpio_irq));
 
 		irq_set_status_flags(gpio_irq, IRQ_NOAUTOEN);
@@ -428,8 +389,6 @@ static int sdio_cc33xx_probe(struct sdio_func *func,
 
 		pdev_data->if_ops = &sdio_ops_gpio_irq;
 	} else {
-		dev_info(glue->dev, "Using SDIO in-band IRQ\n");
-
 		pdev_data->if_ops = &sdio_ops_inband_irq;
 	}
 
@@ -534,8 +493,6 @@ out:
 
 static int cc33xx_resume(struct device *dev)
 {
-	dev_dbg(dev, "cc33xx resume\n");
-
 	return 0;
 }
 
@@ -543,40 +500,29 @@ static const struct dev_pm_ops cc33xx_sdio_pm_ops = {
 	.suspend	= cc33xx_suspend,
 	.resume		= cc33xx_resume,
 };
+#endif
+
+static const struct sdio_device_id cc33xx_devices[] = {
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_TI_CC33XX) },
+	{ SDIO_DEVICE(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_CC33XX_NO_EFUSE) },
+	{}
+};
+
+MODULE_DEVICE_TABLE(sdio, cc33xx_devices);
 
 static struct sdio_driver cc33xx_sdio_driver = {
 	.name		= "cc33xx_sdio",
 	.id_table	= cc33xx_devices,
 	.probe		= sdio_cc33xx_probe,
 	.remove		= sdio_cc33xx_remove,
+#ifdef CONFIG_PM
 	.drv = {
 		.pm = &cc33xx_sdio_pm_ops,
 	},
-};
-#else
-static struct sdio_driver cc33xx_sdio_driver = {
-	.name		= "cc33xx_sdio",
-	.id_table	= cc33xx_devices,
-	.probe		= sdio_cc33xx_probe,
-	.remove		= sdio_cc33xx_remove,
-};
 #endif /* CONFIG_PM */
+};
 
-static int __init sdio_cc33xx_init(void)
-{
-	return sdio_register_driver(&cc33xx_sdio_driver);
-}
-
-static void __exit sdio_cc33xx_exit(void)
-{
-	sdio_unregister_driver(&cc33xx_sdio_driver);
-}
-
-module_init(sdio_cc33xx_init);
-module_exit(sdio_cc33xx_exit);
-
-module_param(dump, bool, 0600);
-MODULE_PARM_DESC(dump, "Enable sdio read/write dumps.");
+module_sdio_driver(cc33xx_sdio_driver);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("SDIO transport for Texas Instruments CC33xx WLAN driver");
