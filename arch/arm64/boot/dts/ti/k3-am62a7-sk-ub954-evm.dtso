@@ -3,7 +3,7 @@
  * DT Overlay for DS90UB954-Q1EVM FPDLink-III deserializer board on SK-AM62A
  * https://www.ti.com/tool/DS90UB954-Q1EVM
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2025 Texas Instruments Incorporated - http://www.ti.com/
  */
 
 /dts-v1/;
@@ -54,7 +54,7 @@
 
 				i2c-alias-pool = <0x4a 0x4b 0x4c 0x4d 0x4e 0x4f>;
 
-				ds90ub960_0_ports: ports {
+				deserializer_0_ports: ports {
 					#address-cells = <1>;
 					#size-cells = <0>;
 
@@ -70,7 +70,7 @@
 					};
 				};
 
-				ds90ub960_0_links: links {
+				deserializer_0_links: links {
 					#address-cells = <1>;
 					#size-cells = <0>;
 				};

@@ -26,7 +26,7 @@
 };
 
 &main_pmx0 {
-	usb0_pins_default: usb0_pins_default {
+	usb0_pins_default: usb0-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x02bc, PIN_OUTPUT, 0) /* (AD9) USB0_DRVVBUS */
 		>;

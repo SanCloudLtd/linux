@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * DT Overlay for RPi Camera V2.1 on J722S-EVM board.
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2025 Texas Instruments Incorporated - https://www.ti.com/
  *
  * Schematics: https://datasheets.raspberrypi.com/camera/camera-v2-schematics.pdf
  */

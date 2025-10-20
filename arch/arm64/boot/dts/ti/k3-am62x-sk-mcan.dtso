@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /**
- * DT overlay to enable MCAN on AM625-SK, AM62A-SK, AM62 LP-SK
+ * DT overlay to enable MCAN on AM625-SK, AM62 LP-SK, and AM62A7-SK
  *
  * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
  */
@@ -56,6 +56,7 @@
 };
 
 &main_mcan0 {
+	/* RX pin 8 & TX pin 10 of J3 */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mcan0_pins_default>;
 	phys = <&transceiver1>;
@@ -63,6 +64,7 @@
 };
 
 &mcu_mcan0 {
+	/* RX pin 22 & TX pin 16 of J10 */
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_mcan0_pins_default>;
 	phys = <&transceiver2>;
@@ -70,6 +72,7 @@
 };
 
 &mcu_mcan1 {
+	/* RX pin 11 & TX pin 10 of J10 */
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_mcan1_pins_default>;
 	phys = <&transceiver3>;

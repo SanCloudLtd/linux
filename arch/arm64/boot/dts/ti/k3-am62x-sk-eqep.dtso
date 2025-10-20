@@ -41,8 +41,8 @@
 
 &eqep0 {
 	status = "okay";
-	/* EQEP0 A & B available on pins 38 & 35 of J3 on AM625-SK & AM62 LP-SK */
-	/* EQEP0 A & B available on pins 40 & 38 of J3 on AM62A7-SK */
+	/* A/B on pins 38/35 of J3 on AM625-SK & AM62 LP-SK */
+	/* A/B on pins 40/38 of J3 on AM62A7-SK */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_eqep0_pins_default>;
 };

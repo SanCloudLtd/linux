@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /**
- * DT Overlay for enabling PWM output on user expansion connector for AM62 SKs
+ * DT Overlay for enabling PWM output on user expansion connector for AM625-SK, AM62 LP-SK, and AM62A7-SK
  *
  * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
  */
@@ -58,7 +58,8 @@
 };
 
 &epwm0 {
-	/* Pin 12/40 of J3 */
+	/* Pin 12/40 of J3 on AM625-SK & AM62 LP-SK */
+	/* Pin 35/12 of J3 on AM62A7-SK */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_epwm0_pins_default>;
 	status = "okay";
@@ -81,7 +82,8 @@
 
 &ecap1 {
 	/* ECAP1 in APWM mode */
-	/* Pin 38 of J3 */
+	/* Pin 38 of J3 on AM625-SK & AM62 LP-SK */
+	/* Pin 40 of J3 on AM62A7-SK */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_ecap1_pins_default>;
 	status = "okay";

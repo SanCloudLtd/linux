@@ -90,7 +90,7 @@
 };
 
 &epwm0 {
-	/* Pin 12/40 of J3 */
+	/* Pin 35/12 of J3 */
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&rpi_header_ehrpwm0_pins_default>;

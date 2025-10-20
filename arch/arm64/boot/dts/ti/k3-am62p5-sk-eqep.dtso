@@ -34,6 +34,11 @@
 	};
 };
 
+&ecap1 {
+	/* MCASP0_AXR1 pinmux conflict  */
+	status = "disabled";
+};
+
 &main_uart1 {
 	/* Disable FW debug logs */
 	status = "disabled";
@@ -41,7 +46,7 @@
 
 &eqep0 {
 	status = "okay";
-	/* EQEP0 A & B available on pins 40 & 38 of J4 header */
+	/* A/B on pins 40/38 of J4 */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_eqep0_pins_default>;
 };

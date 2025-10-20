@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * IMX219 Camera Module for V3-Link d-ch Adapter Board
+ * OV5640 Camera Module for V3-Link d-ch Adapter Board
  * https://docs.arducam.com/V3Link-Camera-Solution/V3Link-Camera-Solution-on-TI-Platform/Introduction/
  *
- * Copyright (c) 2024 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (c) 2025 Texas Instruments Incorporated - http://www.ti.com/
  */
 
 /dts-v1/;
@@ -19,7 +19,7 @@
 	};
 };
 
-&ds90ub960_0_ports {
+&deserializer_0_ports {
 	#address-cells = <1>;
 	#size-cells = <0>;
 
@@ -33,7 +33,7 @@
 	};
 };
 
-&ds90ub960_0_links {
+&deserializer_0_links {
 	#address-cells = <1>;
 	#size-cells = <0>;
 

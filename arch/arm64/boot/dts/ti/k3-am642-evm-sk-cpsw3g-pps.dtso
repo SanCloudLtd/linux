@@ -7,15 +7,14 @@
  * AM642 EVM Product Link: https://www.ti.com/tool/TMDS64EVM
  * AM642 SK Product Link: https://www.ti.com/tool/SK-AM64B
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024-2025 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;
 /plugin/;
 
 #include "k3-pinctrl.h"
-
-#define TS_OFFSET(pa, val)     (0x4+(pa)*4) (0x10000 | val)
+#include "k3-timesync-router.h"
 
 &main_pmx0 {
 	cpsw3g_pps_pins_default: cpsw3g-pps-default-pins {
@@ -39,11 +38,13 @@
 		    <&cpsw3g_pps_pins_default>;
 };
 
-&cpsw_cpts_pps {
-	pinctrl-single,pins = <
+&timesync_router {
+	/* Use Time Sync Router to map GENF1 input to HW8_TS_PUSH output. */
+	mux-reg-masks-state = <
 		/* pps [cpts genf1] in22 -> out37 [cpts hw8_push] */
-		TS_OFFSET(37, 22)
+		K3_TS_OFFSET(37, 0x0001ffff, 22)
 		/* pps [cpts genf1] in22 -> out24 [SYNC0_OUT pin] */
-		TS_OFFSET(24, 22)
-	>;
+		K3_TS_OFFSET(24, 0x0001ffff, 22)
+		>;
+	status = "okay";
 };

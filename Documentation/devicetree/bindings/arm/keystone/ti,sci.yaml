@@ -20,7 +20,7 @@ description: |
   initialized early into boot process and provides services to Operating Systems
   on multiple processors including ones running Linux.
 
-  See http://processors.wiki.ti.com/index.php/TISCI for protocol definition.
+  See https://software-dl.ti.com/tisci/esd/latest/index.html for protocol definition.
 
   The TI-SCI node describes the Texas Instrument's System Controller entity node.
   This parent node may optionally have additional children nodes which describe
@@ -60,12 +60,6 @@ properties:
 
   mboxes:
     minItems: 2
-
-  ti,partial-io-wakeup-sources:
-    $ref: /schemas/types.yaml#/definitions/phandle-array
-    description: |
-      List of phandles to devicetree nodes that can wakeup the SoC from the
-      Partial IO poweroff mode.
 
   ti,host-id:
     $ref: /schemas/types.yaml#/definitions/uint32

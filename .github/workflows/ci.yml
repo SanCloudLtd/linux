@@ -22,9 +22,9 @@ jobs:
       - name: Build DTBs
         run: |
           . /opt/toolchain/setenv
-          make am335x-sancloud-bbe.dtb \
-               am335x-sancloud-bbe-lite.dtb \
-               am335x-sancloud-bbe-extended-wifi.dtb
+          make ti/omap/am335x-sancloud-bbe.dtb \
+               ti/omap/am335x-sancloud-bbe-lite.dtb \
+               ti/omap/am335x-sancloud-bbe-extended-wifi.dtb
 
       - name: Build zImage
         run: |

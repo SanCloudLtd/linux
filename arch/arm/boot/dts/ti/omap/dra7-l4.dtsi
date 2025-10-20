@@ -12,6 +12,7 @@
 	ranges = <0x00000000 0x4a000000 0x100000>,	/* segment 0 */
 		 <0x00100000 0x4a100000 0x100000>,	/* segment 1 */
 		 <0x00200000 0x4a200000 0x100000>;	/* segment 2 */
+	dma-ranges;
 
 	segment@0 {					/* 0x4a000000 */
 		compatible = "simple-pm-bus";
@@ -80,7 +81,7 @@
 						};
 					};
 
-					phy_gmii_sel: phy-gmii-sel {
+					phy_gmii_sel: phy-gmii-sel@554 {
 						compatible = "ti,dra7xx-phy-gmii-sel";
 						reg = <0x554 0x4>;
 						#phy-cells = <1>;
@@ -557,6 +558,7 @@
 			 <0x0007e000 0x0017e000 0x001000>,	/* ap 124 */
 			 <0x00059000 0x00159000 0x001000>,	/* ap 125 */
 			 <0x0005a000 0x0015a000 0x001000>;	/* ap 126 */
+		dma-ranges;
 
 		target-module@2000 {			/* 0x4a102000, ap 27 3c.0 */
 			compatible = "ti,sysc";
@@ -4143,7 +4145,50 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 			ranges = <0x0 0x170000 0x10000>;
-			status = "disabled";
+
+			vip1: vip@0 {
+				compatible = "ti,dra7-vip";
+				status = "disabled";
+				label = "vip1";
+				reg = <0x0000 0x114>,
+				      <0x5500 0xd8>,
+				      <0x5700 0x18>,
+				      <0x5800 0x80>,
+				      <0x5a00 0xd8>,
+				      <0x5c00 0x18>,
+				      <0x5d00 0x80>,
+				      <0xd000 0x400>;
+				reg-names = "vip",
+					    "parser0",
+					    "csc0",
+					    "sc0",
+					    "parser1",
+					    "csc1",
+					    "sc1",
+					    "vpdma";
+				interrupts = <GIC_SPI 351 IRQ_TYPE_LEVEL_HIGH>,
+					     <GIC_SPI 392 IRQ_TYPE_LEVEL_HIGH>;
+				/* CTRL_CORE_SMA_SW_1 */
+				ti,vip-clk-polarity = <&scm_conf 0x534>;
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					vin1a: port@0 {
+						reg = <0>;
+					};
+					vin2a: port@1 {
+						reg = <1>;
+					};
+					vin1b: port@2 {
+						reg = <2>;
+					};
+					vin2b: port@3 {
+						reg = <3>;
+					};
+				};
+			};
 		};
 
 		target-module@190000 {			/* 0x48990000, ap 23 2e.0 */
