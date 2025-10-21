@@ -45,6 +45,22 @@
 			AM33XX_PADCONF(AM335X_PIN_RMII1_REF_CLK, PIN_OUTPUT_PULLUP, MUX_MODE7)     /* rmii1_refclk.gpio0_29 */
 		>;
 	};
+
+	davinci_mdio_sc_default: davinci-mdio-sc-default-pins {
+		pinctrl-single,pins = <
+			/* MDIO */
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLUP | SLEWCTRL_FAST, MUX_MODE0)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_OUTPUT_PULLUP, MUX_MODE0)
+		>;
+	};
+
+	davinci_mdio_sc_sleep: davinci-mdio-sc-sleep-pins {
+		pinctrl-single,pins = <
+			/* MDIO reset value */
+			AM33XX_PADCONF(AM335X_PIN_MDIO, PIN_INPUT_PULLDOWN, MUX_MODE7)
+			AM33XX_PADCONF(AM335X_PIN_MDC, PIN_INPUT_PULLDOWN, MUX_MODE7)
+		>;
+	};
 };
 
 &mac_sw {
@@ -56,11 +72,18 @@
 	phy-mode = "rgmii-id";
 };
 
+&davinci_mdio_sw {
+	pinctrl-names = "default", "sleep";
+	pinctrl-0 = <&davinci_mdio_sc_default>;
+	pinctrl-1 = <&davinci_mdio_sc_sleep>;
+};
+
 &i2c0 {
-	usb2512b: usb-hub@2c {
+	usb2514b: usb-hub@2c {
 		pinctrl-names = "default";
 		pinctrl-0 = <&usb_hub_ctrl>;
-		compatible = "microchip,usb2512b";
+		compatible = "microchip,usb2514b";
+		skip-config;
 		reg = <0x2c>;
 		reset-gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;
 	};
