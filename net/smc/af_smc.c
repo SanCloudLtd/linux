@@ -2565,6 +2565,8 @@ static void smc_listen_work(struct work_struct *work)
 			goto out_decl;
 	}
 
+	SMC_STAT_SERV_SUCC_INC(sock_net(newclcsock->sk), ini);
+	/* smc_listen_out() will release smcsk */
 	smc_listen_out_connected(new_smc);
 	SMC_STAT_SERV_SUCC_INC(sock_net(newclcsock->sk), ini);
 	goto out_free;
