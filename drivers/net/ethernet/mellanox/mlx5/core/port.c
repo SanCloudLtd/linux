@@ -463,26 +463,6 @@ int mlx5_query_module_eeprom_by_page(struct mlx5_core_dev *dev,
 	return mlx5_query_mcia(dev, params, data);
 }
 
-int mlx5_query_module_eeprom_by_page(struct mlx5_core_dev *dev,
-				     struct mlx5_module_eeprom_query_params *params,
-				     u8 *data)
-{
-	int err;
-
-	err = mlx5_query_module_num(dev, &params->module_number);
-	if (err)
-		return err;
-
-	if (params->i2c_address != MLX5_I2C_ADDR_HIGH &&
-	    params->i2c_address != MLX5_I2C_ADDR_LOW) {
-		mlx5_core_err(dev, "I2C address not recognized: 0x%x\n", params->i2c_address);
-		return -EINVAL;
-	}
-
-	return mlx5_query_mcia(dev, params, data);
-}
-EXPORT_SYMBOL_GPL(mlx5_query_module_eeprom_by_page);
-
 static int mlx5_query_port_pvlc(struct mlx5_core_dev *dev, u32 *pvlc,
 				int pvlc_size,  u8 local_port)
 {

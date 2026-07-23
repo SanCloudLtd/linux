@@ -640,20 +640,6 @@ static void hidinput_update_battery(struct hid_device *dev, unsigned int usage,
 		power_supply_changed(dev->battery);
 	}
 }
-
-static bool hidinput_set_battery_charge_status(struct hid_device *dev,
-					       unsigned int usage, int value)
-{
-	switch (usage) {
-	case HID_BAT_CHARGING:
-		dev->battery_charge_status = value ?
-					     POWER_SUPPLY_STATUS_CHARGING :
-					     POWER_SUPPLY_STATUS_DISCHARGING;
-		return true;
-	}
-
-	return false;
-}
 #else  /* !CONFIG_HID_BATTERY_STRENGTH */
 static int hidinput_setup_battery(struct hid_device *dev, unsigned report_type,
 				  struct hid_field *field, bool is_percentage)
@@ -668,12 +654,6 @@ static void hidinput_cleanup_battery(struct hid_device *dev)
 static void hidinput_update_battery(struct hid_device *dev, unsigned int usage,
 				    int value)
 {
-}
-
-static bool hidinput_set_battery_charge_status(struct hid_device *dev,
-					       unsigned int usage, int value)
-{
-	return false;
 }
 #endif	/* CONFIG_HID_BATTERY_STRENGTH */
 

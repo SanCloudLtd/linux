@@ -323,27 +323,6 @@ static void tidss_shared_vp_crtc_atomic_enable(struct drm_crtc *crtc,
 	spin_unlock_irqrestore(&ddev->event_lock, flags);
 }
 
-static void tidss_shared_vp_crtc_atomic_enable(struct drm_crtc *crtc,
-					       struct drm_atomic_state *state)
-{
-	struct drm_device *ddev = crtc->dev;
-	unsigned long flags;
-
-	dev_dbg(ddev->dev, "%s, event %p\n", __func__, crtc->state->event);
-
-	/* Turn vertical blanking interrupt reporting on. */
-	drm_crtc_vblank_on(crtc);
-
-	spin_lock_irqsave(&ddev->event_lock, flags);
-
-	if (crtc->state->event) {
-		drm_crtc_send_vblank_event(crtc, crtc->state->event);
-		crtc->state->event = NULL;
-	}
-
-	spin_unlock_irqrestore(&ddev->event_lock, flags);
-}
-
 static void tidss_crtc_atomic_disable(struct drm_crtc *crtc,
 				      struct drm_atomic_state *state)
 {

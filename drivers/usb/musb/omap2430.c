@@ -445,48 +445,6 @@ static int omap2430_probe(struct platform_device *pdev)
 		}
 	}
 
-	if (populate_irqs) {
-		struct resource musb_res[3];
-		struct resource *res;
-		int i = 0;
-
-		memset(musb_res, 0, sizeof(*musb_res) * ARRAY_SIZE(musb_res));
-
-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-		if (!res) {
-			ret = -EINVAL;
-			goto err2;
-		}
-
-		musb_res[i].start = res->start;
-		musb_res[i].end = res->end;
-		musb_res[i].flags = res->flags;
-		musb_res[i].name = res->name;
-		i++;
-
-		ret = of_irq_get_byname(np, "mc");
-		if (ret > 0) {
-			musb_res[i].start = ret;
-			musb_res[i].flags = IORESOURCE_IRQ;
-			musb_res[i].name = "mc";
-			i++;
-		}
-
-		ret = of_irq_get_byname(np, "dma");
-		if (ret > 0) {
-			musb_res[i].start = ret;
-			musb_res[i].flags = IORESOURCE_IRQ;
-			musb_res[i].name = "dma";
-			i++;
-		}
-
-		ret = platform_device_add_resources(musb, musb_res, i);
-		if (ret) {
-			dev_err(&pdev->dev, "failed to add IRQ resources\n");
-			goto err2;
-		}
-	}
-
 	ret = platform_device_add_data(musb, pdata, sizeof(*pdata));
 	if (ret) {
 		dev_err(&pdev->dev, "failed to add platform_data\n");

@@ -358,14 +358,6 @@ static int venus_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, core);
 
-	venus_assign_register_offsets(core);
-
-	ret = v4l2_device_register(dev, &core->v4l2_dev);
-	if (ret)
-		goto err_hfi_destroy;
-
-	platform_set_drvdata(pdev, core);
-
 	pm_runtime_enable(dev);
 
 	ret = pm_runtime_get_sync(dev);

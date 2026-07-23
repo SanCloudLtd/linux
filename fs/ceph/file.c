@@ -621,11 +621,6 @@ static void ceph_async_create_cb(struct ceph_mds_client *mdsc,
 			path_info.vino.ino, IS_ERR(path) ? "<<bad>>" : path, result);
 		ceph_mdsc_free_path_info(&path_info);
 
-		pr_warn_client(cl,
-			"async create failure path=(%llx)%s result=%d!\n",
-			base, IS_ERR(path) ? "<<bad>>" : path, result);
-		ceph_mdsc_free_path(path, pathlen);
-
 		ceph_dir_clear_complete(req->r_parent);
 		if (!d_unhashed(dentry))
 			d_drop(dentry);

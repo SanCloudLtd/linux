@@ -1496,16 +1496,6 @@ static struct sdhci_arasan_of_data sdhci_arasan_versal_net_data = {
 	.quirks = SDHCI_ARASAN_QUIRK_ENSURE_CD_STABLE,
 };
 
-static const struct sdhci_arasan_clk_ops versal_net_clk_ops = {
-	.sdcardclk_ops = &versal_net_sdcardclk_ops,
-	.sampleclk_ops = &versal_net_sampleclk_ops,
-};
-
-static struct sdhci_arasan_of_data sdhci_arasan_versal_net_data = {
-	.pdata = &sdhci_arasan_versal_net_pdata,
-	.clk_ops = &versal_net_clk_ops,
-};
-
 static struct sdhci_arasan_of_data intel_keembay_emmc_data = {
 	.soc_ctl_map = &intel_keembay_soc_ctl_map,
 	.pdata = &sdhci_keembay_emmc_pdata,

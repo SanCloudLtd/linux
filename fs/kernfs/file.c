@@ -909,33 +909,6 @@ static loff_t kernfs_fop_llseek(struct file *file, loff_t offset, int whence)
 	return ret;
 }
 
-static loff_t kernfs_fop_llseek(struct file *file, loff_t offset, int whence)
-{
-	struct kernfs_open_file *of = kernfs_of(file);
-	const struct kernfs_ops *ops;
-	loff_t ret;
-
-	/*
-	 * @of->mutex nests outside active ref and is primarily to ensure that
-	 * the ops aren't called concurrently for the same open file.
-	 */
-	mutex_lock(&of->mutex);
-	if (!kernfs_get_active(of->kn)) {
-		mutex_unlock(&of->mutex);
-		return -ENODEV;
-	}
-
-	ops = kernfs_ops(of->kn);
-	if (ops->llseek)
-		ret = ops->llseek(of, offset, whence);
-	else
-		ret = generic_file_llseek(file, offset, whence);
-
-	kernfs_put_active(of->kn);
-	mutex_unlock(&of->mutex);
-	return ret;
-}
-
 static void kernfs_notify_workfn(struct work_struct *work)
 {
 	struct kernfs_node *kn;

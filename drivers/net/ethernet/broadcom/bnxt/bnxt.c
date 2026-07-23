@@ -15742,14 +15742,6 @@ static int bnxt_set_dflt_rings(struct bnxt *bp, bool sh)
 		bnxt_set_dflt_ulp_stat_ctxs(bp);
 	}
 
-	avail_msix = bnxt_get_max_func_irqs(bp) - bp->cp_nr_rings;
-	if (avail_msix >= BNXT_MIN_ROCE_CP_RINGS) {
-		int ulp_num_msix = min(avail_msix, bp->ulp_num_msix_want);
-
-		bnxt_set_ulp_msix_num(bp, ulp_num_msix);
-		bnxt_set_dflt_ulp_stat_ctxs(bp);
-	}
-
 	rc = __bnxt_reserve_rings(bp);
 	if (rc && rc != -ENODEV)
 		netdev_warn(bp->dev, "Unable to reserve tx rings\n");
