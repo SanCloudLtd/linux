@@ -75,7 +75,6 @@ __ret_fast_syscall:
 	ldr	r1, [tsk, #TI_FLAGS]		@ re-check for syscall tracing
 	movs	r1, r1, lsl #16
 	beq	no_work_pending
-do_slower_path:
  UNWIND(.fnend		)
 ENDPROC(ret_fast_syscall)
 

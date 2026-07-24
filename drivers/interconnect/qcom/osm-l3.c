@@ -268,10 +268,6 @@ static int qcom_osm_l3_probe(struct platform_device *pdev)
 	if (ret)
 		goto err;
 
-	ret = icc_provider_register(provider);
-	if (ret)
-		goto err;
-
 	platform_set_drvdata(pdev, qp);
 
 	return 0;

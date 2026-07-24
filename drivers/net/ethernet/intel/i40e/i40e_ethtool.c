@@ -5700,7 +5700,6 @@ static int i40e_set_eee(struct net_device *netdev, struct ethtool_eee *edata)
 	struct i40e_vsi *vsi = np->vsi;
 	struct i40e_pf *pf = vsi->back;
 	struct i40e_hw *hw = &pf->hw;
-	int status = I40E_SUCCESS;
 	__le16 eee_capability;
 	int status = 0;
 

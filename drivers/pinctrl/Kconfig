@@ -485,16 +485,6 @@ config PINCTRL_TPS6594
 	  This driver can also be built as a module
 	  called tps6594-pinctrl.
 
-config PINCTRL_TPS6594
-	tristate "Pinctrl and GPIO driver for TI TPS6594 PMIC"
-	depends on MFD_TPS6594
-	default MFD_TPS6594
-	select PINMUX
-	select GPIOLIB
-	help
-	  This driver supports GPIOs and pinmuxing for the TPS6594
-	  PMICs chip family.
-
 config PINCTRL_ZYNQ
 	bool "Pinctrl driver for Xilinx Zynq"
 	depends on ARCH_ZYNQ

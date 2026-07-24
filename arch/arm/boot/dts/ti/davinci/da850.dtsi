@@ -9,9 +9,7 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 	chosen { };
-	aliases {
-		rproc0 = &dsp;
-	};
+	aliases { };
 
 	memory@c0000000 {
 		device_type = "memory";

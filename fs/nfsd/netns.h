@@ -132,9 +132,6 @@ struct nfsd_net {
 	 */
 	int keep_active;
 
-	/* Allow umount to wait for nfsd state cleanup */
-	struct completion nfsd_shutdown_complete;
-
 	/*
 	 * clientid and stateid data for construction of net unique COPY
 	 * stateids.

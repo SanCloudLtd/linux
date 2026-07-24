@@ -67,13 +67,6 @@ static inline uint64_t DWARF_MINIMAL_REGS(const char *arch)
 	return (1ULL << perf_arch_reg_ip(arch)) | (1ULL << perf_arch_reg_sp(arch));
 }
 
-static inline const char *perf_reg_name(int id)
-{
-	const char *reg_name = __perf_reg_name(id);
-
-	return reg_name ?: "unknown";
-}
-
 #else
 
 static inline uint64_t DWARF_MINIMAL_REGS(const char *arch __maybe_unused)

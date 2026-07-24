@@ -1026,21 +1026,6 @@ static int dualsense_get_calibration_data(struct dualsense *ds)
 	}
 
 	/*
-	 * Sanity check gyro calibration data. This is needed to prevent crashes
-	 * during report handling of virtual, clone or broken devices not implementing
-	 * calibration data properly.
-	 */
-	for (i = 0; i < ARRAY_SIZE(ds->gyro_calib_data); i++) {
-		if (ds->gyro_calib_data[i].sens_denom == 0) {
-			hid_warn(hdev, "Invalid gyro calibration data for axis (%d), disabling calibration.",
-					ds->gyro_calib_data[i].abs_code);
-			ds->gyro_calib_data[i].bias = 0;
-			ds->gyro_calib_data[i].sens_numer = DS_GYRO_RANGE;
-			ds->gyro_calib_data[i].sens_denom = S16_MAX;
-		}
-	}
-
-	/*
 	 * Set accelerometer calibration and normalization parameters.
 	 * Data values will be normalized to 1/DS_ACC_RES_PER_G g.
 	 */

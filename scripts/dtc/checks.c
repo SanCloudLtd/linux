@@ -1840,8 +1840,7 @@ static void check_graph_port(struct check *c, struct dt_info *dti,
 	if (node->bus != &graph_port_bus)
 		return;
 
-	if (!strprefixeq(node->name, node->basenamelen, "port") &&
-	    !(dti->dtsflags & DTSF_PLUGIN))
+	if (!strprefixeq(node->name, node->basenamelen, "port"))
 		FAIL(c, dti, node, "graph port node name should be 'port'");
 
 	check_graph_reg(c, dti, node);

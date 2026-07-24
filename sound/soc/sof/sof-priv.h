@@ -532,9 +532,6 @@ struct snd_sof_dev {
 	spinlock_t ipc_lock;	/* lock for IPC users */
 	spinlock_t hw_lock;	/* lock for HW IO access */
 
-	/* Main, Base firmware image */
-	struct sof_firmware basefw;
-
 	/*
 	 * When true the DSP is not used.
 	 * It is set under the following condition:

@@ -823,19 +823,3 @@ int dcn_get_approx_det_segs_required_for_pstate(
 	return (int)(soc->dram_clock_change_latency_us * pix_clk_100hz * bpp
 					/ 10240000 + seg_size_kb - 1) /	seg_size_kb;
 }
-
-int dcn_get_max_non_odm_pix_rate_100hz(struct _vcs_dpi_soc_bounding_box_st *soc)
-{
-	return soc->clock_limits[0].dispclk_mhz * 10000.0 / (1.0 + soc->dcn_downspread_percent / 100.0);
-}
-
-int dcn_get_approx_det_segs_required_for_pstate(
-		struct _vcs_dpi_soc_bounding_box_st *soc,
-		int pix_clk_100hz, int bpp, int seg_size_kb)
-{
-	/* Roughly calculate required crb to hide latency. In practice there is slightly
-	 * more buffer available for latency hiding
-	 */
-	return (int)(soc->dram_clock_change_latency_us * pix_clk_100hz * bpp
-					/ 10240000 + seg_size_kb - 1) /	seg_size_kb;
-}

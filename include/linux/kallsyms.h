@@ -165,12 +165,6 @@ static inline int kallsyms_on_each_match_symbol(int (*fn)(void *, unsigned long)
 {
 	return -EOPNOTSUPP;
 }
-
-static inline int kallsyms_on_each_match_symbol(int (*fn)(void *, unsigned long),
-						const char *name, void *data)
-{
-	return -EOPNOTSUPP;
-}
 #endif /*CONFIG_KALLSYMS*/
 
 static inline void print_ip_sym(const char *loglvl, unsigned long ip)

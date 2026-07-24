@@ -58,10 +58,6 @@
 							| SPEC_CTRL_RRSBA_DIS_S \
 							| SPEC_CTRL_BHI_DIS_S)
 
-/* A mask for bits which the kernel toggles when controlling mitigations */
-#define SPEC_CTRL_MITIGATIONS_MASK	(SPEC_CTRL_IBRS | SPEC_CTRL_STIBP | SPEC_CTRL_SSBD \
-							| SPEC_CTRL_RRSBA_DIS_S)
-
 #define MSR_IA32_PRED_CMD		0x00000049 /* Prediction Command */
 #define PRED_CMD_IBPB			BIT(0)	   /* Indirect Branch Prediction Barrier */
 #define PRED_CMD_SBPB			BIT(7)	   /* Selective Branch Prediction Barrier */

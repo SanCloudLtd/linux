@@ -165,9 +165,6 @@
 static DEFINE_MUTEX(membarrier_ipi_mutex);
 #define SERIALIZE_IPI() guard(mutex)(&membarrier_ipi_mutex)
 
-static DEFINE_MUTEX(membarrier_ipi_mutex);
-#define SERIALIZE_IPI() guard(mutex)(&membarrier_ipi_mutex)
-
 static void ipi_mb(void *info)
 {
 	smp_mb();	/* IPIs should be serializing but paranoid. */

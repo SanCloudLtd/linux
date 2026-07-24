@@ -139,13 +139,6 @@ static const struct dmi_system_id community_key_platforms[] = {
 		}
 	},
 	{
-		.ident = "Up Extreme",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "AAEON"),
-			DMI_MATCH(DMI_BOARD_NAME, "UP-WHL01"),
-		}
-	},
-	{
 		.ident = "Google Chromebooks",
 		.callback = chromebook_use_community_key,
 		.matches = {

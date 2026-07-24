@@ -8389,8 +8389,6 @@ ath11k_wmi_pdev_temperature_event(struct ath11k_base *ab,
 
 	rcu_read_lock();
 
-	rcu_read_lock();
-
 	ar = ath11k_mac_get_ar_by_pdev_id(ab, ev->pdev_id);
 	if (!ar) {
 		ath11k_warn(ab, "invalid pdev id in pdev temperature ev %d", ev->pdev_id);

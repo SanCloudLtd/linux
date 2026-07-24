@@ -711,7 +711,6 @@ void amdgpu_virt_exchange_data(struct amdgpu_device *adev)
 	}
 }
 
-
 void amdgpu_detect_virtualization(struct amdgpu_device *adev)
 {
 	uint32_t reg;

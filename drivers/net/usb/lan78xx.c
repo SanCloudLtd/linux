@@ -4439,12 +4439,6 @@ static int lan78xx_probe(struct usb_interface *intf,
 		goto out6;
 	}
 
-	/* Reject broken descriptors. */
-	if (dev->maxpacket == 0) {
-		ret = -ENODEV;
-		goto out4;
-	}
-
 	/* driver requires remote-wakeup capability during autosuspend. */
 	intf->needs_remote_wakeup = 1;
 

@@ -128,6 +128,4 @@ struct iommu_group *pSeries_pci_device_group(struct pci_controller *hose,
 					     struct pci_dev *pdev);
 #endif
 
-void pseries_rng_init(void);
-
 #endif /* _PSERIES_PSERIES_H */

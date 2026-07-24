@@ -93,11 +93,6 @@
 			adi,phy-output-clock = "125mhz-free-running";
 			status = "disabled";
 		};
-
-		ethernet-phy@4 {
-			reg = <4>;
-			qca,clk-out-frequency = <125000000>;
-		};
 	};
 };
 

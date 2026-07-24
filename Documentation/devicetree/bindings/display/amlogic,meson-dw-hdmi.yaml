@@ -13,9 +13,6 @@ maintainers:
 allOf:
   - $ref: /schemas/sound/dai-common.yaml#
 
-allOf:
-  - $ref: /schemas/sound/name-prefix.yaml#
-
 description: |
   The Amlogic Meson Synopsys Designware Integration is composed of
   - A Synopsys DesignWare HDMI Controller IP

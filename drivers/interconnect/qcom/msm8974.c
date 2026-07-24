@@ -727,10 +727,6 @@ static int msm8974_icc_probe(struct platform_device *pdev)
 	if (ret)
 		goto err_remove_nodes;
 
-	ret = icc_provider_register(provider);
-	if (ret)
-		goto err_remove_nodes;
-
 	platform_set_drvdata(pdev, qp);
 
 	return 0;

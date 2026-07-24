@@ -77,15 +77,8 @@ static int __patch_insn_set(void *addr, u8 c, size_t len)
 	 * Before reaching here, it was expected to lock the text_mutex
 	 * already, so we don't need to give another lock here and could
 	 * ensure that it was safe between each cores.
-	 *
-	 * We're currently using stop_machine() for ftrace & kprobes, and while
-	 * that ensures text_mutex is held before installing the mappings it
-	 * does not ensure text_mutex is held by the calling thread.  That's
-	 * safe but triggers a lockdep failure, so just elide it for that
-	 * specific case.
 	 */
-	if (!riscv_patch_in_stop_machine)
-		lockdep_assert_held(&text_mutex);
+	lockdep_assert_held(&text_mutex);
 
 	preempt_disable();
 

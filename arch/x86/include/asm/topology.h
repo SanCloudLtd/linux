@@ -114,8 +114,6 @@ extern const struct cpumask *cpu_clustergroup_mask(int cpu);
 
 extern unsigned int __max_die_per_package;
 
-extern unsigned int __max_die_per_package;
-
 #ifdef CONFIG_SMP
 #define topology_cluster_id(cpu)		(per_cpu(cpu_l2c_id, cpu))
 #define topology_die_cpumask(cpu)		(per_cpu(cpu_die_map, cpu))

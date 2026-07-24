@@ -641,7 +641,4 @@ void *__hwasan_memcpy(void *dest, const void *src, ssize_t len);
 void kasan_tag_mismatch(void *addr, unsigned long access_info,
 			unsigned long ret_ip);
 
-void kasan_tag_mismatch(unsigned long addr, unsigned long access_info,
-			unsigned long ret_ip);
-
 #endif /* __MM_KASAN_KASAN_H */

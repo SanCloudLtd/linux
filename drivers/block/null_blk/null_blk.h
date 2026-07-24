@@ -25,7 +25,6 @@ struct nullb_cmd {
 	bool fake_timeout;
 	struct nullb_queue *nq;
 	struct hrtimer timer;
-	bool fake_timeout;
 };
 
 struct nullb_queue {

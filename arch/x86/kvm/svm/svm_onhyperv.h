@@ -25,14 +25,6 @@ static inline bool svm_hv_is_enlightened_tlb_enabled(struct kvm_vcpu *vcpu)
 	       !!hve->hv_enlightenments_control.enlightened_npt_tlb;
 }
 
-static inline bool svm_hv_is_enlightened_tlb_enabled(struct kvm_vcpu *vcpu)
-{
-	struct hv_vmcb_enlightenments *hve = &to_svm(vcpu)->vmcb->control.hv_enlightenments;
-
-	return ms_hyperv.nested_features & HV_X64_NESTED_ENLIGHTENED_TLB &&
-	       !!hve->hv_enlightenments_control.enlightened_npt_tlb;
-}
-
 static inline void svm_hv_init_vmcb(struct vmcb *vmcb)
 {
 	struct hv_vmcb_enlightenments *hve = &vmcb->control.hv_enlightenments;

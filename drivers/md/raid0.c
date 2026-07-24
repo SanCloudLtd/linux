@@ -445,20 +445,6 @@ static int map_disk_shift(int disk_index, int num_disks, int disk_shift)
 	return ((disk_index + num_disks - disk_shift) % num_disks);
 }
 
-/*
- * Convert disk_index to the disk order in which it is read/written.
- *  For example, if we have 4 disks, they are numbered 0,1,2,3. If we
- *  write the disks starting at disk 3, then the read/write order would
- *  be disk 3, then 0, then 1, and then disk 2 and we want map_disk_shift()
- *  to map the disks as follows 0,1,2,3 => 1,2,3,0. So disk 0 would map
- *  to 1, 1 to 2, 2 to 3, and 3 to 0. That way we can compare disks in
- *  that 'output' space to understand the read/write disk ordering.
- */
-static int map_disk_shift(int disk_index, int num_disks, int disk_shift)
-{
-	return ((disk_index + num_disks - disk_shift) % num_disks);
-}
-
 static void raid0_handle_discard(struct mddev *mddev, struct bio *bio)
 {
 	struct r0conf *conf = mddev->private;

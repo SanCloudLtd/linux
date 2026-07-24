@@ -378,11 +378,6 @@ static size_t amd_spi_max_transfer_size(struct spi_device *spi)
 	return AMD_SPI_FIFO_SIZE;
 }
 
-static size_t amd_spi_max_transfer_size(struct spi_device *spi)
-{
-	return AMD_SPI_FIFO_SIZE;
-}
-
 static int amd_spi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;

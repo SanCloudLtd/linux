@@ -1145,9 +1145,6 @@ static int smu_sw_init(void *handle)
 	INIT_DELAYED_WORK(&smu->swctf_delayed_work,
 			  smu_swctf_delayed_work_handler);
 
-	INIT_DELAYED_WORK(&smu->swctf_delayed_work,
-			  smu_swctf_delayed_work_handler);
-
 	ret = smu_smc_table_sw_init(smu);
 	if (ret) {
 		dev_err(adev->dev, "Failed to sw init smc table!\n");

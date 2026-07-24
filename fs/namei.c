@@ -3031,23 +3031,6 @@ static struct dentry *lock_two_directories(struct dentry *p1, struct dentry *p2)
 	return p;
 }
 
-static struct dentry *lock_two_directories(struct dentry *p1, struct dentry *p2)
-{
-	struct dentry *p;
-
-	p = d_ancestor(p2, p1);
-	if (p) {
-		inode_lock_nested(p2->d_inode, I_MUTEX_PARENT);
-		inode_lock_nested(p1->d_inode, I_MUTEX_PARENT2);
-		return p;
-	}
-
-	p = d_ancestor(p1, p2);
-	inode_lock_nested(p1->d_inode, I_MUTEX_PARENT);
-	inode_lock_nested(p2->d_inode, I_MUTEX_PARENT2);
-	return p;
-}
-
 /*
  * p1 and p2 should be directories on the same fs.
  */

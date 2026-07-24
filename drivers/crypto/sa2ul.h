@@ -190,7 +190,6 @@ struct sa_match_data;
  * @dma_rx1: Pointer to DMA rx channel for sizes < 256 Bytes
  * @dma_rx2: Pointer to DMA rx channel for sizes > 256 Bytes
  * @dma_tx: Pointer to DMA TX channel
- * @fallback_sz: SW fallback limit for crypto algorithms
  */
 struct sa_crypto_data {
 	void __iomem *base;
@@ -209,7 +208,6 @@ struct sa_crypto_data {
 	struct dma_chan		*dma_rx1;
 	struct dma_chan		*dma_rx2;
 	struct dma_chan		*dma_tx;
-	int			fallback_sz;
 };
 
 /**

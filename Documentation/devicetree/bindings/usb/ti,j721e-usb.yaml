@@ -23,8 +23,6 @@ properties:
 
   ranges: true
 
-  ranges: true
-
   power-domains:
     description:
       PM domain provider node and an args specifier containing

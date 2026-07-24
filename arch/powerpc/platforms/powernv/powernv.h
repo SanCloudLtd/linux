@@ -44,6 +44,4 @@ struct memcons *__init memcons_init(struct device_node *node, const char *mc_pro
 
 void pnv_rng_init(void);
 
-void pnv_rng_init(void);
-
 #endif /* _POWERNV_H */

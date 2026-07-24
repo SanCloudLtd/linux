@@ -244,18 +244,6 @@ err_phy:
 	return ret;
 }
 
-void cdns_pcie_deinit_phy(struct cdns_pcie *pcie)
-{
-	int i = pcie->phy_count;
-
-	cdns_pcie_disable_phy(pcie);
-	while (i--) {
-		device_link_del(pcie->link[i]);
-		devm_phy_put(pcie->dev, pcie->phy[i]);
-	}
-}
-EXPORT_SYMBOL_GPL(cdns_pcie_deinit_phy);
-
 static int cdns_pcie_suspend_noirq(struct device *dev)
 {
 	struct cdns_pcie *pcie = dev_get_drvdata(dev);

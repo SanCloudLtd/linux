@@ -327,18 +327,6 @@ int kvm_smccc_call_handler(struct kvm_vcpu *vcpu)
 				break;
 			}
 			break;
-		case ARM_SMCCC_ARCH_WORKAROUND_3:
-			switch (arm64_get_spectre_bhb_state()) {
-			case SPECTRE_VULNERABLE:
-				break;
-			case SPECTRE_MITIGATED:
-				val = SMCCC_RET_SUCCESS;
-				break;
-			case SPECTRE_UNAFFECTED:
-				val = SMCCC_ARCH_WORKAROUND_RET_UNAFFECTED;
-				break;
-			}
-			break;
 		case ARM_SMCCC_HV_PV_TIME_FEATURES:
 			if (test_bit(KVM_REG_ARM_STD_HYP_BIT_PV_TIME,
 				     &smccc_feat->std_hyp_bmap))

@@ -1167,8 +1167,6 @@ ssize_t write(int fd, const void *buf, size_t count)
 	return __sysret(sys_write(fd, buf, count));
 }
 
-/* make sure to include all global symbols */
-#include "nolibc.h"
 
 /*
  * int memfd_create(const char *name, unsigned int flags);

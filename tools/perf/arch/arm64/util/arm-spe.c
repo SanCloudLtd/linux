@@ -234,12 +234,6 @@ static int arm_spe_recording_options(struct auxtrace_record *itr,
 	if (arm_spe_evsel->core.attr.config & bit)
 		evsel__set_sample_bit(arm_spe_evsel, PHYS_ADDR);
 
-	/*
-	 * Set this only so that perf report knows that SPE generates memory info. It has no effect
-	 * on the opening of the event or the SPE data produced.
-	 */
-	evsel__set_sample_bit(arm_spe_evsel, DATA_SRC);
-
 	/* Add dummy event to keep tracking */
 	err = parse_event(evlist, "dummy:u");
 	if (err)

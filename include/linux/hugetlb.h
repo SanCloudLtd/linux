@@ -920,8 +920,6 @@ static inline bool hugepage_migration_supported(struct hstate *h)
 	return arch_hugetlb_migration_supported(h);
 }
 
-bool __vma_private_lock(struct vm_area_struct *vma);
-
 /*
  * Movability check is different as compared to migration check.
  * It determines whether or not a huge page should be placed on

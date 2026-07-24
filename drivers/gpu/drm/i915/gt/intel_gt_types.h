@@ -125,8 +125,6 @@ struct intel_gt {
 
 	struct i915_wa_list wa_list;
 
-	struct mutex tlb_invalidate_lock;
-
 	struct intel_gt_timelines {
 		spinlock_t lock; /* protects active_list */
 		struct list_head active_list;

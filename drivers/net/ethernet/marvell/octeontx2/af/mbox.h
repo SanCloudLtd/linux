@@ -1612,17 +1612,6 @@ struct npc_get_field_status_rsp {
 	u8 enable;
 };
 
-struct npc_get_field_status_req {
-	struct mbox_msghdr hdr;
-	u8 intf;
-	u8 field;
-};
-
-struct npc_get_field_status_rsp {
-	struct mbox_msghdr hdr;
-	u8 enable;
-};
-
 struct set_vf_perm  {
 	struct  mbox_msghdr hdr;
 	u16	vf;

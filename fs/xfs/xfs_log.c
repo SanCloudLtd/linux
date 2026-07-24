@@ -394,25 +394,6 @@ xfs_log_writable(
 	return true;
 }
 
-bool
-xfs_log_writable(
-	struct xfs_mount	*mp)
-{
-	/*
-	 * Never write to the log on norecovery mounts, if the block device is
-	 * read-only, or if the filesystem is shutdown. Read-only mounts still
-	 * allow internal writes for log recovery and unmount purposes, so don't
-	 * restrict that case here.
-	 */
-	if (mp->m_flags & XFS_MOUNT_NORECOVERY)
-		return false;
-	if (xfs_readonly_buftarg(mp->m_log->l_targ))
-		return false;
-	if (XFS_FORCED_SHUTDOWN(mp))
-		return false;
-	return true;
-}
-
 /*
  * Replenish the byte reservation required by moving the grant write head.
  */
@@ -842,9 +823,6 @@ xfs_log_mount_finish(
 
 	/* Make sure the log is dead if we're returning failure. */
 	ASSERT(!error || xlog_is_shutdown(log));
-
-	/* Make sure the log is dead if we're returning failure. */
-	ASSERT(!error || (mp->m_log->l_flags & XLOG_IO_ERROR));
 
 	return error;
 }

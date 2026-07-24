@@ -853,13 +853,6 @@
 #define  PCI_RCEC_BUSN_NEXT(x)	(((x) >> 8) & 0xff)
 #define  PCI_RCEC_BUSN_LAST(x)	(((x) >> 16) & 0xff)
 
-/* Root Complex Event Collector Endpoint Association  */
-#define PCI_RCEC_RCIEP_BITMAP	4	/* Associated Bitmap for RCiEPs */
-#define PCI_RCEC_BUSN		8	/* RCEC Associated Bus Numbers */
-#define  PCI_RCEC_BUSN_REG_VER	0x02	/* Least version with BUSN present */
-#define  PCI_RCEC_BUSN_NEXT(x)	(((x) >> 8) & 0xff)
-#define  PCI_RCEC_BUSN_LAST(x)	(((x) >> 16) & 0xff)
-
 /* Vendor-Specific (VSEC, PCI_EXT_CAP_ID_VNDR) */
 #define PCI_VNDR_HEADER		4	/* Vendor-Specific Header */
 #define  PCI_VNDR_HEADER_ID(x)	((x) & 0xffff)

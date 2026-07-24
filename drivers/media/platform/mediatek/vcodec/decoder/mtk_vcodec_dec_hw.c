@@ -188,16 +188,8 @@ static int mtk_vdec_hw_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int mtk_vdec_hw_remove(struct platform_device *pdev)
-{
-	pm_runtime_disable(&pdev->dev);
-
-	return 0;
-}
-
 static struct platform_driver mtk_vdec_driver = {
 	.probe	= mtk_vdec_hw_probe,
-	.remove = mtk_vdec_hw_remove,
 	.driver	= {
 		.name	= "mtk-vdec-comp",
 		.of_match_table = mtk_vdec_hw_match,

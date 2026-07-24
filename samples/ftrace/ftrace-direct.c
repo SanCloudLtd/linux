@@ -9,8 +9,6 @@
 
 extern void my_direct_func(struct task_struct *p);
 
-extern void my_direct_func(struct task_struct *p);
-
 void my_direct_func(struct task_struct *p)
 {
 	trace_printk("waking up %s-%d\n", p->comm, p->pid);

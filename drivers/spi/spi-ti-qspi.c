@@ -154,7 +154,6 @@ static int ti_qspi_setup(struct spi_device *spi)
 
 	ret = pm_runtime_resume_and_get(qspi->dev);
 	if (ret < 0) {
-		pm_runtime_put_noidle(qspi->dev);
 		dev_err(qspi->dev, "pm_runtime_get_sync() failed\n");
 		return ret;
 	}

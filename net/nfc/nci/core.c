@@ -1298,12 +1298,6 @@ void nci_unregister_device(struct nci_dev *ndev)
 	 */
 	set_bit(NCI_UNREG, &ndev->flags);
 
-	/* This set_bit is not protected with specialized barrier,
-	 * However, it is fine because the mutex_lock(&ndev->req_lock);
-	 * in nci_close_device() will help to emit one.
-	 */
-	set_bit(NCI_UNREG, &ndev->flags);
-
 	nci_close_device(ndev);
 
 	destroy_workqueue(ndev->cmd_wq);

@@ -213,98 +213,6 @@ static int omap_atomic_check(struct drm_device *dev,
 	return 0;
 }
 
-static int drm_atomic_state_normalized_zpos_cmp(const void *a, const void *b)
-{
-	const struct drm_plane_state *sa = *(struct drm_plane_state **)a;
-	const struct drm_plane_state *sb = *(struct drm_plane_state **)b;
-
-	if (sa->normalized_zpos != sb->normalized_zpos)
-		return sa->normalized_zpos - sb->normalized_zpos;
-	else
-		return sa->plane->base.id - sb->plane->base.id;
-}
-
-static int omap_atomic_update_normalize_zpos(struct drm_device *dev,
-					     struct drm_atomic_state *state)
-{
-	struct drm_crtc *crtc;
-	struct drm_crtc_state *old_state, *new_state;
-	struct drm_plane *plane;
-	int c, i, n, inc;
-	int total_planes = dev->mode_config.num_total_plane;
-	struct drm_plane_state **states;
-	int ret = 0;
-
-	states = kmalloc_array(total_planes, sizeof(*states), GFP_KERNEL);
-	if (!states)
-		return -ENOMEM;
-
-	for_each_oldnew_crtc_in_state(state, crtc, old_state, new_state, c) {
-		if (old_state->plane_mask == new_state->plane_mask &&
-		    !new_state->zpos_changed)
-			continue;
-
-		if (omap_crtc_atomic_get_trans_key_mode(crtc, new_state))
-			continue;
-
-		/* Reset plane increment and index value for every crtc */
-		n = 0;
-
-		/*
-		 * Normalization process might create new states for planes
-		 * which normalized_zpos has to be recalculated.
-		 */
-		drm_for_each_plane_mask(plane, dev, new_state->plane_mask) {
-			struct drm_plane_state *plane_state =
-				drm_atomic_get_plane_state(new_state->state,
-							   plane);
-			if (IS_ERR(plane_state)) {
-				ret = PTR_ERR(plane_state);
-				goto done;
-			}
-			states[n++] = plane_state;
-		}
-
-		sort(states, n, sizeof(*states),
-		     drm_atomic_state_normalized_zpos_cmp, NULL);
-
-		for (i = 0, inc = 0; i < n; i++) {
-			plane = states[i]->plane;
-
-			states[i]->normalized_zpos = i + inc;
-			DRM_DEBUG_ATOMIC("[PLANE:%d:%s] updated normalized zpos value %d\n",
-					 plane->base.id, plane->name,
-					 states[i]->normalized_zpos);
-
-			if (is_omap_plane_dual_overlay(states[i]))
-				inc++;
-		}
-		new_state->zpos_changed = true;
-	}
-
-done:
-	kfree(states);
-	return ret;
-}
-
-static int omap_atomic_check(struct drm_device *dev,
-			     struct drm_atomic_state *state)
-{
-	int ret;
-
-	ret = drm_atomic_helper_check(dev, state);
-	if (ret)
-		return ret;
-
-	if (dev->mode_config.normalize_zpos) {
-		ret = omap_atomic_update_normalize_zpos(dev, state);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-
 static const struct drm_mode_config_helper_funcs omap_mode_config_helper_funcs = {
 	.atomic_commit_tail = omap_atomic_commit_tail,
 };
@@ -458,38 +366,9 @@ static int omap_modeset_init_properties(struct drm_device *dev)
 	struct omap_drm_private *priv = dev->dev_private;
 	unsigned int num_planes = dispc_get_num_ovls(priv->dispc);
 
-	static const struct drm_prop_enum_list trans_key_mode_list[] = {
-		{ 0, "disable"},
-		{ 1, "gfx-dst"},
-		{ 2, "vid-src"},
-	};
-
 	priv->zorder_prop = drm_property_create_range(dev, 0, "zorder", 0,
 						      num_planes - 1);
 	if (!priv->zorder_prop)
-		return -ENOMEM;
-
-	/* crtc properties */
-
-	priv->background_color_prop = drm_property_create_range(dev, 0,
-		"background", 0, 0xffffff);
-	if (!priv->background_color_prop)
-		return -ENOMEM;
-
-	priv->trans_key_mode_prop = drm_property_create_enum(dev, 0,
-		"trans-key-mode",
-		trans_key_mode_list, ARRAY_SIZE(trans_key_mode_list));
-	if (!priv->trans_key_mode_prop)
-		return -ENOMEM;
-
-	priv->trans_key_prop = drm_property_create_range(dev, 0, "trans-key",
-		0, 0xffffff);
-	if (!priv->trans_key_prop)
-		return -ENOMEM;
-
-	priv->alpha_blender_prop = drm_property_create_bool(dev, 0,
-		"alpha_blender");
-	if (!priv->alpha_blender_prop)
 		return -ENOMEM;
 
 	return 0;

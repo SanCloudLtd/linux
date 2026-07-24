@@ -12,6 +12,4 @@ int patch_text(void *addr, u32 *insns, int ninsns);
 
 extern int riscv_patch_in_stop_machine;
 
-extern int riscv_patch_in_stop_machine;
-
 #endif /* _ASM_RISCV_PATCH_H */

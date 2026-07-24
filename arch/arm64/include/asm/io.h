@@ -182,8 +182,4 @@ extern bool arch_memremap_can_ram_remap(resource_size_t offset, size_t size,
 					unsigned long flags);
 #define arch_memremap_can_ram_remap arch_memremap_can_ram_remap
 
-extern bool arch_memremap_can_ram_remap(resource_size_t offset, size_t size,
-					unsigned long flags);
-#define arch_memremap_can_ram_remap arch_memremap_can_ram_remap
-
 #endif	/* __ASM_IO_H */

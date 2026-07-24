@@ -27,16 +27,6 @@
 #define SWP_TYPE_SHIFT	(BITS_PER_XA_VALUE - MAX_SWAPFILES_SHIFT)
 #define SWP_OFFSET_MASK	((1UL << SWP_TYPE_SHIFT) - 1)
 
-/* Clear all flags but only keep swp_entry_t related information */
-static inline pte_t pte_swp_clear_flags(pte_t pte)
-{
-	if (pte_swp_soft_dirty(pte))
-		pte = pte_swp_clear_soft_dirty(pte);
-	if (pte_swp_uffd_wp(pte))
-		pte = pte_swp_clear_uffd_wp(pte);
-	return pte;
-}
-
 /*
  * Definitions only for PFN swap entries (see is_pfn_swap_entry()).  To
  * store PFN, we only need SWP_PFN_BITS bits.  Each of the pfn swap entries

@@ -169,7 +169,7 @@ out:
 	SYS_NOFAIL("ip netns del synproxy");
 }
 
-void serial_test_xdp_synproxy(void)
+void test_xdp_synproxy(void)
 {
 	if (test__start_subtest("xdp"))
 		test_synproxy(true);

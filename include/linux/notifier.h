@@ -58,7 +58,7 @@ struct notifier_block {
 };
 
 struct atomic_notifier_head {
-	raw_spinlock_t lock;
+	spinlock_t lock;
 	struct notifier_block __rcu *head;
 };
 
@@ -79,7 +79,7 @@ struct srcu_notifier_head {
 };
 
 #define ATOMIC_INIT_NOTIFIER_HEAD(name) do {	\
-		raw_spin_lock_init(&(name)->lock);	\
+		spin_lock_init(&(name)->lock);	\
 		(name)->head = NULL;		\
 	} while (0)
 #define BLOCKING_INIT_NOTIFIER_HEAD(name) do {	\
@@ -96,7 +96,7 @@ extern void srcu_init_notifier_head(struct srcu_notifier_head *nh);
 		cleanup_srcu_struct(&(name)->srcu);
 
 #define ATOMIC_NOTIFIER_INIT(name) {				\
-		.lock = __RAW_SPIN_LOCK_UNLOCKED(name.lock),	\
+		.lock = __SPIN_LOCK_UNLOCKED(name.lock),	\
 		.head = NULL }
 #define BLOCKING_NOTIFIER_INIT(name) {				\
 		.rwsem = __RWSEM_INITIALIZER((name).rwsem),	\

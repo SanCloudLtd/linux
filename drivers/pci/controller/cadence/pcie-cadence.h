@@ -117,8 +117,8 @@
 					(((aperture) - 2) << ((bar) * 8))
 
 /* PTM Control Register */
-#define CDNS_PCIE_LM_PTM_CTRL	(CDNS_PCIE_LM_BASE + 0x0da8)
-#define CDNS_PCIE_LM_TPM_CTRL_PTMRSEN	BIT(17)
+#define CDNS_PCIE_LM_PTM_CTRL 	(CDNS_PCIE_LM_BASE + 0x0da8)
+#define CDNS_PCIE_LM_TPM_CTRL_PTMRSEN 	BIT(17)
 
 /*
  * Endpoint Function Registers (PCI configuration space for endpoint functions)
@@ -129,12 +129,6 @@
 #define CDNS_PCIE_EP_FUNC_MSIX_CAP_OFFSET	0xb0
 #define CDNS_PCIE_EP_FUNC_DEV_CAP_OFFSET	0xc0
 #define CDNS_PCIE_EP_FUNC_SRIOV_CAP_OFFSET	0x200
-
-/*
- * Endpoint PF Registers
- */
-#define CDNS_PCIE_CORE_PF_I_ARI_CAP_AND_CTRL(fn)	(0x144 + (fn) * 0x1000)
-#define CDNS_PCIE_ARI_CAP_NFN_MASK	GENMASK(15, 8)
 
 /*
  * Root Port Registers (PCI configuration space for the root port function)
@@ -524,7 +518,6 @@ static inline bool cdns_pcie_link_up(struct cdns_pcie *pcie)
 int cdns_pcie_host_link_setup(struct cdns_pcie_rc *rc);
 int cdns_pcie_host_init(struct cdns_pcie_rc *rc);
 int cdns_pcie_host_setup(struct cdns_pcie_rc *rc);
-int cdns_pcie_host_remove_setup(struct cdns_pcie_rc *rc);
 void __iomem *cdns_pci_map_bus(struct pci_bus *bus, unsigned int devfn,
 			       int where);
 #else
@@ -539,11 +532,6 @@ static inline int cdns_pcie_host_init(struct cdns_pcie_rc *rc)
 }
 
 static inline int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
-{
-	return 0;
-}
-
-static inline int cdns_pcie_host_remove_setup(struct cdns_pcie_rc *rc)
 {
 	return 0;
 }
@@ -578,7 +566,6 @@ void cdns_pcie_reset_outbound_region(struct cdns_pcie *pcie, u32 r);
 void cdns_pcie_disable_phy(struct cdns_pcie *pcie);
 int cdns_pcie_enable_phy(struct cdns_pcie *pcie);
 int cdns_pcie_init_phy(struct device *dev, struct cdns_pcie *pcie);
-void cdns_pcie_deinit_phy(struct cdns_pcie *pcie);
 extern const struct dev_pm_ops cdns_pcie_pm_ops;
 
 #endif /* _PCIE_CADENCE_H */

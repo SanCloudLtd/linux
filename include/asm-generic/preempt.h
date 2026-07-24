@@ -79,9 +79,6 @@ static __always_inline bool should_resched(int preempt_offset)
 }
 
 #ifdef CONFIG_PREEMPTION
-#ifdef CONFIG_PREEMPT_RT
-extern void preempt_schedule_lock(void);
-#endif
 extern asmlinkage void preempt_schedule(void);
 extern asmlinkage void preempt_schedule_notrace(void);
 

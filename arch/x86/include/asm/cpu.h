@@ -95,6 +95,4 @@ int intel_microcode_sanity_check(void *mc, bool print_err, int hdr_type);
 
 extern struct cpumask cpus_stop_mask;
 
-extern struct cpumask cpus_stop_mask;
-
 #endif /* _ASM_X86_CPU_H */

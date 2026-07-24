@@ -809,11 +809,6 @@ static inline struct pt_regs *rte_regs(struct pt_regs *regs)
 	return (void *)regs + regs->stkadj;
 }
 
-static inline struct pt_regs *rte_regs(struct pt_regs *regs)
-{
-	return (void *)regs + regs->stkadj;
-}
-
 static void setup_sigcontext(struct sigcontext *sc, struct pt_regs *regs,
 			     unsigned long mask)
 {

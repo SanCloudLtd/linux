@@ -1592,10 +1592,6 @@ out_offline_policy:
 	if (cpufreq_driver->offline)
 		cpufreq_driver->offline(policy);
 
-out_offline_policy:
-	if (cpufreq_driver->offline)
-		cpufreq_driver->offline(policy);
-
 out_exit_policy:
 	if (cpufreq_driver->exit)
 		cpufreq_driver->exit(policy);

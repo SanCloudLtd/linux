@@ -31,8 +31,6 @@
 #include <linux/iio/trigger_consumer.h>
 #include <linux/iio/triggered_buffer.h>
 
-#include <linux/iio/iio.h>
-
 #include "bma400.h"
 
 /*

@@ -127,25 +127,6 @@ bool set_kthread_struct(struct task_struct *p)
 	return true;
 }
 
-/*
- * Variant of to_kthread() that doesn't assume @p is a kthread.
- *
- * Per construction; when:
- *
- *   (p->flags & PF_KTHREAD) && p->set_child_tid
- *
- * the task is both a kthread and struct kthread is persistent. However
- * PF_KTHREAD on it's own is not, kernel_thread() can exec() (See umh.c and
- * begin_new_exec()).
- */
-static inline struct kthread *__to_kthread(struct task_struct *p)
-{
-	void *kthread = (__force void *)p->set_child_tid;
-	if (kthread && !(p->flags & PF_KTHREAD))
-		kthread = NULL;
-	return kthread;
-}
-
 void free_kthread_struct(struct task_struct *k)
 {
 	struct kthread *kthread;
@@ -388,13 +369,6 @@ static int kthread(void *_create)
 	sched_setscheduler_nocheck(current, SCHED_NORMAL, &param);
 	set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_TYPE_KTHREAD));
 
-	/*
-	 * The new thread inherited kthreadd's priority and CPU mask. Reset
-	 * back to default in case they have been changed.
-	 */
-	sched_setscheduler_nocheck(current, SCHED_NORMAL, &param);
-	set_cpus_allowed_ptr(current, housekeeping_cpumask(HK_FLAG_KTHREAD));
-
 	/* OK, tell user we're spawned, wait for stop or wakeup */
 	__set_current_state(TASK_UNINTERRUPTIBLE);
 	create->result = current;
@@ -609,32 +583,6 @@ struct task_struct *kthread_create_on_cpu(int (*threadfn)(void *data),
 	return p;
 }
 EXPORT_SYMBOL(kthread_create_on_cpu);
-
-void kthread_set_per_cpu(struct task_struct *k, int cpu)
-{
-	struct kthread *kthread = to_kthread(k);
-	if (!kthread)
-		return;
-
-	WARN_ON_ONCE(!(k->flags & PF_NO_SETAFFINITY));
-
-	if (cpu < 0) {
-		clear_bit(KTHREAD_IS_PER_CPU, &kthread->flags);
-		return;
-	}
-
-	kthread->cpu = cpu;
-	set_bit(KTHREAD_IS_PER_CPU, &kthread->flags);
-}
-
-bool kthread_is_per_cpu(struct task_struct *p)
-{
-	struct kthread *kthread = __to_kthread(p);
-	if (!kthread)
-		return false;
-
-	return test_bit(KTHREAD_IS_PER_CPU, &kthread->flags);
-}
 
 void kthread_set_per_cpu(struct task_struct *k, int cpu)
 {

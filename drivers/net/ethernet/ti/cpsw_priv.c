@@ -614,7 +614,7 @@ static void cpsw_hwtstamp_v2(struct cpsw_priv *priv)
 	writel_relaxed(ETH_P_8021Q, &cpsw->regs->vlan_ltype);
 }
 
-int cpsw_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
+static int cpsw_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 {
 	struct cpsw_priv *priv = netdev_priv(dev);
 	struct cpsw_common *cpsw = priv->cpsw;
@@ -674,7 +674,7 @@ int cpsw_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
 }
 
-int cpsw_hwtstamp_get(struct net_device *dev, struct ifreq *ifr)
+static int cpsw_hwtstamp_get(struct net_device *dev, struct ifreq *ifr)
 {
 	struct cpsw_common *cpsw = ndev_to_cpsw(dev);
 	struct cpsw_priv *priv = netdev_priv(dev);
@@ -690,6 +690,16 @@ int cpsw_hwtstamp_get(struct net_device *dev, struct ifreq *ifr)
 	cfg.rx_filter = priv->rx_ts_enabled;
 
 	return copy_to_user(ifr->ifr_data, &cfg, sizeof(cfg)) ? -EFAULT : 0;
+}
+#else
+static int cpsw_hwtstamp_get(struct net_device *dev, struct ifreq *ifr)
+{
+	return -EOPNOTSUPP;
+}
+
+static int cpsw_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
+{
+	return -EOPNOTSUPP;
 }
 #endif /*CONFIG_TI_CPTS*/
 

@@ -42,16 +42,12 @@ properties:
           - const: ti,am654-sci
 
   reg-names:
-    items:
-      - const: debug_messages
-      - const: lpm
-    minItems: 1
+    description: |
+      Specifies the debug messages memory mapped region that is optionally
+      made available from TI-SCI controller.
+    const: debug_messages
 
   reg:
-    items:
-      - description: |
-          Specifies the debug messages memory mapped region that is optionally
-          made available from TI-SCI controller.
     minItems: 1
 
   mbox-names:
@@ -64,12 +60,6 @@ properties:
 
   mboxes:
     minItems: 2
-
-  ti,partial-io-wakeup-sources:
-    $ref: /schemas/types.yaml#/definitions/phandle-array
-    description: |
-      List of phandles to devicetree nodes that can wakeup the SoC from the
-      Partial IO poweroff mode.
 
   ti,partial-io-wakeup-sources:
     $ref: /schemas/types.yaml#/definitions/phandle-array

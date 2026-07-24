@@ -143,39 +143,6 @@ allOf:
         compatible:
           contains:
             enum:
-              - ti,j7200-cpsw5g-phy-gmii-sel
-    then:
-      properties:
-        '#phy-cells':
-          const: 1
-          description: CPSW port number (starting from 1)
-        ti,qsgmii-main-ports:
-          maxItems: 1
-          items:
-            minimum: 1
-            maximum: 4
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
-              - ti,j721e-cpsw9g-phy-gmii-sel
-              - ti,j784s4-cpsw9g-phy-gmii-sel
-    then:
-      properties:
-        '#phy-cells':
-          const: 1
-          description: CPSW port number (starting from 1)
-        ti,qsgmii-main-ports:
-          maxItems: 2
-          items:
-            minimum: 1
-            maximum: 4
-  - if:
-      properties:
-        compatible:
-          contains:
-            enum:
               - ti,am3352-phy-gmii-sel
               - ti,am43xx-phy-gmii-sel
     then:

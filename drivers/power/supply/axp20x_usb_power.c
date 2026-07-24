@@ -561,7 +561,6 @@ static int axp20x_usb_power_probe(struct platform_device *pdev)
 	power->axp_data = axp_data;
 	power->regmap = axp20x->regmap;
 	power->num_irqs = axp_data->num_irq_names;
-	INIT_DELAYED_WORK(&power->vbus_detect, axp20x_usb_power_poll_vbus);
 
 	power->curr_lim_fld = devm_regmap_field_alloc(&pdev->dev, power->regmap,
 						      axp_data->curr_lim_fld);

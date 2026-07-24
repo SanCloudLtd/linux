@@ -37,22 +37,6 @@
 #define CFI_SECTIONS
 #endif
 
-#ifndef __VDSO__
-/*
- * Emit CFI data in .debug_frame sections, not .eh_frame sections.
- * We don't do DWARF unwinding at runtime, so only the offline DWARF
- * information is useful to anyone. Note we should change this if we
- * ever decide to enable DWARF unwinding at runtime.
- */
-#define CFI_SECTIONS	.cfi_sections .debug_frame
-#else
- /*
-  * For the vDSO, emit both runtime unwind information and debug
-  * symbols for the .dbg file.
-  */
-#define CFI_SECTIONS
-#endif
-
 /*
  * LEAF - declare leaf routine
  */

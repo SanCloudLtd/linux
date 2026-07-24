@@ -1231,9 +1231,6 @@ static int adis16475_config_irq_pin(struct adis16475 *st)
 		return -EINVAL;
 	}
 
-	/* We cannot mask the interrupt so ensure it's not enabled at request */
-	st->adis.irq_flag |= IRQF_NO_AUTOEN;
-
 	val = ADIS16475_MSG_CTRL_DR_POL(polarity);
 	ret = __adis_update_bits(&st->adis, ADIS16475_REG_MSG_CTRL,
 				 ADIS16475_MSG_CTRL_DR_POL_MASK, val);

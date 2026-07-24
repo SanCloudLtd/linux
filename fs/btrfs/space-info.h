@@ -237,21 +237,4 @@ void btrfs_dump_space_info_for_trans_abort(struct btrfs_fs_info *fs_info);
 void btrfs_init_async_reclaim_work(struct btrfs_fs_info *fs_info);
 u64 btrfs_account_ro_block_groups_free_space(struct btrfs_space_info *sinfo);
 
-static inline void __btrfs_mod_total_bytes_pinned(
-					struct btrfs_space_info *space_info,
-					s64 mod)
-{
-	percpu_counter_add_batch(&space_info->total_bytes_pinned, mod,
-				 BTRFS_TOTAL_BYTES_PINNED_BATCH);
-}
-
-static inline void btrfs_mod_total_bytes_pinned(struct btrfs_fs_info *fs_info,
-						u64 flags, s64 mod)
-{
-	struct btrfs_space_info *space_info = btrfs_find_space_info(fs_info, flags);
-
-	ASSERT(space_info);
-	__btrfs_mod_total_bytes_pinned(space_info, mod);
-}
-
 #endif /* BTRFS_SPACE_INFO_H */
