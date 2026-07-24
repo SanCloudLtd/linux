@@ -183,6 +183,17 @@ int class_register(const struct class *cls)
 
 	pr_debug("device class '%s': registering\n", cls->name);
 
+	if (cls->ns_type && !cls->namespace) {
+		pr_err("%s: class '%s' does not have namespace\n",
+		       __func__, cls->name);
+		return -EINVAL;
+	}
+	if (!cls->ns_type && cls->namespace) {
+		pr_err("%s: class '%s' does not have ns_type\n",
+		       __func__, cls->name);
+		return -EINVAL;
+	}
+
 	cp = kzalloc(sizeof(*cp), GFP_KERNEL);
 	if (!cp)
 		return -ENOMEM;
@@ -193,10 +204,8 @@ int class_register(const struct class *cls)
 	lockdep_register_key(key);
 	__mutex_init(&cp->mutex, "subsys mutex", key);
 	error = kobject_set_name(&cp->subsys.kobj, "%s", cls->name);
-	if (error) {
-		kfree(cp);
-		return error;
-	}
+	if (error)
+		goto err_out;
 
 	cp->subsys.kobj.kset = class_kset;
 	cp->subsys.kobj.ktype = &class_ktype;
@@ -314,8 +323,12 @@ void class_dev_iter_init(struct class_dev_iter *iter, const struct class *class,
 	struct subsys_private *sp = class_to_subsys(class);
 	struct klist_node *start_knode = NULL;
 
-	if (!sp)
+	memset(iter, 0, sizeof(*iter));
+	if (!sp) {
+		pr_crit("%s: class %p was not registered yet\n",
+			__func__, class);
 		return;
+	}
 
 	if (start)
 		start_knode = &start->p->knode_class;
@@ -341,6 +354,9 @@ struct device *class_dev_iter_next(struct class_dev_iter *iter)
 {
 	struct klist_node *knode;
 	struct device *dev;
+
+	if (!iter->sp)
+		return NULL;
 
 	while (1) {
 		knode = klist_next(&iter->ki);
@@ -435,8 +451,7 @@ EXPORT_SYMBOL_GPL(class_for_each_device);
  * code.  There's no locking restriction.
  */
 struct device *class_find_device(const struct class *class, const struct device *start,
-				 const void *data,
-				 int (*match)(struct device *, const void *))
+				 const void *data, device_match_t match)
 {
 	struct subsys_private *sp = class_to_subsys(class);
 	struct class_dev_iter iter;

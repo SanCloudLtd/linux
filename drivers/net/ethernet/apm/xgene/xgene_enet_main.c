@@ -1530,7 +1530,7 @@ static int xgene_change_mtu(struct net_device *ndev, int new_mtu)
 	frame_size = (new_mtu > ETH_DATA_LEN) ? (new_mtu + 18) : 0x600;
 
 	xgene_enet_close(ndev);
-	ndev->mtu = new_mtu;
+	WRITE_ONCE(ndev->mtu, new_mtu);
 	pdata->mac_ops->set_framesize(pdata, frame_size);
 	xgene_enet_open(ndev);
 
@@ -2114,7 +2114,7 @@ err:
 	return ret;
 }
 
-static int xgene_enet_remove(struct platform_device *pdev)
+static void xgene_enet_remove(struct platform_device *pdev)
 {
 	struct xgene_enet_pdata *pdata;
 	struct net_device *ndev;
@@ -2136,8 +2136,6 @@ static int xgene_enet_remove(struct platform_device *pdev)
 	xgene_enet_delete_desc_rings(pdata);
 	pdata->port_ops->shutdown(pdata);
 	free_netdev(ndev);
-
-	return 0;
 }
 
 static void xgene_enet_shutdown(struct platform_device *pdev)
@@ -2161,7 +2159,7 @@ static struct platform_driver xgene_enet_driver = {
 		   .acpi_match_table = ACPI_PTR(xgene_enet_acpi_match),
 	},
 	.probe = xgene_enet_probe,
-	.remove = xgene_enet_remove,
+	.remove_new = xgene_enet_remove,
 	.shutdown = xgene_enet_shutdown,
 };
 

@@ -8,9 +8,9 @@ title: Texas Instruments AM625 OLDI Transmitter
 
 maintainers:
   - Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
-  - Aradhya Bhatia <a-bhatia1@ti.com>
+  - Aradhya Bhatia <aradhya.bhatia@linux.dev>
 
-description: |
+description:
   The AM625 TI Keystone OpenLDI transmitter (OLDI TX) supports serialized RGB
   pixel data transmission between host and flat panel display over LVDS (Low
   Voltage Differential Sampling) interface. The OLDI TX consists of 7-to-1 data
@@ -27,7 +27,7 @@ properties:
     description: serial clock input for the OLDI transmitters
 
   clock-names:
-    const: s_clk
+    const: serial
 
   ti,companion-oldi:
     $ref: /schemas/types.yaml#/definitions/phandle
@@ -39,13 +39,18 @@ properties:
 
   ti,secondary-oldi:
     type: boolean
-    description: Boolean property to mark an OLDI TX as secondary node.
+    description:
+      Boolean property to mark the OLDI transmitter as the secondary one, when the
+      OLDI hardware is expected to run as a companion HW, in cases of dual-lvds
+      mode or clone mode. The primary OLDI hardware is responsible for all the
+      hardware configuration.
 
   ti,oldi-io-ctrl:
     $ref: /schemas/types.yaml#/definitions/phandle
     description:
       phandle to syscon device node mapping OLDI IO_CTRL registers found in the
-      control MMR region. This property is needed for OLDI interface to work.
+      control MMR region. These registers are required to toggle the I/O lane
+      power, and control its electrical characteristics.
 
   ports:
     $ref: /schemas/graph.yaml#/properties/ports
@@ -65,23 +70,17 @@ properties:
 
 allOf:
   - if:
-      properties:
-        ti,secondary-oldi: true
+      required:
+        - ti,secondary-oldi
     then:
       properties:
         ti,companion-oldi: false
-        ti,oldi-io-ctrl: false
-        clocks: false
-        clock-names: false
-
-    else:
-      required:
-        - ti,oldi-io-ctrl
-        - clocks
-        - clock-names
 
 required:
   - reg
+  - clocks
+  - clock-names
+  - ti,oldi-io-ctrl
   - ports
 
 additionalProperties: false
@@ -90,13 +89,13 @@ examples:
   - |
     #include <dt-bindings/soc/ti,sci_pm_domain.h>
 
-    oldi_txes {
+    oldi-transmitters {
         #address-cells = <1>;
         #size-cells = <0>;
         oldi: oldi@0 {
             reg = <0>;
             clocks = <&k3_clks 186 0>;
-            clock-names = "s_clk";
+            clock-names = "serial";
             ti,oldi-io-ctrl = <&dss_oldi_io_ctrl>;
             ports {
                 #address-cells = <1>;
@@ -104,46 +103,13 @@ examples:
                 port@0 {
                     reg = <0>;
                     oldi_in: endpoint {
-                        remote-endpoint = <&dpi0_out>;
+                        remote-endpoint = <&dpi_out>;
                     };
                 };
-            };
-        };
-    };
-
-  - |
-    #include <dt-bindings/soc/ti,sci_pm_domain.h>
-
-    oldi_txes {
-        #address-cells = <1>;
-        #size-cells = <0>;
-        oldi0: oldi@0 {
-            reg = <0>;
-            clocks = <&k3_clks 186 0>;
-            clock-names = "s_clk";
-            ti,companion-oldi = <&oldi1>;
-            ti,oldi-io-ctrl = <&dss_oldi_io_ctrl>;
-            ports {
-                #address-cells = <1>;
-                #size-cells = <0>;
-                port@0 {
-                    reg = <0>;
-                    oldi0_in: endpoint {
-                        remote-endpoint = <&dpi0_out0>;
-                    };
-                };
-            };
-        };
-        oldi1: oldi@1 {
-            reg = <1>;
-            ti,secondary-oldi;
-            ports {
-                #address-cells = <1>;
-                #size-cells = <0>;
-                port@0 {
-                    reg = <0>;
-                    oldi1_in: endpoint {
-                        remote-endpoint = <&dpi0_out1>;
+                port@1 {
+                    reg = <1>;
+                    oldi_out: endpoint {
+                        remote-endpoint = <&panel_in>;
                     };
                 };
             };

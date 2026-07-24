@@ -18,7 +18,6 @@
 		compatible = "arm,gic-v3";
 		reg = <0x00 0x01800000 0x00 0x10000>,	/* GICD */
 		      <0x00 0x01880000 0x00 0xc0000>,	/* GICR */
-		      <0x00 0x01880000 0x00 0xc0000>,   /* GICR */
 		      <0x01 0x00000000 0x00 0x2000>,    /* GICC */
 		      <0x01 0x00010000 0x00 0x1000>,    /* GICH */
 		      <0x01 0x00020000 0x00 0x2000>;    /* GICV */
@@ -52,12 +51,31 @@
 			compatible = "ti,am654-phy-gmii-sel";
 			reg = <0x4044 0x8>;
 			#phy-cells = <1>;
+			bootph-all;
 		};
 
 		epwm_tbclk: clock-controller@4130 {
 			compatible = "ti,am62-epwm-tbclk";
 			reg = <0x4130 0x4>;
 			#clock-cells = <1>;
+		};
+
+		audio_refclk0: clock-controller@82e0 {
+			compatible = "ti,am62-audio-refclk";
+			reg = <0x82e0 0x4>;
+			clocks = <&k3_clks 157 0>;
+			assigned-clocks = <&k3_clks 157 0>;
+			assigned-clock-parents = <&k3_clks 157 8>;
+			#clock-cells = <0>;
+		};
+
+		audio_refclk1: clock-controller@82e4 {
+			compatible = "ti,am62-audio-refclk";
+			reg = <0x82e4 0x4>;
+			clocks = <&k3_clks 157 10>;
+			assigned-clocks = <&k3_clks 157 10>;
+			assigned-clock-parents = <&k3_clks 157 18>;
+			#clock-cells = <0>;
 		};
 	};
 
@@ -67,6 +85,7 @@
 		#size-cells = <2>;
 		dma-ranges;
 		ranges = <0x00 0x48000000 0x00 0x48000000 0x00 0x06000000>;
+		bootph-all;
 
 		ti,sci-dev-id = <25>;
 
@@ -79,6 +98,7 @@
 			#mbox-cells = <1>;
 			interrupt-names = "rx_012";
 			interrupts = <GIC_SPI 34 IRQ_TYPE_LEVEL_HIGH>;
+			bootph-all;
 		};
 
 		inta_main_dmss: interrupt-controller@48000000 {
@@ -114,14 +134,15 @@
 			ti,sci-rm-range-bchan = <0x20>; /* BLOCK_COPY_CHAN */
 			ti,sci-rm-range-rchan = <0x21>; /* SPLIT_TR_RX_CHAN */
 			ti,sci-rm-range-tchan = <0x22>; /* SPLIT_TR_TX_CHAN */
+			bootph-all;
 		};
 
 		main_pktdma: dma-controller@485c0000 {
 			compatible = "ti,am64-dmss-pktdma";
 			reg = <0x00 0x485c0000 0x00 0x100>,
 			      <0x00 0x4a800000 0x00 0x20000>,
-			      <0x00 0x4aa00000 0x00 0x40000>,
-			      <0x00 0x4b800000 0x00 0x400000>,
+			      <0x00 0x4aa00000 0x00 0x20000>,
+			      <0x00 0x4b800000 0x00 0x200000>,
 			      <0x00 0x485e0000 0x00 0x10000>,
 			      <0x00 0x484a0000 0x00 0x2000>,
 			      <0x00 0x484c0000 0x00 0x2000>,
@@ -150,6 +171,7 @@
 						<0x2c>, /* FLOW_CPSW_RX_CHAN */
 						<0x2e>, /* FLOW_SAUL_RX_0/1_CHAN */
 						<0x32>; /* FLOW_SAUL_RX_2/3_CHAN */
+			bootph-all;
 		};
 	};
 
@@ -199,30 +221,30 @@
 		mbox-names = "rx", "tx";
 		mboxes = <&secure_proxy_main 12>,
 			 <&secure_proxy_main 13>;
+		bootph-all;
 
 		k3_pds: power-controller {
 			compatible = "ti,sci-pm-domain";
 			#power-domain-cells = <2>;
+			bootph-all;
 		};
 
 		k3_clks: clock-controller {
 			compatible = "ti,k2g-sci-clk";
 			#clock-cells = <2>;
+			bootph-all;
 		};
 
 		k3_reset: reset-controller {
 			compatible = "ti,sci-reset";
 			#reset-cells = <2>;
+			bootph-all;
 		};
 	};
 
 	crypto: crypto@40900000 {
 		compatible = "ti,am62-sa3ul";
 		reg = <0x00 0x40900000 0x00 0x1200>;
-		#address-cells = <2>;
-		#size-cells = <2>;
-		ranges = <0x00 0x40900000 0x00 0x40900000 0x00 0x30000>;
-
 		dmas = <&main_pktdma 0xf501 0>, <&main_pktdma 0x7506 0>,
 		       <&main_pktdma 0x7507 0>;
 		dma-names = "tx", "rx1", "rx2";
@@ -248,6 +270,7 @@
 		 * firmware on non-MPU processors
 		 */
 		status = "disabled";
+		bootph-all;
 	};
 
 	main_pmx0: pinctrl@f4000 {
@@ -269,14 +292,15 @@
 		interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-controller;
 		#interrupt-cells = <1>;
+		bootph-all;
 	};
 
 	main_esm: esm@420000 {
 		compatible = "ti,j721e-esm";
 		reg = <0x0 0x420000 0x0 0x1000>;
+		bootph-pre-ram;
 		/* Interrupt sources: rti0, rti1, wrti0, rti4, rti2, rti3 */
 		ti,esm-pins = <192>, <193>, <195>, <204>, <209>, <210>;
-		bootph-pre-ram;
 	};
 
 	main_timer0: timer@2400000 {
@@ -289,6 +313,7 @@
 		assigned-clock-parents = <&k3_clks 36 3>;
 		power-domains = <&k3_pds 36 TI_SCI_PD_EXCLUSIVE>;
 		ti,timer-pwm;
+		bootph-all;
 	};
 
 	main_timer1: timer@2410000 {
@@ -582,8 +607,6 @@
 		power-domains = <&k3_pds 57 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 57 5>, <&k3_clks 57 6>;
 		clock-names = "clk_ahb", "clk_xin";
-		assigned-clocks = <&k3_clks 57 6>;
-		assigned-clock-parents = <&k3_clks 57 8>;
 		bus-width = <8>;
 		mmc-hs200-1_8v;
 		ti,clkbuf-sel = <0x7>;
@@ -662,6 +685,7 @@
 			dr_mode = "otg";
 			snps,usb2-gadget-lpm-disable;
 			snps,usb2-lpm-disable;
+			bootph-all;
 		};
 	};
 
@@ -754,7 +778,8 @@
 				label = "port1";
 				phys = <&phy_gmii_sel 1>;
 				mac-address = [00 00 00 00 00 00];
-				ti,syscon-efuse = <&wkup_conf 0x200>;
+				ti,syscon-efuse = <&cpsw_mac_syscon 0x0>;
+				bootph-all;
 			};
 
 			cpsw_port2: port@2 {
@@ -774,6 +799,7 @@
 			clocks = <&k3_clks 13 0>;
 			clock-names = "fck";
 			bus_freq = <1000000>;
+			bootph-all;
 		};
 
 		cpts@3d000 {
@@ -788,12 +814,10 @@
 		};
 	};
 
-	timesync_router: pinctrl@a40000 {
-		compatible = "pinctrl-single";
+	timesync_router: mux-controller@a40000 {
+		compatible = "reg-mux";
 		reg = <0x0 0xa40000 0x0 0x800>;
-		#pinctrl-cells = <1>;
-		pinctrl-single,register-width = <32>;
-		pinctrl-single,function-mask = <0x000107ff>;
+		#mux-control-cells = <1>;
 		status = "disabled";
 	};
 
@@ -1062,6 +1086,9 @@
 		cdns_csi2rx0: csi-bridge@30101000 {
 			compatible = "ti,j721e-csi2rx", "cdns,csi2rx";
 			reg = <0x00 0x30101000 0x00 0x1000>;
+			interrupts = <GIC_SPI 158 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 156 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "error_irq", "irq";
 			clocks = <&k3_clks 182 0>, <&k3_clks 182 3>, <&k3_clks 182 0>,
 				<&k3_clks 182 0>, <&k3_clks 182 4>, <&k3_clks 182 4>;
 			clock-names = "sys_clk", "p_clk", "pixel_if0_clk",
@@ -1141,7 +1168,6 @@
 		clocks = <&k3_clks 204 2>;
 		power-domains = <&k3_pds 204 TI_SCI_PD_EXCLUSIVE>;
 		sram = <&oc_sram>;
-		sram-size=<0xf800>;
 	};
 
 	c7x_0: dsp@7e000000 {
@@ -1153,6 +1179,7 @@
 		ti,sci-proc-ids = <0x04 0xff>;
 		resets = <&k3_reset 208 1>;
 		firmware-name = "am62a-c71_0-fw";
+		status = "disabled";
 	};
 
 	e5010: jpeg-encoder@fd20000 {

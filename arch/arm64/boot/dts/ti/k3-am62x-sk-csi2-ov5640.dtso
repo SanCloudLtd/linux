@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * ALINX AN5641 & Digilent PCam 5C - OV5640 camera module
- *
  * Copyright (C) 2022-2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
@@ -23,7 +22,7 @@
 	#size-cells = <0>;
 	status = "okay";
 
-	i2c-switch@71 {
+	i2c-mux@71 {
 		compatible = "nxp,pca9543";
 		#address-cells = <1>;
 		#size-cells = <0>;

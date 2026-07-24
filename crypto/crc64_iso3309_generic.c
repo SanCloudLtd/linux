@@ -3,7 +3,6 @@
 #include <linux/crc64.h>
 #include <linux/module.h>
 #include <crypto/internal/hash.h>
-#include <asm/unaligned.h>
 
 static int chksum_cra_init(struct crypto_tfm *tfm)
 {

@@ -14,8 +14,6 @@
 
 #include <crypto/internal/hash.h>
 
-#include <asm/unaligned.h>
-
 #define DRIVER_NAME		"mcrc64"
 #define CHKSUM_DIGEST_SIZE	8
 #define CHKSUM_BLOCK_SIZE	1
@@ -380,14 +378,11 @@ static int mcrc64_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int mcrc64_remove(struct platform_device *pdev)
+static void mcrc64_remove(struct platform_device *pdev)
 {
 	struct mcrc64_data *dev_data = platform_get_drvdata(pdev);
-	int ret;
 
-	ret = pm_runtime_resume_and_get(dev_data->dev);
-	if (ret < 0)
-		return ret;
+	pm_runtime_resume_and_get(dev_data->dev);
 
 	spin_lock(&mcrc64_dev_list.lock);
 	list_del(&dev_data->list);
@@ -400,8 +395,6 @@ static int mcrc64_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(dev_data->dev);
 	pm_runtime_put_noidle(dev_data->dev);
-
-	return 0;
 }
 
 static int __maybe_unused mcrc64_suspend(struct device *dev)

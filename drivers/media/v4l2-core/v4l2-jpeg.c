@@ -9,14 +9,14 @@
  * [1] https://www.w3.org/Graphics/JPEG/itu-t81.pdf
  */
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <media/v4l2-jpeg.h>
 
-MODULE_DESCRIPTION("V4L2 JPEG helpers");
+MODULE_DESCRIPTION("V4L2 JPEG header parser helpers");
 MODULE_AUTHOR("Philipp Zabel <kernel@pengutronix.de>");
 MODULE_LICENSE("GPL");
 
@@ -55,7 +55,7 @@ MODULE_LICENSE("GPL");
 /* Luma and chroma qp tables to achieve 50% compression quality
  * This is as per example in Annex K.1 of ITU-T.81
  */
-static const u8 luma_qt[] = {
+const u8 v4l2_jpeg_ref_table_luma_qt[V4L2_JPEG_PIXELS_IN_BLOCK] = {
 	16, 11, 10, 16, 24, 40, 51, 61,
 	12, 12, 14, 19, 26, 58, 60, 55,
 	14, 13, 16, 24, 40, 57, 69, 56,
@@ -65,8 +65,9 @@ static const u8 luma_qt[] = {
 	49, 64, 78, 87, 103, 121, 120, 101,
 	72, 92, 95, 98, 112, 100, 103, 99
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_luma_qt);
 
-static const u8 chroma_qt[] = {
+const u8 v4l2_jpeg_ref_table_chroma_qt[V4L2_JPEG_PIXELS_IN_BLOCK] = {
 	17, 18, 24, 47, 99, 99, 99, 99,
 	18, 21, 26, 66, 99, 99, 99, 99,
 	24, 26, 56, 99, 99, 99, 99, 99,
@@ -76,9 +77,10 @@ static const u8 chroma_qt[] = {
 	99, 99, 99, 99, 99, 99, 99, 99,
 	99, 99, 99, 99, 99, 99, 99, 99
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_chroma_qt);
 
-/* Zigzag scan pattern */
-static const u8 zigzag[] = {
+/* Zigzag scan pattern indexes */
+const u8 v4l2_jpeg_zigzag_scan_index[V4L2_JPEG_PIXELS_IN_BLOCK] = {
 	0,   1,  8, 16,  9,  2,  3, 10,
 	17, 24, 32, 25, 18, 11,  4,  5,
 	12, 19, 26, 33, 40, 48, 41, 34,
@@ -88,6 +90,7 @@ static const u8 zigzag[] = {
 	58, 59, 52, 45, 38, 31, 39, 46,
 	53, 60, 61, 54, 47, 55, 62, 63
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_zigzag_scan_index);
 
 /*
  * Contains the data that needs to be sent in the marker segment of an
@@ -95,11 +98,12 @@ static const u8 zigzag[] = {
  * data stream. Specifies the huffman table used for encoding the luminance DC
  * coefficient differences. The table represents Table K.3 of ITU-T.81
  */
-static const u8 luma_dc_ht[] = {
+const u8 v4l2_jpeg_ref_table_luma_dc_ht[V4L2_JPEG_REF_HT_DC_LEN] = {
 	0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01,
 	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_luma_dc_ht);
 
 /*
  * Contains the data that needs to be sent in the marker segment of an
@@ -107,7 +111,7 @@ static const u8 luma_dc_ht[] = {
  * data stream. Specifies the huffman table used for encoding the luminance AC
  * coefficients. The table represents Table K.5 of ITU-T.81
  */
-static const u8 luma_ac_ht[] = {
+const u8 v4l2_jpeg_ref_table_luma_ac_ht[V4L2_JPEG_REF_HT_AC_LEN] = {
 	0x00, 0x02, 0x01, 0x03, 0x03, 0x02, 0x04, 0x03, 0x05, 0x05, 0x04, 0x04,
 	0x00, 0x00, 0x01, 0x7D, 0x01, 0x02, 0x03, 0x00, 0x04, 0x11, 0x05, 0x12,
 	0x21, 0x31, 0x41, 0x06, 0x13, 0x51, 0x61, 0x07, 0x22, 0x71, 0x14, 0x32,
@@ -124,6 +128,7 @@ static const u8 luma_ac_ht[] = {
 	0xD9, 0xDA, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA,
 	0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_luma_ac_ht);
 
 /*
  * Contains the data that needs to be sent in the marker segment of an interchange format JPEG
@@ -131,11 +136,12 @@ static const u8 luma_ac_ht[] = {
  * Specifies the huffman table used for encoding the chrominance DC coefficient differences.
  * The table represents Table K.4 of ITU-T.81
  */
-static const u8 chroma_dc_ht[] = {
+const u8 v4l2_jpeg_ref_table_chroma_dc_ht[V4L2_JPEG_REF_HT_DC_LEN] = {
 	0x00, 0x03, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
 	0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_chroma_dc_ht);
 
 /*
  * Contains the data that needs to be sent in the marker segment of an
@@ -143,7 +149,7 @@ static const u8 chroma_dc_ht[] = {
  * data stream. Specifies the huffman table used for encoding the chrominance
  * AC coefficients. The table represents Table K.6 of ITU-T.81
  */
-static const u8 chroma_ac_ht[] = {
+const u8 v4l2_jpeg_ref_table_chroma_ac_ht[V4L2_JPEG_REF_HT_AC_LEN] = {
 	0x00, 0x02, 0x01, 0x02, 0x04, 0x04, 0x03, 0x04, 0x07, 0x05, 0x04, 0x04,
 	0x00, 0x01, 0x02, 0x77, 0x00, 0x01, 0x02, 0x03, 0x11, 0x04, 0x05, 0x21,
 	0x31, 0x06, 0x12, 0x41, 0x51, 0x07, 0x61, 0x71, 0x13, 0x22, 0x32, 0x81,
@@ -160,6 +166,7 @@ static const u8 chroma_ac_ht[] = {
 	0xD7, 0xD8, 0xD9, 0xDA, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9,
 	0xEA, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA
 };
+EXPORT_SYMBOL_GPL(v4l2_jpeg_ref_table_chroma_ac_ht);
 
 /**
  * struct jpeg_stream - JPEG byte stream
@@ -784,54 +791,3 @@ int v4l2_jpeg_parse_huffman_tables(void *buf, size_t len,
 	return jpeg_parse_huffman_tables(&stream, huffman_tables);
 }
 EXPORT_SYMBOL_GPL(v4l2_jpeg_parse_huffman_tables);
-
-/**
- * v4l2_jpeg_get_reference_quantization_tables - Get reference quantization
- *						 tables as defined in ITU-T.81
- * @ref_luma_qt: Output variable pointing to luma quantization table
- * @ref_chroma_qt: Output variable pointing to chroma quantization table
- */
-void v4l2_jpeg_get_reference_quantization_tables(const u8 **ref_luma_qt, const
-						 u8 **ref_chroma_qt)
-{
-	if (ref_luma_qt)
-		*ref_luma_qt = luma_qt;
-	if (ref_chroma_qt)
-		*ref_chroma_qt = chroma_qt;
-}
-EXPORT_SYMBOL_GPL(v4l2_jpeg_get_reference_quantization_tables);
-
-/**
- * v4l2_jpeg_get_zig_zag_scan - Get zigzag scan table as defined in ITU-T.81
- * @ref_zigzag: Output variable pointing to zigzag scan table
- */
-void v4l2_jpeg_get_zig_zag_scan(const u8 **ref_zigzag)
-{
-	if (ref_zigzag)
-		*ref_zigzag = zigzag;
-}
-EXPORT_SYMBOL_GPL(v4l2_jpeg_get_zig_zag_scan);
-
-/**
- * v4l2_jpeg_get_reference_huffman_tables - Get reference huffman tables as
- *					    defined in ITU-T.81
- * @ref_luma_dc_ht : Output variable pointing to huffman table for luma DC
- * @ref_luma_ac_ht : Output variable pointing to huffman table for luma AC
- * @ref_chroma_dc_ht : Output variable pointing to huffman table for chroma DC
- * @ref_chroma_ac_ht : Output variable pointing to huffman table for chroma AC
- */
-void v4l2_jpeg_get_reference_huffman_tables(const u8 **ref_luma_dc_ht,
-					    const u8 **ref_luma_ac_ht,
-					    const u8 **ref_chroma_dc_ht,
-					    const u8 **ref_chroma_ac_ht)
-{
-	if (ref_luma_dc_ht)
-		*ref_luma_dc_ht = luma_dc_ht;
-	if (ref_luma_ac_ht)
-		*ref_luma_ac_ht = luma_ac_ht;
-	if (ref_chroma_dc_ht)
-		*ref_chroma_dc_ht = chroma_dc_ht;
-	if (ref_chroma_ac_ht)
-		*ref_chroma_ac_ht = chroma_ac_ht;
-}
-EXPORT_SYMBOL_GPL(v4l2_jpeg_get_reference_huffman_tables);

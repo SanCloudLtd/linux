@@ -47,7 +47,7 @@ struct rproc_dma_buf_attach_data {
 /**
  * DOC: RPROC_IOC_DMA_BUF_ATTACH - Attach and map DMA-BUF a remote processor
  *
- * Takes a rproc_dma_buf_data struct containing a fd for a physicaly contigous
+ * Takes a rproc_dma_buf_data struct containing a fd for a physically contiguous
  * buffer. Pins this buffer and populates phys field with the device address.
  */
 #define RPROC_IOC_DMA_BUF_ATTACH _IOWR(RPROC_MAGIC, 0, struct rproc_dma_buf_attach_data)

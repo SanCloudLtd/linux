@@ -1216,10 +1216,24 @@ out:
 int jbd2_journal_get_write_access(handle_t *handle, struct buffer_head *bh)
 {
 	struct journal_head *jh;
+	journal_t *journal;
 	int rc;
 
 	if (is_handle_aborted(handle))
 		return -EROFS;
+
+	journal = handle->h_transaction->t_journal;
+	if (jbd2_check_fs_dev_write_error(journal)) {
+		/*
+		 * If the fs dev has writeback errors, it may have failed
+		 * to async write out metadata buffers in the background.
+		 * In this case, we could read old data from disk and write
+		 * it out again, which may lead to on-disk filesystem
+		 * inconsistency. Aborting journal can avoid it happen.
+		 */
+		jbd2_journal_abort(journal, -EIO);
+		return -EIO;
+	}
 
 	if (jbd2_write_access_granted(handle, bh, false))
 		return 0;
@@ -1499,7 +1513,7 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 				jh->b_next_transaction == transaction);
 		spin_unlock(&jh->b_state_lock);
 	}
-	if (jh->b_modified == 1) {
+	if (data_race(jh->b_modified == 1)) {
 		/* If it's in our transaction it must be in BJ_Metadata list. */
 		if (data_race(jh->b_transaction == transaction &&
 		    jh->b_jlist != BJ_Metadata)) {
@@ -1518,7 +1532,6 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 		goto out;
 	}
 
-	journal = transaction->t_journal;
 	spin_lock(&jh->b_state_lock);
 
 	if (is_handle_aborted(handle)) {
@@ -1532,6 +1545,8 @@ int jbd2_journal_dirty_metadata(handle_t *handle, struct buffer_head *bh)
 		ret = -EROFS;
 		goto out_unlock_bh;
 	}
+
+	journal = transaction->t_journal;
 
 	if (jh->b_modified == 0) {
 		/*

@@ -106,7 +106,6 @@ static const struct vpu_format enc_fmt_list[FMT_TYPES][MAX_FMTS] = {
 			.v4l2_pix_fmt = V4L2_PIX_FMT_VYUY,
 			.v4l2_frmsize = &enc_frmsize[VPU_FMT_TYPE_RAW],
 		},
-
 	}
 };
 
@@ -1359,7 +1358,7 @@ static int initialize_sequence(struct vpu_instance *inst)
 		__func__, initial_info.min_frame_buffer_count,
 		initial_info.min_src_frame_count);
 	inst->min_src_buf_count = initial_info.min_src_frame_count +
-				  COMMAND_QUEUE_DEPTH;
+				  WAVE521_COMMAND_QUEUE_DEPTH;
 
 	ctrl = v4l2_ctrl_find(&inst->v4l2_ctrl_hdl,
 			      V4L2_CID_MIN_BUFFERS_FOR_OUTPUT);
@@ -1425,9 +1424,6 @@ static int wave5_vpu_enc_start_streaming(struct vb2_queue *q, unsigned int count
 		struct enc_open_param open_param;
 
 		memset(&open_param, 0, sizeof(struct enc_open_param));
-
-		if (inst->dev->opp_table_detected)
-			wave5_instance_set_clk(inst);
 
 		ret = wave5_set_enc_openparam(&open_param, inst);
 		if (ret) {

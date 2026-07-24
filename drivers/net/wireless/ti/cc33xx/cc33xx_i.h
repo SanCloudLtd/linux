@@ -92,7 +92,7 @@ struct cc33xx_if_operations {
 };
 
 struct cc33xx_platdev_data {
-	struct cc33xx_if_operations *if_ops;
+	const struct cc33xx_if_operations *if_ops;
 	const struct cc33xx_family_data *family;
 	void (*irq_handler)(struct platform_device *pdev);
 	int  gpio_irq_num;
@@ -363,7 +363,7 @@ struct cc33xx_vif {
 
 	struct delayed_work roc_timeout_work;
 
-	/* update rate conrol */
+	/* update rate control */
 	enum ieee80211_sta_rx_bandwidth rc_update_bw;
 	struct ieee80211_sta_ht_cap rc_ht_cap;
 	struct work_struct rc_update_work;
@@ -439,7 +439,7 @@ void cc33xx_flush_deferred_work(struct cc33xx *cc);
 #define SESSION_COUNTER_INVALID 7 /* used with dummy_packet */
 
 #define CC33XX_MAX_TXPWR 21 /* maximum power limit is 21dBm */
-#define CC33XX_MIN_TXPWR -10 /* minmum power limit is -10dBm */
+#define CC33XX_MIN_TXPWR -10 /* minimum power limit is -10dBm */
 
 #define CC33XX_TX_QUEUE_LOW_WATERMARK  32
 #define CC33XX_TX_QUEUE_HIGH_WATERMARK 256

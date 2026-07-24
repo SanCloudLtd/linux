@@ -6,6 +6,7 @@ import json
 import pprint
 import sys
 import re
+import os
 
 from lib import YnlFamily
 
@@ -152,8 +153,11 @@ def main():
     global args
     args = parser.parse_args()
 
-    spec = '../../../Documentation/netlink/specs/ethtool.yaml'
-    schema = '../../../Documentation/netlink/genetlink-legacy.yaml'
+    script_abs_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    spec = os.path.join(script_abs_dir,
+                        '../../../Documentation/netlink/specs/ethtool.yaml')
+    schema = os.path.join(script_abs_dir,
+                          '../../../Documentation/netlink/genetlink-legacy.yaml')
 
     ynl = YnlFamily(spec, schema)
 
@@ -320,20 +324,37 @@ def main():
         return
 
     if args.show_time_stamping:
-        tsinfo = dumpit(ynl, args, 'tsinfo-get')
+        req = {
+          'header': {
+            'flags': 'stats',
+          },
+        }
+
+        tsinfo = dumpit(ynl, args, 'tsinfo-get', req)
 
         print(f'Time stamping parameters for {args.device}:')
 
         print('Capabilities:')
         [print(f'\t{v}') for v in bits_to_dict(tsinfo['timestamping'])]
 
-        print(f'PTP Hardware Clock: {tsinfo["phc-index"]}')
+        print(f'PTP Hardware Clock: {tsinfo.get("phc-index", "none")}')
 
-        print('Hardware Transmit Timestamp Modes:')
-        [print(f'\t{v}') for v in bits_to_dict(tsinfo['tx-types'])]
+        if 'tx-types' in tsinfo:
+            print('Hardware Transmit Timestamp Modes:')
+            [print(f'\t{v}') for v in bits_to_dict(tsinfo['tx-types'])]
+        else:
+            print('Hardware Transmit Timestamp Modes: none')
 
-        print('Hardware Receive Filter Modes:')
-        [print(f'\t{v}') for v in bits_to_dict(tsinfo['rx-filters'])]
+        if 'rx-filters' in tsinfo:
+            print('Hardware Receive Filter Modes:')
+            [print(f'\t{v}') for v in bits_to_dict(tsinfo['rx-filters'])]
+        else:
+            print('Hardware Receive Filter Modes: none')
+
+        if 'stats' in tsinfo and tsinfo['stats']:
+            print('Statistics:')
+            [print(f'\t{k}: {v}') for k, v in tsinfo['stats'].items()]
+
         return
 
     print(f'Settings for {args.device}:')

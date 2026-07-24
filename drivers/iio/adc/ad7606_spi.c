@@ -127,7 +127,7 @@ static int ad7606_spi_reg_read(struct ad7606_state *st, unsigned int addr)
 		{
 			.tx_buf = &st->d16[0],
 			.len = 2,
-			.cs_change = 0,
+			.cs_change = 1,
 		}, {
 			.rx_buf = &st->d16[1],
 			.len = 2,
@@ -151,7 +151,7 @@ static int ad7606_spi_reg_write(struct ad7606_state *st,
 	struct spi_device *spi = to_spi_device(st->dev);
 
 	st->d16[0] = cpu_to_be16((st->bops->rd_wr_cmd(addr, 1) << 8) |
-				  (val & 0x1FF));
+				  (val & 0xFF));
 
 	return spi_write(spi, &st->d16[0], sizeof(st->d16[0]));
 }
@@ -334,7 +334,7 @@ static const struct spi_device_id ad7606_id_table[] = {
 	{ "ad7606-8", ID_AD7606_8 },
 	{ "ad7606b",  ID_AD7606B },
 	{ "ad7616",   ID_AD7616 },
-	{}
+	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad7606_id_table);
 
@@ -345,7 +345,7 @@ static const struct of_device_id ad7606_of_match[] = {
 	{ .compatible = "adi,ad7606-8" },
 	{ .compatible = "adi,ad7606b" },
 	{ .compatible = "adi,ad7616" },
-	{ },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, ad7606_of_match);
 

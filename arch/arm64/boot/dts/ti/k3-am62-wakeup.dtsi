@@ -8,9 +8,9 @@
 #include <dt-bindings/bus/ti-sysc.h>
 
 &cbass_wakeup {
-	wkup_conf: syscon@43000000 {
+	wkup_conf: bus@43000000 {
 		bootph-all;
-		compatible = "syscon", "simple-mfd";
+		compatible = "simple-bus";
 		reg = <0x00 0x43000000 0x00 0x20000>;
 		#address-cells = <1>;
 		#size-cells = <1>;
@@ -20,6 +20,16 @@
 			bootph-all;
 			compatible = "ti,am654-chipid";
 			reg = <0x14 0x4>;
+		};
+
+		opp_efuse_table: syscon@18 {
+			compatible = "ti,am62-opp-efuse-table", "syscon";
+			reg = <0x18 0x4>;
+		};
+
+		cpsw_mac_syscon: ethernet-mac-syscon@200 {
+			compatible = "ti,am62p-cpsw-mac-efuse", "syscon";
+			reg = <0x200 0x8>;
 		};
 
 		usb0_phy_ctrl: syscon@4008 {
@@ -35,9 +45,9 @@
 
 	target-module@2b300050 {
 		compatible = "ti,sysc-omap2", "ti,sysc";
-		reg = <0 0x2b300050 0 0x4>,
-		      <0 0x2b300054 0 0x4>,
-		      <0 0x2b300058 0 0x4>;
+		reg = <0x00 0x2b300050 0x00 0x4>,
+		      <0x00 0x2b300054 0x00 0x4>,
+		      <0x00 0x2b300058 0x00 0x4>;
 		reg-names = "rev", "sysc", "syss";
 		ti,sysc-mask = <(SYSC_OMAP2_ENAWAKEUP |
 				 SYSC_OMAP2_SOFTRESET |
@@ -53,11 +63,11 @@
 		clock-names = "fck";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		ranges = <0 0 0x2b300000 0x100000>;
+		ranges = <0x0 0x00 0x2b300000 0x100000>;
 
 		wkup_uart0: serial@0 {
 			compatible = "ti,am64-uart", "ti,am654-uart";
-			reg = <0 0x100>;
+			reg = <0x0 0x100>;
 			interrupts = <GIC_SPI 186 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};
@@ -101,8 +111,9 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges = <0x78000000 0x00 0x78000000 0x8000>,
-				 <0x78100000 0x00 0x78100000 0x8000>;
+			 <0x78100000 0x00 0x78100000 0x8000>;
 		power-domains = <&k3_pds 119 TI_SCI_PD_EXCLUSIVE>;
+		status = "disabled";
 
 		wkup_r5fss0_core0: r5f@78000000 {
 			compatible = "ti,am62-r5f";
@@ -113,12 +124,13 @@
 			ti,sci-dev-id = <121>;
 			ti,sci-proc-ids = <0x01 0xff>;
 			resets = <&k3_reset 121 1>;
-			firmware-name = "ti-sysfw/ti-fs-stub-firmware-am62x-gp-signed.bin";
+			firmware-name = "am62-wkup-r5f0_0-fw";
 			ti,atcm-enable = <1>;
 			ti,btcm-enable = <1>;
 			ti,loczrama = <1>;
 		};
 	};
+
 	wkup_vtm0: temperature-sensor@b00000 {
 		compatible = "ti,j7200-vtm";
 		reg = <0x00 0xb00000 0x00 0x400>,

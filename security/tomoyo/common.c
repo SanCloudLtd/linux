@@ -2665,7 +2665,7 @@ ssize_t tomoyo_write_control(struct tomoyo_io_buffer *head,
 
 		if (head->w.avail >= head->writebuf_size - 1) {
 			const int len = head->writebuf_size * 2;
-			char *cp = kzalloc(len, GFP_NOFS);
+			char *cp = kzalloc(len, GFP_NOFS | __GFP_NOWARN);
 
 			if (!cp) {
 				error = -ENOMEM;
@@ -2787,7 +2787,7 @@ void tomoyo_check_profile(void)
 		else
 			continue;
 		pr_err("Userland tools for TOMOYO 2.6 must be installed and policy must be initialized.\n");
-		pr_err("Please see https://tomoyo.osdn.jp/2.6/ for more information.\n");
+		pr_err("Please see https://tomoyo.sourceforge.net/2.6/ for more information.\n");
 		panic("STOP!");
 	}
 	tomoyo_read_unlock(idx);

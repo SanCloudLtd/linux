@@ -334,7 +334,7 @@ struct conf_tx_ac_category {
 	 */
 	u8 is_mu_edca;
 
-	/*  The AIFSN value for the corresonding access class
+	/*  The AIFSN value for the corresponding access class
 	 *
 	 * Range: uint8_t
 	 */
@@ -545,7 +545,7 @@ struct conf_conn_settings {
 	 */
 	u8 bcn_filt_mode;
 
-	/* Configure Beacon filter pass-thru rules.
+	/* Configure Beacon filter pass-through rules.
 	 */
 	u8 bcn_filt_ie_count;
 	/*struct conf_bcn_filt_rule bcn_filt_ie[CONF_MAX_BCN_FILT_IE_COUNT];*/

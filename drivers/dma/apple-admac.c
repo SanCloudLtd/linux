@@ -130,7 +130,7 @@ struct admac_data {
 	int irq;
 	int irq_index;
 	int nchannels;
-	struct admac_chan channels[];
+	struct admac_chan channels[] __counted_by(nchannels);
 };
 
 struct admac_tx {
@@ -153,6 +153,8 @@ static int admac_alloc_sram_carveout(struct admac_data *ad,
 {
 	struct admac_sram *sram;
 	int i, ret = 0, nblocks;
+	ad->txcache.size = readl_relaxed(ad->base + REG_TX_SRAM_SIZE);
+	ad->rxcache.size = readl_relaxed(ad->base + REG_RX_SRAM_SIZE);
 
 	if (dir == DMA_MEM_TO_DEV)
 		sram = &ad->txcache;
@@ -912,12 +914,7 @@ static int admac_probe(struct platform_device *pdev)
 		goto free_irq;
 	}
 
-	ad->txcache.size = readl_relaxed(ad->base + REG_TX_SRAM_SIZE);
-	ad->rxcache.size = readl_relaxed(ad->base + REG_RX_SRAM_SIZE);
-
 	dev_info(&pdev->dev, "Audio DMA Controller\n");
-	dev_info(&pdev->dev, "imprint %x TX cache %u RX cache %u\n",
-		 readl_relaxed(ad->base + REG_IMPRINT), ad->txcache.size, ad->rxcache.size);
 
 	return 0;
 
@@ -928,7 +925,7 @@ free_reset:
 	return err;
 }
 
-static int admac_remove(struct platform_device *pdev)
+static void admac_remove(struct platform_device *pdev)
 {
 	struct admac_data *ad = platform_get_drvdata(pdev);
 
@@ -936,8 +933,6 @@ static int admac_remove(struct platform_device *pdev)
 	dma_async_device_unregister(&ad->dma);
 	free_irq(ad->irq, ad);
 	reset_control_rearm(ad->rstc);
-
-	return 0;
 }
 
 static const struct of_device_id admac_of_match[] = {
@@ -952,7 +947,7 @@ static struct platform_driver apple_admac_driver = {
 		.of_match_table = admac_of_match,
 	},
 	.probe = admac_probe,
-	.remove = admac_remove,
+	.remove_new = admac_remove,
 };
 module_platform_driver(apple_admac_driver);
 

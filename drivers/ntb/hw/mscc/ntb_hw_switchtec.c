@@ -288,7 +288,7 @@ static int switchtec_ntb_mw_set_trans(struct ntb_dev *ntb, int pidx, int widx,
 	if (size != 0 && xlate_pos < 12)
 		return -EINVAL;
 
-	if (!IS_ALIGNED(addr, BIT_ULL(xlate_pos))) {
+	if (xlate_pos >= 0 && !IS_ALIGNED(addr, BIT_ULL(xlate_pos))) {
 		/*
 		 * In certain circumstances we can get a buffer that is
 		 * not aligned to its size. (Most of the time
@@ -1566,7 +1566,7 @@ static struct class_interface switchtec_interface  = {
 
 static int __init switchtec_ntb_init(void)
 {
-	switchtec_interface.class = switchtec_class;
+	switchtec_interface.class = &switchtec_class;
 	return class_interface_register(&switchtec_interface);
 }
 module_init(switchtec_ntb_init);

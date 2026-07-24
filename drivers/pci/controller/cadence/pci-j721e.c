@@ -48,7 +48,7 @@ enum link_status {
 #define J721E_MODE_RC			BIT(7)
 #define LANE_COUNT(n)			((n) << 8)
 
-#define ACSPCIE_PAD_ENABLE_MASK		GENMASK(1, 0)
+#define ACSPCIE_PAD_DISABLE_MASK	GENMASK(1, 0)
 #define GENERATION_SEL_MASK		GENMASK(1, 0)
 
 struct j721e_pcie {
@@ -226,28 +226,34 @@ static int j721e_pcie_set_lane_count(struct j721e_pcie *pcie,
 	return ret;
 }
 
-static int j721e_acspcie_pad_enable(struct j721e_pcie *pcie, struct regmap *syscon)
+static int j721e_enable_acspcie_refclk(struct j721e_pcie *pcie,
+				       struct regmap *syscon)
 {
 	struct device *dev = pcie->cdns_pcie->dev;
 	struct device_node *node = dev->of_node;
-	u32 mask = ACSPCIE_PAD_ENABLE_MASK;
+	u32 mask = ACSPCIE_PAD_DISABLE_MASK;
 	struct of_phandle_args args;
 	u32 val;
 	int ret;
 
-	ret = of_parse_phandle_with_fixed_args(node, "ti,syscon-acspcie-proxy-ctrl",
+	ret = of_parse_phandle_with_fixed_args(node,
+					       "ti,syscon-acspcie-proxy-ctrl",
 					       1, 0, &args);
-	if (!ret) {
-		/* PAD Enable Bits have to be cleared to in order to enable output */
-		val = ~(args.args[0]);
-		ret = regmap_update_bits(syscon, 0, mask, val);
-		if (ret)
-			dev_err(dev, "Enabling ACSPCIE PAD output failed: %d\n", ret);
-	} else {
-		dev_err(dev, "ti,syscon-acspcie-proxy-ctrl has invalid parameters\n");
+	if (ret) {
+		dev_err(dev,
+			"ti,syscon-acspcie-proxy-ctrl has invalid arguments\n");
+		return ret;
 	}
 
-	return ret;
+	/* Clear PAD IO disable bits to enable refclk output */
+	val = ~(args.args[0]);
+	ret = regmap_update_bits(syscon, 0, mask, val);
+	if (ret) {
+		dev_err(dev, "failed to enable ACSPCIE refclk: %d\n", ret);
+		return ret;
+	}
+
+	return 0;
 }
 
 static int j721e_pcie_ctrl_init(struct j721e_pcie *pcie)
@@ -289,15 +295,13 @@ static int j721e_pcie_ctrl_init(struct j721e_pcie *pcie)
 		return ret;
 	}
 
-	/* Enable ACSPCIe PAD IO Buffers if the optional property exists */
-	syscon = syscon_regmap_lookup_by_phandle_optional(node, "ti,syscon-acspcie-proxy-ctrl");
-	if (syscon) {
-		ret = j721e_acspcie_pad_enable(pcie, syscon);
-		if (ret)
-			return ret;
-	}
+	/* Enable ACSPCIE refclk output if the optional property exists */
+	syscon = syscon_regmap_lookup_by_phandle_optional(node,
+						"ti,syscon-acspcie-proxy-ctrl");
+	if (!syscon)
+		return 0;
 
-	return 0;
+	return j721e_enable_acspcie_refclk(pcie, syscon);
 }
 
 static int cdns_ti_pcie_config_read(struct pci_bus *bus, unsigned int devfn,
@@ -351,6 +355,7 @@ static const struct j721e_pcie_data j7200_pcie_rc_data = {
 static const struct j721e_pcie_data j7200_pcie_ep_data = {
 	.mode = PCI_MODE_EP,
 	.quirk_detect_quiet_flag = true,
+	.linkdown_irq_regfield = J7200_LINK_DOWN,
 	.quirk_disable_flr = true,
 	.max_lanes = 2,
 };
@@ -372,13 +377,13 @@ static const struct j721e_pcie_data j784s4_pcie_rc_data = {
 	.mode = PCI_MODE_RC,
 	.quirk_retrain_flag = true,
 	.byte_access_allowed = false,
-	.linkdown_irq_regfield = LINK_DOWN,
+	.linkdown_irq_regfield = J7200_LINK_DOWN,
 	.max_lanes = 4,
 };
 
 static const struct j721e_pcie_data j784s4_pcie_ep_data = {
 	.mode = PCI_MODE_EP,
-	.linkdown_irq_regfield = LINK_DOWN,
+	.linkdown_irq_regfield = J7200_LINK_DOWN,
 	.max_lanes = 4,
 };
 

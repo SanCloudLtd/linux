@@ -6,9 +6,7 @@
  */
 
 #include <linux/clk.h>
-#include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/of_graph.h>
 #include <linux/mfd/syscon.h>
 #include <linux/media-bus-format.h>
@@ -16,12 +14,10 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
-#include <drm/drm_panel.h>
 #include <drm/drm_of.h>
-#include <drm/drm_crtc.h>
-#include <drm/drm_probe_helper.h>
 
-#include "tidss_drv.h"
+#include "tidss_dispc.h"
+#include "tidss_dispc_regs.h"
 #include "tidss_oldi.h"
 
 struct tidss_oldi {
@@ -31,14 +27,13 @@ struct tidss_oldi {
 	struct drm_bridge	bridge;
 	struct drm_bridge	*next_bridge;
 
-	struct drm_panel *panel;
-
 	enum tidss_oldi_link_type link_type;
 	const struct oldi_bus_format *bus_format;
 	u32 oldi_instance;
+	u32 companion_instance;
 	u32 parent_vp;
 
-	struct clk *s_clk;
+	struct clk *serial;
 	struct regmap *io_ctrl;
 };
 
@@ -63,14 +58,14 @@ static int tidss_oldi_bridge_attach(struct drm_bridge *bridge,
 
 	if (!oldi->next_bridge) {
 		dev_err(oldi->dev,
-			"%s: OLDI%d Failure attach next bridge\n",
+			"%s: OLDI%u Failure attach next bridge\n",
 			__func__, oldi->oldi_instance);
 		return -ENODEV;
 	}
 
 	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
 		dev_err(oldi->dev,
-			"%s: OLDI%d DRM_BRIDGE_ATTACH_NO_CONNECTOR is mandatory.\n",
+			"%s: OLDI%u DRM_BRIDGE_ATTACH_NO_CONNECTOR is mandatory.\n",
 			__func__, oldi->oldi_instance);
 		return -EINVAL;
 	}
@@ -80,38 +75,35 @@ static int tidss_oldi_bridge_attach(struct drm_bridge *bridge,
 }
 
 static int
-oldi_set_serial_clk(struct tidss_oldi *oldi, unsigned long rate)
+tidss_oldi_set_serial_clk(struct tidss_oldi *oldi, unsigned long rate)
 {
 	unsigned long new_rate;
 	int ret;
 
-	ret = clk_set_rate(oldi->s_clk, rate);
+	ret = clk_set_rate(oldi->serial, rate);
 	if (ret) {
 		dev_err(oldi->dev,
-			"OLDI%d: failed to set serial clk rate to %lu Hz\n",
+			"OLDI%u: failed to set serial clk rate to %lu Hz\n",
 			 oldi->oldi_instance, rate);
 		return ret;
 	}
 
-	new_rate = clk_get_rate(oldi->s_clk);
+	new_rate = clk_get_rate(oldi->serial);
 
 	if (dispc_pclk_diff(rate, new_rate) > 5)
 		dev_warn(oldi->dev,
-			 "OLDI%d Clock rate %lu differs over 5%% from requested %lu\n",
+			 "OLDI%u Clock rate %lu differs over 5%% from requested %lu\n",
 			 oldi->oldi_instance, new_rate, rate);
 
-	dev_dbg(oldi->dev, "OLDI%d: new rate %lu Hz (requested %lu Hz)\n",
-		oldi->oldi_instance, clk_get_rate(oldi->s_clk), rate);
+	dev_dbg(oldi->dev, "OLDI%u: new rate %lu Hz (requested %lu Hz)\n",
+		oldi->oldi_instance, clk_get_rate(oldi->serial), rate);
 
 	return 0;
 }
 
-static void tidss_oldi_tx_power(struct tidss_oldi *oldi, bool power)
+static void tidss_oldi_tx_power(struct tidss_oldi *oldi, bool enable)
 {
-	u32 val = 0, mask = 0;
-
-	if (WARN_ON(!oldi->io_ctrl))
-		return;
+	u32 mask;
 
 	/*
 	 * The power control bits are Active Low, and remain powered off by
@@ -123,55 +115,51 @@ static void tidss_oldi_tx_power(struct tidss_oldi *oldi, bool power)
 	 * the unrequired OLDI TXes remain powered off.
 	 */
 
-	if (power) {
-		val = 0;
+	if (enable) {
 		switch (oldi->link_type) {
 		case OLDI_MODE_SINGLE_LINK:
-			if (oldi->oldi_instance == OLDI(0))
-				mask = OLDI_PWRDN_TX(0) | OLDI_PWRDN_BG;
-			else if (oldi->oldi_instance == OLDI(1))
-				mask = OLDI_PWRDN_TX(1) | OLDI_PWRDN_BG;
-
+			/* Power-on only the required OLDI TX's IO*/
+			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) | OLDI_PWRDN_BG;
 			break;
 		case OLDI_MODE_CLONE_SINGLE_LINK:
 		case OLDI_MODE_DUAL_LINK:
-			mask = OLDI_PWRDN_TX(0) | OLDI_PWRDN_TX(1) | OLDI_PWRDN_BG;
+			/* Power-on both the OLDI TXes' IOs */
+			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) |
+			       OLDI_PWRDOWN_TX(oldi->companion_instance) |
+			       OLDI_PWRDN_BG;
 			break;
 		default:
-			if (oldi->oldi_instance == OLDI(0))
-				mask = OLDI_PWRDN_TX(0);
-			else if (oldi->oldi_instance == OLDI(1))
-				mask = OLDI_PWRDN_TX(1);
-
-			val = mask;
+			/*
+			 * This code execution should never reach here as any
+			 * OLDI with an unsupported OLDI mode would never get
+			 * registered in the first place.
+			 * However, power-off the OLDI in concern just in case.
+			 */
+			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance);
+			enable = false;
 			break;
 		}
 	} else {
 		switch (oldi->link_type) {
 		case OLDI_MODE_CLONE_SINGLE_LINK:
 		case OLDI_MODE_DUAL_LINK:
-			mask = OLDI_PWRDN_TX(0) | OLDI_PWRDN_TX(1) | OLDI_PWRDN_BG;
+			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) |
+			       OLDI_PWRDOWN_TX(oldi->companion_instance) |
+			       OLDI_PWRDN_BG;
 			break;
 		case OLDI_MODE_SINGLE_LINK:
 		default:
-			if (oldi->oldi_instance == OLDI(0))
-				mask = OLDI_PWRDN_TX(0);
-			else if (oldi->oldi_instance == OLDI(1))
-				mask = OLDI_PWRDN_TX(1);
-
+			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance);
 			break;
 		}
-		val = mask;
 	}
 
-	regmap_update_bits(oldi->io_ctrl, OLDI_PD_CTRL, mask, val);
+	regmap_update_bits(oldi->io_ctrl, OLDI_PD_CTRL, mask, enable ? 0 : mask);
 }
 
 static int tidss_oldi_config(struct tidss_oldi *oldi)
 {
 	const struct oldi_bus_format *bus_fmt = NULL;
-	u32 oldi_reset_bit = BIT(5);
-	int count = 0;
 	u32 oldi_cfg = 0;
 
 	bus_fmt = oldi->bus_format;
@@ -184,7 +172,7 @@ static int tidss_oldi_config(struct tidss_oldi *oldi)
 		oldi_cfg |= OLDI_MSB;
 	else if (bus_fmt->data_width != 18)
 		dev_warn(oldi->dev,
-			 "OLDI%d: DSS port width %d not supported\n",
+			 "OLDI%u: DSS port width %d not supported\n",
 			 oldi->oldi_instance, bus_fmt->data_width);
 
 	oldi_cfg |= OLDI_DEPOL;
@@ -211,25 +199,18 @@ static int tidss_oldi_config(struct tidss_oldi *oldi)
 		break;
 
 	default:
-		dev_err(oldi->dev, "OLDI%d: Unsupported mode.\n",
+		dev_err(oldi->dev, "OLDI%u: Unsupported mode.\n",
 			oldi->oldi_instance);
 		return -EINVAL;
 	}
 
 	tidss_configure_oldi(oldi->tidss, oldi->parent_vp, oldi_cfg);
-	while (!(oldi_reset_bit & tidss_get_status(oldi->tidss)) &&
-	       count < 10000)
-		count++;
-
-	if (!(oldi_reset_bit & tidss_get_status(oldi->tidss)))
-		dev_warn(oldi->dev, "%s: OLDI%d timeout waiting OLDI reset done\n",
-			 __func__, oldi->oldi_instance);
 
 	return 0;
 }
 
-static void tidss_oldi_atomic_early_enable(struct drm_bridge *bridge,
-					   struct drm_bridge_state *old_bridge_state)
+static void tidss_oldi_atomic_pre_enable(struct drm_bridge *bridge,
+					 struct drm_bridge_state *old_bridge_state)
 {
 	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
 	struct drm_atomic_state *state = old_bridge_state->base.state;
@@ -259,14 +240,14 @@ static void tidss_oldi_atomic_early_enable(struct drm_bridge *bridge,
 	/* Configure the OLDI params*/
 	tidss_oldi_config(oldi);
 
-	/* Enable the OLDI serial clock (7 times the pixel clock) */
-	oldi_set_serial_clk(oldi, mode->clock * 7 * 1000);
+	/* Set the OLDI serial clock (7 times the pixel clock) */
+	tidss_oldi_set_serial_clk(oldi, mode->clock * 7 * 1000);
 
 	/* Enable OLDI IO power */
 	tidss_oldi_tx_power(oldi, true);
 }
 
-static void tidss_oldi_atomic_late_disable(struct drm_bridge *bridge,
+static void tidss_oldi_atomic_post_disable(struct drm_bridge *bridge,
 					   struct drm_bridge_state *old_bridge_state)
 {
 	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
@@ -277,8 +258,8 @@ static void tidss_oldi_atomic_late_disable(struct drm_bridge *bridge,
 	/* Disable OLDI IO power */
 	tidss_oldi_tx_power(oldi, false);
 
-	/* Disable OLDI clock by setting IDLE Frequency */
-	oldi_set_serial_clk(oldi, OLDI_IDLE_CLK_HZ);
+	/* Set the OLDI serial clock to IDLE Frequency */
+	tidss_oldi_set_serial_clk(oldi, OLDI_IDLE_CLK_HZ);
 
 	/* Clear OLDI Config */
 	tidss_configure_oldi(oldi->tidss, oldi->parent_vp, 0);
@@ -318,34 +299,17 @@ static u32 *tidss_oldi_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 	return input_fmts;
 }
 
-static int tidss_oldi_atomic_check(struct drm_bridge *bridge,
-				   struct drm_bridge_state *bridge_state,
-				   struct drm_crtc_state *crtc_state,
-				   struct drm_connector_state *conn_state)
-{
-	/*
-	 * There might be flags negotiation supported in future but
-	 * set the bus flags in atomic_check statically for now.
-	 */
-
-	/* Not sure what this is required for, at the moment */
-	bridge_state->input_bus_cfg.flags = bridge->timings->input_bus_flags;
-
-	return 0;
-}
-
 static const struct drm_bridge_funcs tidss_oldi_bridge_funcs = {
 	.attach		= tidss_oldi_bridge_attach,
-	.atomic_check	= tidss_oldi_atomic_check,
-	.atomic_early_enable = tidss_oldi_atomic_early_enable,
-	.atomic_late_disable = tidss_oldi_atomic_late_disable,
+	.atomic_pre_enable = tidss_oldi_atomic_pre_enable,
+	.atomic_post_disable = tidss_oldi_atomic_post_disable,
 	.atomic_get_input_bus_fmts = tidss_oldi_atomic_get_input_bus_fmts,
 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
 	.atomic_reset = drm_atomic_helper_bridge_reset,
 };
 
-static int get_oldi_mode(struct device_node *oldi_tx)
+static int get_oldi_mode(struct device_node *oldi_tx, u32 *companion_instance)
 {
 	struct device_node *companion;
 	struct device_node *port0, *port1;
@@ -357,6 +321,13 @@ static int get_oldi_mode(struct device_node *oldi_tx)
 	 */
 	companion = of_parse_phandle(oldi_tx, "ti,companion-oldi", 0);
 	if (!companion) {
+		/*
+		 * OLDI TXes in Single Link mode do not have companion
+		 * OLDI TXes and, Secondary OLDI nodes don't need this
+		 * information.
+		 */
+		*companion_instance = -1;
+
 		if (of_property_read_bool(oldi_tx, "ti,secondary-oldi"))
 			return OLDI_MODE_SECONDARY;
 
@@ -366,6 +337,9 @@ static int get_oldi_mode(struct device_node *oldi_tx)
 		 */
 		return OLDI_MODE_SINGLE_LINK;
 	}
+
+	if (of_property_read_u32(companion, "reg", companion_instance))
+		return OLDI_MODE_UNSUPPORTED;
 
 	/*
 	 * We need to work out if the sink is expecting us to function in
@@ -400,10 +374,10 @@ static int get_oldi_mode(struct device_node *oldi_tx)
 	}
 }
 
-static u32 get_parent_dss_vp(struct device_node *oldi_tx, u32 *parent_vp)
+static int get_parent_dss_vp(struct device_node *oldi_tx, u32 *parent_vp)
 {
 	struct device_node *ep, *dss_port;
-	int ret = 0;
+	int ret;
 
 	ep = of_graph_get_endpoint_by_regs(oldi_tx, OLDI_INPUT_PORT, -1);
 	if (ep) {
@@ -444,15 +418,14 @@ int tidss_oldi_init(struct tidss_device *tidss)
 	struct tidss_oldi *oldi;
 	struct device_node *child;
 	struct drm_bridge *bridge;
-	struct drm_panel *panel;
-	u32 parent_vp, oldi_instance;
+	u32 parent_vp, oldi_instance, companion_instance;
 	enum tidss_oldi_link_type link_type = OLDI_MODE_UNSUPPORTED;
 	struct device_node *oldi_parent;
 	int ret = 0;
 
 	tidss->num_oldis = 0;
 
-	oldi_parent = of_get_child_by_name(tidss->dev->of_node, "oldi-txes");
+	oldi_parent = of_get_child_by_name(tidss->dev->of_node, "oldi-transmitters");
 	if (!oldi_parent)
 		/* Return gracefully */
 		return 0;
@@ -483,9 +456,9 @@ int tidss_oldi_init(struct tidss_device *tidss)
 		 * continue getting the OLDI sinks ahead and other OLDI
 		 * properties.
 		 */
-		ret = drm_of_find_panel_or_bridge(child, OLDI_OURPUT_PORT, -1,
-						  &panel, &bridge);
-		if (ret) {
+		bridge = devm_drm_of_get_bridge(tidss->dev, child,
+						OLDI_OURPUT_PORT, 0);
+		if (IS_ERR(bridge)) {
 			/*
 			 * Either there was no OLDI sink in the devicetree, or
 			 * the OLDI sink has not been added yet. In any case,
@@ -493,23 +466,16 @@ int tidss_oldi_init(struct tidss_device *tidss)
 			 * We don't want to have an OLDI node connected to DSS
 			 * but not to any sink.
 			 */
-			dev_err_probe(tidss->dev, ret, "no panel/bridge for OLDI%d.\n",
-				      oldi_instance);
+			ret = dev_err_probe(tidss->dev, PTR_ERR(bridge),
+					    "no panel/bridge for OLDI%u.\n",
+					    oldi_instance);
 			goto err_put_node;
 		}
 
-		if (panel) {
-			bridge = devm_drm_panel_bridge_add(tidss->dev, panel);
-			if (IS_ERR(bridge)) {
-				ret = PTR_ERR(bridge);
-				goto err_put_node;
-			}
-		}
-
-		link_type = get_oldi_mode(child);
+		link_type = get_oldi_mode(child, &companion_instance);
 		if (link_type == OLDI_MODE_UNSUPPORTED) {
 			ret = dev_err_probe(tidss->dev, -EINVAL,
-					    "OLDI%d: Unsupported OLDI connection.\n",
+					    "OLDI%u: Unsupported OLDI connection.\n",
 					    oldi_instance);
 			goto err_put_node;
 		} else if (link_type == OLDI_MODE_SECONDARY) {
@@ -530,25 +496,25 @@ int tidss_oldi_init(struct tidss_device *tidss)
 		}
 
 		oldi->parent_vp = parent_vp;
-		oldi->link_type = link_type;
 		oldi->oldi_instance = oldi_instance;
+		oldi->companion_instance = companion_instance;
+		oldi->link_type = link_type;
 		oldi->dev = tidss->dev;
 		oldi->next_bridge = bridge;
-		oldi->panel = panel;
 
 		oldi->io_ctrl = syscon_regmap_lookup_by_phandle(child,
 								"ti,oldi-io-ctrl");
 		if (IS_ERR(oldi->io_ctrl)) {
 			ret = dev_err_probe(oldi->dev, PTR_ERR(oldi->io_ctrl),
-					    "OLDI%d: syscon_regmap_lookup_by_phandle failed.\n",
+					    "OLDI%u: syscon_regmap_lookup_by_phandle failed.\n",
 					    oldi_instance);
 			goto err_put_node;
 		}
 
-		oldi->s_clk = of_clk_get_by_name(child, "s_clk");
-		if (IS_ERR(oldi->s_clk)) {
-			ret = dev_err_probe(oldi->dev, PTR_ERR(oldi->s_clk),
-					    "OLDI%d: Failed to get serial clock (s_clk).\n",
+		oldi->serial = of_clk_get_by_name(child, "serial");
+		if (IS_ERR(oldi->serial)) {
+			ret = dev_err_probe(oldi->dev, PTR_ERR(oldi->serial),
+					    "OLDI%u: Failed to get serial clock.\n",
 					    oldi_instance);
 			goto err_put_node;
 		}
@@ -564,6 +530,11 @@ int tidss_oldi_init(struct tidss_device *tidss)
 
 		drm_bridge_add(&oldi->bridge);
 	}
+
+	of_node_put(child);
+	of_node_put(oldi_parent);
+
+	return 0;
 
 err_put_node:
 	of_node_put(child);

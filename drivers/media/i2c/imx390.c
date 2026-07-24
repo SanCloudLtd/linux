@@ -87,7 +87,7 @@ static void imx390_init_formats(struct v4l2_subdev_state *state)
 {
 	struct v4l2_mbus_framefmt *format;
 
-	format = v4l2_subdev_state_get_stream_format(state, 0, 0);
+	format = v4l2_subdev_state_get_format(state, 0, 0);
 	format->code = imx390_mbus_formats[0];
 	format->width = imx390_framesizes[0].width;
 	format->height = imx390_framesizes[0].height;
@@ -126,8 +126,8 @@ static int _imx390_set_routing(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static int imx390_init_cfg(struct v4l2_subdev *sd,
-			   struct v4l2_subdev_state *state)
+static int imx390_init_state(struct v4l2_subdev *sd,
+			     struct v4l2_subdev_state *state)
 {
 	int ret;
 
@@ -213,8 +213,7 @@ static int imx390_set_fmt(struct v4l2_subdev *sd,
 	v4l2_subdev_lock_state(state);
 
 	/* Update the stored format and return it. */
-	format = v4l2_subdev_state_get_stream_format(state, fmt->pad,
-						     fmt->stream);
+	format = v4l2_subdev_state_get_format(state, fmt->pad, fmt->stream);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && imx390->streaming) {
 		ret = -EBUSY;
@@ -246,7 +245,7 @@ static int imx390_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 
 	state = v4l2_subdev_lock_and_get_active_state(sd);
 
-	fmt = v4l2_subdev_state_get_stream_format(state, 0, 0);
+	fmt = v4l2_subdev_state_get_format(state, 0, 0);
 	if (!fmt) {
 		ret = -EPIPE;
 		goto out;
@@ -439,6 +438,7 @@ static void imx390_power_off(struct imx390 *imx390)
 }
 
 static int imx390_get_frame_interval(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_state *sd_state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct imx390 *imx390 = to_imx390(sd);
@@ -449,6 +449,7 @@ static int imx390_get_frame_interval(struct v4l2_subdev *sd,
 }
 
 static int imx390_set_frame_interval(struct v4l2_subdev *sd,
+				     struct v4l2_subdev_state *sd_state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct imx390 *imx390 = to_imx390(sd);
@@ -590,24 +591,27 @@ err_unlock:
 }
 
 static const struct v4l2_subdev_video_ops imx390_subdev_video_ops = {
-	.g_frame_interval = imx390_get_frame_interval,
-	.s_frame_interval = imx390_set_frame_interval,
 	.s_stream = imx390_set_stream,
 };
 
 static const struct v4l2_subdev_pad_ops imx390_subdev_pad_ops = {
-	.init_cfg = imx390_init_cfg,
 	.enum_mbus_code	= imx390_enum_mbus_code,
 	.enum_frame_size = imx390_enum_frame_sizes,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = imx390_set_fmt,
 	.set_routing = imx390_set_routing,
 	.get_frame_desc	= imx390_get_frame_desc,
+	.get_frame_interval = imx390_get_frame_interval,
+	.set_frame_interval = imx390_set_frame_interval,
 };
 
 static const struct v4l2_subdev_ops imx390_subdev_ops = {
 	.video	= &imx390_subdev_video_ops,
 	.pad	= &imx390_subdev_pad_ops,
+};
+
+static const struct v4l2_subdev_internal_ops imx390_internal_ops = {
+	.init_state = imx390_init_state,
 };
 
 static const struct v4l2_ctrl_ops imx390_ctrl_ops = {
@@ -657,10 +661,10 @@ static int imx390_probe(struct i2c_client *client)
 	/* Initialize the subdev and its controls. */
 	sd = &imx390->subdev;
 	v4l2_i2c_subdev_init(sd, client, &imx390_subdev_ops);
+	sd->internal_ops = &imx390_internal_ops;
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
-		     V4L2_SUBDEV_FL_HAS_EVENTS |
-		     V4L2_SUBDEV_FL_STREAMS;
+		     V4L2_SUBDEV_FL_HAS_EVENTS;
 
 	/* Initialize the media entity. */
 	imx390->pad.flags = MEDIA_PAD_FL_SOURCE;
@@ -721,11 +725,10 @@ static int imx390_probe(struct i2c_client *client)
 	imx390->ctrl.v_flip = v4l2_ctrl_new_std(ctrl_hdr, &imx390_ctrl_ops,
 						V4L2_CID_VFLIP, 0, 1, 1, 0);
 
-	imx390->ctrl.pg_mode =
-		v4l2_ctrl_new_std_menu_items(ctrl_hdr, &imx390_ctrl_ops,
-					     V4L2_CID_TEST_PATTERN,
-					     ARRAY_SIZE(imx390_ctrl_pg_qmenu) - 1,
-					     0, 0, imx390_ctrl_pg_qmenu);
+	imx390->ctrl.pg_mode = v4l2_ctrl_new_std_menu_items(ctrl_hdr,
+					&imx390_ctrl_ops, V4L2_CID_TEST_PATTERN,
+					ARRAY_SIZE(imx390_ctrl_pg_qmenu) - 1,
+					0, 0, imx390_ctrl_pg_qmenu);
 
 	imx390->subdev.ctrl_handler = ctrl_hdr;
 	if (imx390->ctrl.handler.error) {

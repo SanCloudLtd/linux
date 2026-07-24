@@ -107,7 +107,7 @@ static const struct dmi_system_id processor_power_dmi_table[] = {
  */
 static void __cpuidle acpi_safe_halt(void)
 {
-	if (!need_resched()) {
+	if (!tif_need_resched()) {
 		raw_safe_halt();
 		raw_local_irq_disable();
 	}
@@ -267,6 +267,10 @@ static int acpi_processor_get_power_info_fadt(struct acpi_processor *pr)
 	snprintf(pr->power.states[ACPI_STATE_C3].desc,
 			 ACPI_CX_DESC_LEN, "ACPI P_LVL3 IOPORT 0x%x",
 			 pr->power.states[ACPI_STATE_C3].address);
+
+	if (!pr->power.states[ACPI_STATE_C2].address &&
+	    !pr->power.states[ACPI_STATE_C3].address)
+		return -ENODEV;
 
 	return 0;
 }

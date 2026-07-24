@@ -1,15 +1,16 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  *
  * EVM Board Schematics: https://www.ti.com/lit/zip/SPAC001
  */
 
-#include "k3-j784s4-evm.dts"
-#include "k3-j742s2.dtsi"
+/dts-v1/;
 
-/delete-node/ &c71_3_dma_memory_region;
-/delete-node/ &c71_3_memory_region;
+#include <dt-bindings/net/ti-dp83867.h>
+#include <dt-bindings/gpio/gpio.h>
+#include "k3-j742s2.dtsi"
+#include "k3-j784s4-j742s2-evm-common.dtsi"
 
 / {
 	model = "Texas Instruments J742S2 EVM";
@@ -19,5 +20,7 @@
 		/* 16G RAM */
 		reg = <0x00000000 0x80000000 0x00000000 0x80000000>,
 		      <0x00000008 0x80000000 0x00000003 0x80000000>;
+		device_type = "memory";
+		bootph-all;
 	};
 };

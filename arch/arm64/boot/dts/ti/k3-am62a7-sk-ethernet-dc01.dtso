@@ -1,9 +1,9 @@
-// SPDX-License-Identifier: GPL-2.0-only OR MIT
+// SPDX-License-Identifier: GPL-2.0
 /**
  * DT Overlay for second CPSW3G port in RGMII mode using SK-ETHERNET-DC01
  * Add-On Daughtercard with AM62A7-SK.
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024-2025 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;
@@ -20,8 +20,7 @@
 };
 
 &cpsw3g {
-	pinctrl-0 = <&main_rgmii1_pins_default>,
-		    <&main_rgmii2_pins_default>;
+	pinctrl-0 = <&main_rgmii1_pins_default>, <&main_rgmii2_pins_default>;
 };
 
 &cpsw_port2 {

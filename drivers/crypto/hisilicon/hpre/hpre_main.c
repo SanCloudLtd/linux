@@ -102,7 +102,8 @@
 #define HPRE_SHAPER_TYPE_RATE		640
 #define HPRE_VIA_MSI_DSM		1
 #define HPRE_SQE_MASK_OFFSET		8
-#define HPRE_SQE_MASK_LEN		24
+#define HPRE_SQE_MASK_LEN		44
+#define HPRE_CTX_Q_NUM_DEF		1
 
 #define HPRE_DFX_BASE		0x301000
 #define HPRE_DFX_COMMON1		0x301400
@@ -437,7 +438,7 @@ MODULE_PARM_DESC(vfs_num, "Number of VFs to enable(1-63), 0(default)");
 
 struct hisi_qp *hpre_create_qp(u8 type)
 {
-	int node = cpu_to_node(smp_processor_id());
+	int node = cpu_to_node(raw_smp_processor_id());
 	struct hisi_qp *qp = NULL;
 	int ret;
 
@@ -1065,41 +1066,40 @@ static int hpre_debugfs_init(struct hisi_qm *qm)
 	struct device *dev = &qm->pdev->dev;
 	int ret;
 
-	qm->debug.debug_root = debugfs_create_dir(dev_name(dev),
-						  hpre_debugfs_root);
-
-	qm->debug.sqe_mask_offset = HPRE_SQE_MASK_OFFSET;
-	qm->debug.sqe_mask_len = HPRE_SQE_MASK_LEN;
 	ret = hisi_qm_regs_debugfs_init(qm, hpre_diff_regs, ARRAY_SIZE(hpre_diff_regs));
 	if (ret) {
 		dev_warn(dev, "Failed to init HPRE diff regs!\n");
-		goto debugfs_remove;
+		return ret;
 	}
+
+	qm->debug.debug_root = debugfs_create_dir(dev_name(dev),
+							hpre_debugfs_root);
+	qm->debug.sqe_mask_offset = HPRE_SQE_MASK_OFFSET;
+	qm->debug.sqe_mask_len = HPRE_SQE_MASK_LEN;
 
 	hisi_qm_debug_init(qm);
 
 	if (qm->pdev->device == PCI_DEVICE_ID_HUAWEI_HPRE_PF) {
 		ret = hpre_ctrl_debug_init(qm);
 		if (ret)
-			goto failed_to_create;
+			goto debugfs_remove;
 	}
 
 	hpre_dfx_debug_init(qm);
 
 	return 0;
 
-failed_to_create:
-	hisi_qm_regs_debugfs_uninit(qm, ARRAY_SIZE(hpre_diff_regs));
 debugfs_remove:
 	debugfs_remove_recursive(qm->debug.debug_root);
+	hisi_qm_regs_debugfs_uninit(qm, ARRAY_SIZE(hpre_diff_regs));
 	return ret;
 }
 
 static void hpre_debugfs_exit(struct hisi_qm *qm)
 {
-	hisi_qm_regs_debugfs_uninit(qm, ARRAY_SIZE(hpre_diff_regs));
-
 	debugfs_remove_recursive(qm->debug.debug_root);
+
+	hisi_qm_regs_debugfs_uninit(qm, ARRAY_SIZE(hpre_diff_regs));
 }
 
 static int hpre_pre_store_cap_reg(struct hisi_qm *qm)
@@ -1280,11 +1280,15 @@ static u32 hpre_get_hw_err_status(struct hisi_qm *qm)
 
 static void hpre_clear_hw_err_status(struct hisi_qm *qm, u32 err_sts)
 {
-	u32 nfe;
-
 	writel(err_sts, qm->io_base + HPRE_HAC_SOURCE_INT);
-	nfe = hisi_qm_get_hw_info(qm, hpre_basic_info, HPRE_NFE_MASK_CAP, qm->cap_ver);
-	writel(nfe, qm->io_base + HPRE_RAS_NFE_ENB);
+}
+
+static void hpre_disable_error_report(struct hisi_qm *qm, u32 err_type)
+{
+	u32 nfe_mask;
+
+	nfe_mask = hisi_qm_get_hw_info(qm, hpre_basic_info, HPRE_NFE_MASK_CAP, qm->cap_ver);
+	writel(nfe_mask & (~err_type), qm->io_base + HPRE_RAS_NFE_ENB);
 }
 
 static void hpre_open_axi_master_ooo(struct hisi_qm *qm)
@@ -1296,6 +1300,27 @@ static void hpre_open_axi_master_ooo(struct hisi_qm *qm)
 	       qm->io_base + HPRE_AM_OOO_SHUTDOWN_ENB);
 	writel(value | HPRE_AM_OOO_SHUTDOWN_ENABLE,
 	       qm->io_base + HPRE_AM_OOO_SHUTDOWN_ENB);
+}
+
+static enum acc_err_result hpre_get_err_result(struct hisi_qm *qm)
+{
+	u32 err_status;
+
+	err_status = hpre_get_hw_err_status(qm);
+	if (err_status) {
+		if (err_status & qm->err_info.ecc_2bits_mask)
+			qm->err_status.is_dev_ecc_mbit = true;
+		hpre_log_hw_error(qm, err_status);
+
+		if (err_status & qm->err_info.dev_reset_mask) {
+			/* Disable the same error reporting until device is recovered. */
+			hpre_disable_error_report(qm, err_status);
+			return ACC_ERR_NEED_RESET;
+		}
+		hpre_clear_hw_err_status(qm, err_status);
+	}
+
+	return ACC_ERR_RECOVERED;
 }
 
 static void hpre_err_info_init(struct hisi_qm *qm)
@@ -1324,12 +1349,12 @@ static const struct hisi_qm_err_ini hpre_err_ini = {
 	.hw_err_disable		= hpre_hw_error_disable,
 	.get_dev_hw_err_status	= hpre_get_hw_err_status,
 	.clear_dev_hw_err_status = hpre_clear_hw_err_status,
-	.log_dev_hw_err		= hpre_log_hw_error,
 	.open_axi_master_ooo	= hpre_open_axi_master_ooo,
 	.open_sva_prefetch	= hpre_open_sva_prefetch,
 	.close_sva_prefetch	= hpre_close_sva_prefetch,
 	.show_last_dfx_regs	= hpre_show_last_dfx_regs,
 	.err_info_init		= hpre_err_info_init,
+	.get_err_result		= hpre_get_err_result,
 };
 
 static int hpre_pf_probe_init(struct hpre *hpre)
@@ -1414,10 +1439,11 @@ static int hpre_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		dev_warn(&pdev->dev, "init debugfs fail!\n");
 
-	ret = hisi_qm_alg_register(qm, &hpre_devices);
+	hisi_qm_add_list(qm, &hpre_devices);
+	ret = hisi_qm_alg_register(qm, &hpre_devices, HPRE_CTX_Q_NUM_DEF);
 	if (ret < 0) {
 		pci_err(pdev, "fail to register algs to crypto!\n");
-		goto err_with_qm_start;
+		goto err_qm_del_list;
 	}
 
 	if (qm->uacce) {
@@ -1439,9 +1465,10 @@ static int hpre_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	return 0;
 
 err_with_alg_register:
-	hisi_qm_alg_unregister(qm, &hpre_devices);
+	hisi_qm_alg_unregister(qm, &hpre_devices, HPRE_CTX_Q_NUM_DEF);
 
-err_with_qm_start:
+err_qm_del_list:
+	hisi_qm_del_list(qm, &hpre_devices);
 	hpre_debugfs_exit(qm);
 	hisi_qm_stop(qm, QM_NORMAL);
 
@@ -1460,7 +1487,8 @@ static void hpre_remove(struct pci_dev *pdev)
 
 	hisi_qm_pm_uninit(qm);
 	hisi_qm_wait_task_finish(qm, &hpre_devices);
-	hisi_qm_alg_unregister(qm, &hpre_devices);
+	hisi_qm_alg_unregister(qm, &hpre_devices, HPRE_CTX_Q_NUM_DEF);
+	hisi_qm_del_list(qm, &hpre_devices);
 	if (qm->fun_type == QM_HW_PF && qm->vfs_num)
 		hisi_qm_sriov_disable(pdev, true);
 

@@ -22,7 +22,7 @@
 #include <linux/regmap.h>
 #include <linux/units.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include "adxl355.h"
 
@@ -231,7 +231,7 @@ struct adxl355_data {
 		u8 transf_buf[3];
 		struct {
 			u8 buf[14];
-			s64 ts;
+			aligned_s64 ts;
 		} buffer;
 	} __aligned(IIO_DMA_MINALIGN);
 };

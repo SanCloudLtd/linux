@@ -10,11 +10,133 @@
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/soc/ti,sci_pm_domain.h>
 
-#include "k3-am62p5.dtsi"
+#include "k3-pinctrl.h"
 
 / {
 	model = "Texas Instruments K3 J722S SoC";
 	compatible = "ti,j722s";
+	interrupt-parent = <&gic500>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu-map {
+			cluster0: cluster0 {
+				core0 {
+					cpu = <&cpu0>;
+				};
+
+				core1 {
+					cpu = <&cpu1>;
+				};
+
+				core2 {
+					cpu = <&cpu2>;
+				};
+
+				core3 {
+					cpu = <&cpu3>;
+				};
+			};
+		};
+
+		cpu0: cpu@0 {
+			compatible = "arm,cortex-a53";
+			reg = <0x000>;
+			device_type = "cpu";
+			enable-method = "psci";
+			i-cache-size = <0x8000>;
+			i-cache-line-size = <64>;
+			i-cache-sets = <256>;
+			d-cache-size = <0x8000>;
+			d-cache-line-size = <64>;
+			d-cache-sets = <128>;
+			next-level-cache = <&l2_0>;
+			clocks = <&k3_clks 135 0>;
+		};
+
+		cpu1: cpu@1 {
+			compatible = "arm,cortex-a53";
+			reg = <0x001>;
+			device_type = "cpu";
+			enable-method = "psci";
+			i-cache-size = <0x8000>;
+			i-cache-line-size = <64>;
+			i-cache-sets = <256>;
+			d-cache-size = <0x8000>;
+			d-cache-line-size = <64>;
+			d-cache-sets = <128>;
+			next-level-cache = <&l2_0>;
+			clocks = <&k3_clks 136 0>;
+		};
+
+		cpu2: cpu@2 {
+			compatible = "arm,cortex-a53";
+			reg = <0x002>;
+			device_type = "cpu";
+			enable-method = "psci";
+			i-cache-size = <0x8000>;
+			i-cache-line-size = <64>;
+			i-cache-sets = <256>;
+			d-cache-size = <0x8000>;
+			d-cache-line-size = <64>;
+			d-cache-sets = <128>;
+			next-level-cache = <&l2_0>;
+			clocks = <&k3_clks 137 0>;
+		};
+
+		cpu3: cpu@3 {
+			compatible = "arm,cortex-a53";
+			reg = <0x003>;
+			device_type = "cpu";
+			enable-method = "psci";
+			i-cache-size = <0x8000>;
+			i-cache-line-size = <64>;
+			i-cache-sets = <256>;
+			d-cache-size = <0x8000>;
+			d-cache-line-size = <64>;
+			d-cache-sets = <128>;
+			next-level-cache = <&l2_0>;
+			clocks = <&k3_clks 138 0>;
+		};
+	};
+
+	l2_0: l2-cache0 {
+		compatible = "cache";
+		cache-unified;
+		cache-level = <2>;
+		cache-size = <0x80000>;
+		cache-line-size = <64>;
+		cache-sets = <512>;
+	};
+
+	firmware {
+		optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+		};
+
+		psci: psci {
+			compatible = "arm,psci-1.0";
+			method = "smc";
+		};
+	};
+
+	a53_timer0: timer-cl0-cpu0 {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>, /* cntpsirq */
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>, /* cntpnsirq */
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>, /* cntvirq */
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>; /* cnthpirq */
+	};
+
+	pmu: pmu {
+		compatible = "arm,cortex-a53-pmu";
+		interrupts = <GIC_PPI 7 IRQ_TYPE_LEVEL_HIGH>;
+	};
 
 	cbass_main: bus@f0000 {
 		compatible = "simple-bus";
@@ -75,80 +197,55 @@
 			 <0x00 0x43000000 0x00 0x43000000 0x00 0x00020000>,
 			 <0x00 0x78000000 0x00 0x78000000 0x00 0x00008000>,
 			 <0x00 0x78100000 0x00 0x78100000 0x00 0x00008000>;
-	};
-};
 
-/* Main domain overrides */
+		cbass_mcu: bus@4000000 {
+			compatible = "simple-bus";
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges = <0x00 0x04000000 0x00 0x04000000 0x00 0x01ff1400>, /* Peripheral window */
+				 <0x00 0x79000000 0x00 0x79000000 0x00 0x00008000>, /* MCU R5 ATCM */
+				 <0x00 0x79020000 0x00 0x79020000 0x00 0x00008000>, /* MCU R5 BTCM */
+				 <0x00 0x79100000 0x00 0x79100000 0x00 0x00040000>, /* MCU IRAM0 */
+				 <0x00 0x79140000 0x00 0x79140000 0x00 0x00040000>; /* MCU IRAM1 */
+			bootph-all;
+		};
 
-&inta_main_dmss {
-	ti,interrupt-ranges = <7 71 21>;
-};
-
-&inta_main_dmss_csi {
-	ti,interrupt-ranges = <0 237 8>;
-};
-
-&main_bcdma_csi {
-	compatible = "ti,j722s-dmss-bcdma-csi";
-	reg = <0x00 0x4e230000 0x00 0x100>,
-	      <0x00 0x4e180000 0x00 0x20000>,
-	      <0x00 0x4e300000 0x00 0x10000>,
-	      <0x00 0x4e100000 0x00 0x80000>;
-	reg-names = "gcfg", "rchanrt", "tchanrt", "ringrt";
-	msi-parent = <&inta_main_dmss_csi>;
-	#dma-cells = <3>;
-	ti,sci = <&dmsc>;
-	ti,sci-dev-id = <199>;
-	ti,sci-rm-range-rchan = <0x21>;
-	ti,sci-rm-range-tchan = <0x22>;
-	power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
-};
-
-&oc_sram {
-	reg = <0x00 0x70000000 0x00 0x40000>;
-	ranges = <0x00 0x00 0x70000000 0x40000>;
-};
-
-&main_pmx0 {
-	pinctrl-single,gpio-range =
-		<&main_pmx0_range 0 32 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
-		<&main_pmx0_range 33 55 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
-		<&main_pmx0_range 101 25 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
-		<&main_pmx0_range 137 5 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
-		<&main_pmx0_range 143 3 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
-		<&main_pmx0_range 149 2 (PIN_INPUT | PIN_GPIO_MUX_MODE)>;
-};
-
-&main_gpio0 {
-	gpio-ranges = <&main_pmx0 0 0 32>,
-		      <&main_pmx0 32 33 38>,
-		      <&main_pmx0 70 72 17>;
-	ti,ngpio = <87>;
-};
-
-&main_gpio1 {
-	gpio-ranges = <&main_pmx0 7 101 25>,
-		      <&main_pmx0 42 137 5>,
-		      <&main_pmx0 47 143 3>,
-		      <&main_pmx0 50 149 2>;
-	ti,ngpio = <73>;
-};
-
-&cbass_main {
-	e5010: e5010@fd20000 {
-		compatible = "img,e5010-jpeg-enc";
-		reg = <0x00 0xfd20000 0x00 0x100>,
-		      <0x00 0xfd20200 0x00 0x200>;
-		reg-names = "core", "mmu";
-		clocks = <&k3_clks 201 0>;
-		clock-names = "core_clk";
-		power-domains = <&k3_pds 201 TI_SCI_PD_EXCLUSIVE>;
-		interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
+		cbass_wakeup: bus@b00000 {
+			compatible = "simple-bus";
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges = <0x00 0x00b00000 0x00 0x00b00000 0x00 0x00002400>, /* VTM */
+				 <0x00 0x2b000000 0x00 0x2b000000 0x00 0x00300400>, /* Peripheral Window */
+				 <0x00 0x43000000 0x00 0x43000000 0x00 0x00020000>, /* WKUP CTRL MMR */
+				 <0x00 0x78000000 0x00 0x78000000 0x00 0x00008000>, /* DM R5 ATCM*/
+				 <0x00 0x78100000 0x00 0x78100000 0x00 0x00008000>; /* DM R5 BTCM*/
+			bootph-all;
+		};
 	};
 
+	dss0_vp1_clk: clock-divider-oldi-dss0 {
+		compatible = "fixed-factor-clock";
+		clocks = <&k3_clks 186 0>;
+		#clock-cells = <0>;
+		clock-div = <7>;
+		clock-mult = <1>;
+	};
+
+	dss1_vp1_clk: clock-divider-oldi-dss1 {
+		compatible = "fixed-factor-clock";
+		clocks = <&k3_clks 232 0>;
+		#clock-cells = <0>;
+		clock-div = <7>;
+		clock-mult = <1>;
+	};
+
+	#include "k3-am62p-j722s-common-thermal.dtsi"
 };
 
-/* Include bus peripherals that are additionally
- * present in J722S
- */
- #include "k3-j722s-main.dtsi"
+/* Include peripherals shared with AM62P */
+#include "k3-am62p-j722s-common-main.dtsi"
+#include "k3-am62p-j722s-common-mcu.dtsi"
+#include "k3-am62p-j722s-common-wakeup.dtsi"
+
+/* Include J722S specific peripherals */
+#include "k3-j722s-main.dtsi"

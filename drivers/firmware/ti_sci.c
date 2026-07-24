@@ -2,7 +2,7 @@
 /*
  * Texas Instruments System Control Interface Protocol Driver
  *
- * Copyright (C) 2015-2022 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2015-2025 Texas Instruments Incorporated - https://www.ti.com/
  *	Nishanth Menon
  */
 
@@ -11,7 +11,6 @@
 #include <linux/bitmap.h>
 #include <linux/cpu.h>
 #include <linux/debugfs.h>
-#include <linux/dma-mapping.h>
 #include <linux/export.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
@@ -32,9 +31,6 @@
 #include <linux/reboot.h>
 
 #include "ti_sci.h"
-
-/* Low power mode memory context size */
-#define LPM_CTX_MEM_SIZE 0x80000
 
 /* List of all TI SCI devices active in system */
 static LIST_HEAD(ti_sci_list);
@@ -106,8 +102,6 @@ struct ti_sci_desc {
  * @minfo:	Message info
  * @node:	list head
  * @host_id:	Host ID
- * @ctx_mem_addr: Low power context memory phys address
- * @ctx_mem_buf: Low power context memory buffer
  * @fw_caps:	FW/SoC low power capabilities
  * @users:	Number of users of this instance
  */
@@ -125,14 +119,9 @@ struct ti_sci_info {
 	struct ti_sci_xfers_info minfo;
 	struct list_head node;
 	u8 host_id;
-	dma_addr_t ctx_mem_addr;
-	void *ctx_mem_buf;
 	u64 fw_caps;
 	/* protected by ti_sci_list_mutex */
 	int users;
-
-	int nr_wakeup_sources;
-	struct device_node **wakeup_source_nodes;
 };
 
 #define cl_to_ti_sci_info(c)	container_of(c, struct ti_sci_info, cl)
@@ -398,28 +387,6 @@ static void ti_sci_put_one_xfer(struct ti_sci_xfers_info *minfo,
 }
 
 /**
- * ti_sci_do_send() - Do one send, do not expect a response
- * @info:	Pointer to SCI entity information
- * @xfer:	Transfer to initiate
- *
- * Return: If send error, return corresponding error, else
- *	   if all goes well, return 0.
- */
-static inline int ti_sci_do_send(struct ti_sci_info *info,
-				 struct ti_sci_xfer *xfer)
-{
-	int ret;
-
-	ret = mbox_send_message(info->chan_tx, &xfer->tx_message);
-	if (ret < 0)
-		return ret;
-
-	mbox_client_txdone(info->chan_tx, ret);
-
-	return 0;
-}
-
-/**
  * ti_sci_do_xfer() - Do one transfer
  * @info:	Pointer to SCI entity information
  * @xfer:	Transfer to initiate and wait for response
@@ -431,16 +398,22 @@ static inline int ti_sci_do_send(struct ti_sci_info *info,
 static inline int ti_sci_do_xfer(struct ti_sci_info *info,
 				 struct ti_sci_xfer *xfer)
 {
+	struct ti_sci_msg_hdr *hdr = (struct ti_sci_msg_hdr *)xfer->tx_message.buf;
 	int ret;
 	int timeout;
 	struct device *dev = info->dev;
 	bool done_state = true;
+	bool response_expected = !!(hdr->flags & (TI_SCI_FLAG_REQ_ACK_ON_PROCESSED |
+						  TI_SCI_FLAG_REQ_ACK_ON_RECEIVED));
 
 	ret = mbox_send_message(info->chan_tx, &xfer->tx_message);
 	if (ret < 0)
 		return ret;
 
 	ret = 0;
+
+	if (!response_expected)
+		goto no_response;
 
 	if (system_state <= SYSTEM_RUNNING) {
 		/* And we wait for the response. */
@@ -462,6 +435,7 @@ static inline int ti_sci_do_xfer(struct ti_sci_info *info,
 		dev_err(dev, "Mbox timedout in resp(caller: %pS)\n",
 			(void *)_RET_IP_);
 
+no_response:
 	/*
 	 * NOTE: we might prefer not to need the mailbox ticker to manage the
 	 * transfer queueing since the protocol layer queues things by itself.
@@ -1741,7 +1715,10 @@ static int ti_sci_cmd_prepare_sleep(const struct ti_sci_handle *handle, u8 mode,
 
 	resp = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
 
-	ret = ti_sci_is_response_ack(resp) ? 0 : -ENODEV;
+	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to prepare sleep\n");
+		ret = -ENODEV;
+	}
 
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
@@ -1750,19 +1727,22 @@ fail:
 }
 
 /**
- * ti_sci_msg_cmd_lpm_wake_reason() - Get the wakeup source from LPM
+ * ti_sci_msg_cmd_query_fw_caps() - Get the FW/SoC capabilities
  * @handle:		Pointer to TI SCI handle
- * @source:		The wakeup source that woke the SoC from LPM
- * @timestamp:		Timestamp of the wakeup event
+ * @fw_caps:		Each bit in fw_caps indicating one FW/SOC capability
+ *
+ * Check if the firmware supports any optional low power modes.
+ * Old revisions of TIFS (< 08.04) will NACK the request which results in
+ * -ENODEV being returned.
  *
  * Return: 0 if all went well, else returns appropriate error value.
  */
-static int ti_sci_msg_cmd_lpm_wake_reason(const struct ti_sci_handle *handle,
-					  u32 *source, u64 *timestamp)
+static int ti_sci_msg_cmd_query_fw_caps(const struct ti_sci_handle *handle,
+					u64 *fw_caps)
 {
 	struct ti_sci_info *info;
 	struct ti_sci_xfer *xfer;
-	struct ti_sci_msg_resp_lpm_wake_reason *resp;
+	struct ti_sci_msg_resp_query_fw_caps *resp;
 	struct device *dev;
 	int ret = 0;
 
@@ -1774,7 +1754,7 @@ static int ti_sci_msg_cmd_lpm_wake_reason(const struct ti_sci_handle *handle,
 	info = handle_to_ti_sci_info(handle);
 	dev = info->dev;
 
-	xfer = ti_sci_get_one_xfer(info, TI_SCI_MSG_LPM_WAKE_REASON,
+	xfer = ti_sci_get_one_xfer(info, TI_SCI_MSG_QUERY_FW_CAPS,
 				   TI_SCI_FLAG_REQ_ACK_ON_PROCESSED,
 				   sizeof(struct ti_sci_msg_hdr),
 				   sizeof(*resp));
@@ -1790,17 +1770,16 @@ static int ti_sci_msg_cmd_lpm_wake_reason(const struct ti_sci_handle *handle,
 		goto fail;
 	}
 
-	resp = (struct ti_sci_msg_resp_lpm_wake_reason *)xfer->xfer_buf;
+	resp = (struct ti_sci_msg_resp_query_fw_caps *)xfer->xfer_buf;
 
 	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to get capabilities\n");
 		ret = -ENODEV;
 		goto fail;
 	}
 
-	if (source)
-		*source = resp->wake_source;
-	if (timestamp)
-		*timestamp = resp->wake_timestamp;
+	if (fw_caps)
+		*fw_caps = resp->fw_caps;
 
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
@@ -1852,7 +1831,10 @@ static int ti_sci_cmd_set_io_isolation(const struct ti_sci_handle *handle,
 
 	resp = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
 
-	ret = ti_sci_is_response_ack(resp) ? 0 : -ENODEV;
+	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to set IO isolation\n");
+		ret = -ENODEV;
+	}
 
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
@@ -1860,32 +1842,22 @@ fail:
 	return ret;
 }
 
-/*
- * This is the list of SoCs not affected by SYSFW Bug causing the fw_caps
- * to return garbage values.
- * As and when new SoC's start supporting low power modes, this struct can
- * be updated with those new SOC family entries.
- */
-static const struct soc_device_attribute has_lpm[] = {
-	{ .family = "AM62X" },
-	{ .family = "AM62AX" },
-	{ .family = "AM62PX" },
-	{ /* sentinel */ }
-};
-
 /**
- * ti_sci_msg_cmd_query_fw_caps() - Get the FW/SoC capabilities
+ * ti_sci_msg_cmd_lpm_wake_reason() - Get the wakeup source from LPM
  * @handle:		Pointer to TI SCI handle
- * @fw_caps:		Each bit in fw_caps indicating one FW/SOC capability
+ * @source:		The wakeup source that woke the SoC from LPM
+ * @timestamp:		Timestamp of the wakeup event
+ * @pin:		The pin that has triggered wake up
+ * @mode:		The last entered low power mode
  *
  * Return: 0 if all went well, else returns appropriate error value.
  */
-static int ti_sci_msg_cmd_query_fw_caps(const struct ti_sci_handle *handle,
-					u64 *fw_caps)
+static int ti_sci_msg_cmd_lpm_wake_reason(const struct ti_sci_handle *handle,
+					  u32 *source, u64 *timestamp, u8 *pin, u8 *mode)
 {
 	struct ti_sci_info *info;
 	struct ti_sci_xfer *xfer;
-	struct ti_sci_msg_resp_query_fw_caps *resp;
+	struct ti_sci_msg_resp_lpm_wake_reason *resp;
 	struct device *dev;
 	int ret = 0;
 
@@ -1897,7 +1869,7 @@ static int ti_sci_msg_cmd_query_fw_caps(const struct ti_sci_handle *handle,
 	info = handle_to_ti_sci_info(handle);
 	dev = info->dev;
 
-	xfer = ti_sci_get_one_xfer(info, TI_SCI_MSG_QUERY_FW_CAPS,
+	xfer = ti_sci_get_one_xfer(info, TI_SCI_MSG_LPM_WAKE_REASON,
 				   TI_SCI_FLAG_REQ_ACK_ON_PROCESSED,
 				   sizeof(struct ti_sci_msg_hdr),
 				   sizeof(*resp));
@@ -1913,28 +1885,22 @@ static int ti_sci_msg_cmd_query_fw_caps(const struct ti_sci_handle *handle,
 		goto fail;
 	}
 
-	resp = (struct ti_sci_msg_resp_query_fw_caps *)xfer->xfer_buf;
+	resp = (struct ti_sci_msg_resp_lpm_wake_reason *)xfer->xfer_buf;
 
 	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to get wake reason\n");
 		ret = -ENODEV;
 		goto fail;
 	}
 
-	/*
-	 * fw_caps 1st bit is used to check Generic capability. Other than
-	 * that the 1:4 bits are used for various LPM capabilities.
-	 * The API is buggy on SYSFW 9.00 and below, on some devices.
-	 * Hence, to avoid any sort of bugs arising due to garbage values
-	 * Let's allow the fw_caps to be set to whatever the firmware
-	 * says only on devices listed under has_lpm. These devices should
-	 * have lpm features tested and implemented in the firmware
-	 * and only then should they be added to has_lpm struct.
-	 * Otherwise, set the value to 1 that is the default.
-	 */
-	if (fw_caps && soc_device_match(has_lpm))
-		*fw_caps = resp->fw_caps;
-	else
-		*fw_caps = resp->fw_caps & MSG_FLAG_CAPS_GENERIC;
+	if (source)
+		*source = resp->wake_source;
+	if (timestamp)
+		*timestamp = resp->wake_timestamp;
+	if (pin)
+		*pin = resp->wake_pin;
+	if (mode)
+		*mode = resp->mode;
 
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
@@ -1988,9 +1954,11 @@ static int ti_sci_cmd_set_device_constraint(const struct ti_sci_handle *handle,
 
 	resp = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
 
-	ret = ti_sci_is_response_ack(resp) ? 0 : -ENODEV;
+	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to set device constraint\n");
+		ret = -ENODEV;
+	}
 
-	dev_info(dev, "%s: device: %d: state: %d: ret %d\n", __func__, id, state, ret);
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
 
@@ -2043,9 +2011,63 @@ static int ti_sci_cmd_set_latency_constraint(const struct ti_sci_handle *handle,
 
 	resp = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
 
-	ret = ti_sci_is_response_ack(resp) ? 0 : -ENODEV;
+	if (!ti_sci_is_response_ack(resp)) {
+		dev_err(dev, "Failed to set device constraint\n");
+		ret = -ENODEV;
+	}
 
-	dev_info(dev, "%s: latency: %d: state: %d: ret %d\n", __func__, latency, state, ret);
+fail:
+	ti_sci_put_one_xfer(&info->minfo, xfer);
+
+	return ret;
+}
+
+/**
+ * ti_sci_cmd_lpm_abort() - Abort entry to LPM
+ * @handle:     pointer to TI SCI handle
+ *
+ * Return: 0 if all went well, else returns appropriate error value.
+ */
+static int ti_sci_cmd_lpm_abort(const struct ti_sci_handle *handle)
+{
+	struct ti_sci_info *info;
+	struct ti_sci_msg_hdr *req;
+	struct ti_sci_msg_hdr *resp;
+	struct ti_sci_xfer *xfer;
+	struct device *dev;
+	int ret = 0;
+
+	if (IS_ERR(handle))
+		return PTR_ERR(handle);
+	if (!handle)
+		return -EINVAL;
+
+	info = handle_to_ti_sci_info(handle);
+	dev = info->dev;
+
+	xfer = ti_sci_get_one_xfer(info, TI_SCI_MSG_LPM_ABORT,
+				   TI_SCI_FLAG_REQ_ACK_ON_PROCESSED,
+				   sizeof(*req), sizeof(*resp));
+	if (IS_ERR(xfer)) {
+		ret = PTR_ERR(xfer);
+		dev_err(dev, "Message alloc failed(%d)\n", ret);
+		return ret;
+	}
+	req = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
+
+	ret = ti_sci_do_xfer(info, xfer);
+	if (ret) {
+		dev_err(dev, "Mbox send fail %d\n", ret);
+		goto fail;
+	}
+
+	resp = (struct ti_sci_msg_hdr *)xfer->xfer_buf;
+
+	if (!ti_sci_is_response_ack(resp))
+		ret = -ENODEV;
+	else
+		ret = 0;
+
 fail:
 	ti_sci_put_one_xfer(&info->minfo, xfer);
 
@@ -3234,9 +3256,13 @@ static void ti_sci_setup_ops(struct ti_sci_info *info)
 	cops->set_freq = ti_sci_cmd_clk_set_freq;
 	cops->get_freq = ti_sci_cmd_clk_get_freq;
 
-	pmops->prepare_sleep = ti_sci_cmd_prepare_sleep;
-	pmops->lpm_wake_reason = ti_sci_msg_cmd_lpm_wake_reason;
-	pmops->set_io_isolation = ti_sci_cmd_set_io_isolation;
+	if (info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED) {
+		pr_debug("detected DM managed LPM in fw_caps\n");
+		pmops->lpm_wake_reason = ti_sci_msg_cmd_lpm_wake_reason;
+		pmops->set_device_constraint = ti_sci_cmd_set_device_constraint;
+		pmops->set_latency_constraint = ti_sci_cmd_set_latency_constraint;
+		pmops->lpm_abort = ti_sci_cmd_lpm_abort;
+	}
 
 	rm_core_ops->get_range = ti_sci_cmd_get_resource_range;
 	rm_core_ops->get_range_from_shost =
@@ -3670,23 +3696,24 @@ static int tisci_reboot_handler(struct sys_off_data *data)
 
 static int ti_sci_prepare_system_suspend(struct ti_sci_info *info)
 {
-#if IS_ENABLED(CONFIG_SUSPEND)
-	u8 mode;
-
-	/* Map and validate the target Linux suspend state to TISCI LPM. */
+	/*
+	 * Map and validate the target Linux suspend state to TISCI LPM.
+	 * Default is to let Device Manager select the low power mode.
+	 */
 	switch (pm_suspend_target_state) {
 	case PM_SUSPEND_MEM:
-		/* Default is to let LPM be DM managed */
-		mode = TISCI_MSG_VALUE_SLEEP_MODE_DM_MANAGED;
-
-		/* DM Managed is not supported by the firmware. */
-		if (!(info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED)) {
-			/* Check if Deep Sleep is supported by the firmware. */
-			if ((info->fw_caps & MSG_FLAG_CAPS_LPM_DEEP_SLEEP))
-				mode = TISCI_MSG_VALUE_SLEEP_MODE_DEEP_SLEEP;
-			else
-				/* S2MEM is not supported by the firmware. */
-				return 0;
+		if (info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED) {
+			/*
+			 * For the DM_MANAGED mode the context is reserved for
+			 * internal use and can be 0
+			 */
+			return ti_sci_cmd_prepare_sleep(&info->handle,
+							TISCI_MSG_VALUE_SLEEP_MODE_DM_MANAGED,
+							0, 0, 0);
+		} else {
+			/* DM Managed is not supported by the firmware. */
+			dev_err(info->dev, "Suspend to memory is not supported by the firmware\n");
+			return -EOPNOTSUPP;
 		}
 		break;
 	default:
@@ -3696,20 +3723,14 @@ static int ti_sci_prepare_system_suspend(struct ti_sci_info *info)
 		 */
 		return 0;
 	}
-
-	return ti_sci_cmd_prepare_sleep(&info->handle, mode,
-					(u32)(info->ctx_mem_addr & 0xffffffff),
-					(u32)((u64)info->ctx_mem_addr >> 32), 0);
-#else
-	return 0;
-#endif
 }
 
-static int ti_sci_suspend(struct device *dev)
+static int __maybe_unused ti_sci_suspend(struct device *dev)
 {
 	struct ti_sci_info *info = dev_get_drvdata(dev);
 	struct device *cpu_dev, *cpu_dev_max = NULL;
 	s32 val, cpu_lat = 0;
+	u16 cpu_lat_ms;
 	int i, ret;
 
 	if (info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED) {
@@ -3722,43 +3743,56 @@ static int ti_sci_suspend(struct device *dev)
 			}
 		}
 		if (cpu_dev_max) {
-			dev_dbg(cpu_dev_max, "%s: sending max CPU latency=%u\n", __func__, cpu_lat);
+			/* PM QoS latency unit is usecs, TI SCI uses msecs */
+			cpu_lat_ms = cpu_lat / USEC_PER_MSEC;
+			dev_dbg(cpu_dev_max, "%s: sending max CPU latency=%u ms\n", __func__,
+				cpu_lat_ms);
 			ret = ti_sci_cmd_set_latency_constraint(&info->handle,
-								cpu_lat, TISCI_MSG_CONSTRAINT_SET);
+								cpu_lat_ms,
+								TISCI_MSG_CONSTRAINT_SET);
 			if (ret)
 				return ret;
 		}
 	}
 
 	ret = ti_sci_prepare_system_suspend(info);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "%s: Failed to prepare sleep. Abort entering low power mode.\n",
+				__func__);
+		if (ti_sci_cmd_lpm_abort(&info->handle))
+			dev_err(dev, "%s: Failed to abort.\n", __func__);
 		return ret;
-
+	}
 	return 0;
 }
 
-static int ti_sci_suspend_noirq(struct device *dev)
+static int __maybe_unused ti_sci_suspend_noirq(struct device *dev)
 {
 	struct ti_sci_info *info = dev_get_drvdata(dev);
 	int ret = 0;
 
 	ret = ti_sci_cmd_set_io_isolation(&info->handle, TISCI_MSG_VALUE_IO_ENABLE);
-	if (ret)
+	if (ret) {
+		dev_err(dev, "%s: Failed to suspend. Abort entering low power mode.\n", __func__);
+		if (ti_sci_cmd_lpm_abort(&info->handle))
+			dev_err(dev, "%s: Failed to abort.\n", __func__);
 		return ret;
-	dev_dbg(dev, "%s: set isolation: %d\n", __func__, ret);
+	}
 
 	return 0;
 }
 
 extern int davinci_gpio_resume_all_devices(void);
 
-static int ti_sci_resume(struct device *dev)
+static int __maybe_unused ti_sci_resume_noirq(struct device *dev)
 {
 	struct ti_sci_info *info = dev_get_drvdata(dev);
-	u32 source;
-	u64 time;
 	int ret = 0;
 	int err;
+	u32 source;
+	u64 time;
+	u8 pin;
+	u8 mode;
 
 	/* Resume GPIO before disabling isolation to maintain GPIO state */
 	err = davinci_gpio_resume_all_devices();
@@ -3768,47 +3802,28 @@ static int ti_sci_resume(struct device *dev)
 	ret = ti_sci_cmd_set_io_isolation(&info->handle, TISCI_MSG_VALUE_IO_DISABLE);
 	if (ret)
 		return ret;
-	dev_dbg(dev, "%s: disable isolation: %d\n", __func__, ret);
 
-	ti_sci_msg_cmd_lpm_wake_reason(&info->handle, &source, &time);
-	dev_info(dev, "%s: wakeup source: 0x%X\n", __func__, source);
+	ret = ti_sci_msg_cmd_lpm_wake_reason(&info->handle, &source, &time, &pin, &mode);
+	/* Do not fail to resume on error as the wake reason is not critical */
+	if (!ret)
+		dev_info(dev, "ti_sci: wakeup source:0x%x, pin:0x%x, mode:0x%x\n",
+			 source, pin, mode);
 
 	return 0;
 }
 
 static const struct dev_pm_ops ti_sci_pm_ops = {
+#ifdef CONFIG_PM_SLEEP
 	.suspend = ti_sci_suspend,
 	.suspend_noirq = ti_sci_suspend_noirq,
-	.resume_noirq = ti_sci_resume,
+	.resume_noirq = ti_sci_resume_noirq,
+#endif
 };
 
-static int ti_sci_init_suspend(struct platform_device *pdev,
-			       struct ti_sci_info *info)
-{
-	struct device *dev = &pdev->dev;
-	struct ti_sci_ops *ops = &info->handle.ops;
-
-	dma_set_mask_and_coherent(dev, DMA_BIT_MASK(32));
-	info->ctx_mem_buf = dma_alloc_attrs(info->dev, LPM_CTX_MEM_SIZE,
-					    &info->ctx_mem_addr,
-					    GFP_KERNEL,
-					    DMA_ATTR_NO_KERNEL_MAPPING |
-					    DMA_ATTR_FORCE_CONTIGUOUS);
-	if (!info->ctx_mem_buf) {
-		dev_err(info->dev, "Failed to allocate LPM context memory\n");
-		return -ENOMEM;
-	}
-
-	if (info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED) {
-		pr_debug("detected DM managed LPM in fw_caps\n");
-		ops->pm_ops.set_device_constraint = ti_sci_cmd_set_device_constraint;
-		ops->pm_ops.set_latency_constraint = ti_sci_cmd_set_latency_constraint;
-	}
-
-	return 0;
-}
-
-/* Does not return if successful */
+/*
+ * Enter Partial-IO, which disables everything including DDR with only a small
+ * logic being active for wakeup.
+ */
 static int tisci_enter_partial_io(struct ti_sci_info *info)
 {
 	struct ti_sci_msg_req_prepare_sleep *req;
@@ -3831,7 +3846,9 @@ static int tisci_enter_partial_io(struct ti_sci_info *info)
 	req->ctx_hi = 0;
 	req->debug_flags = 0;
 
-	ret = ti_sci_do_send(info, xfer);
+	dev_info(dev, "Entering Partial-IO because a powered wakeup-enabled device was found.\n");
+
+	ret = ti_sci_do_xfer(info, xfer);
 	if (ret) {
 		dev_err(dev, "Mbox send fail %d\n", ret);
 		goto fail;
@@ -3843,40 +3860,56 @@ fail:
 	return ret;
 }
 
+static bool tisci_canuart_wakeup_enabled(struct ti_sci_info *info)
+{
+	struct device_node *wakeup_node = NULL;
+
+	for (wakeup_node = of_find_node_with_property(NULL, "wakeup-source");
+	     wakeup_node;
+	     wakeup_node = of_find_node_with_property(wakeup_node, "wakeup-source")) {
+		struct platform_device *pdev;
+		int index;
+
+		index = of_property_match_string(wakeup_node, "wakeup-source", "poweroff");
+		if (index < 0)
+			continue;
+
+		pdev = of_find_device_by_node(wakeup_node);
+		if (!pdev)
+			break;
+
+		if (device_may_wakeup(&pdev->dev)) {
+			dev_dbg(info->dev, "%pOF identified as wakeup source for Partial-IO\n",
+				wakeup_node);
+			put_device(&pdev->dev);
+			of_node_put(wakeup_node);
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static int tisci_sys_off_handler(struct sys_off_data *data)
 {
 	struct ti_sci_info *info = data->cb_data;
-	int i;
+	bool enter_partial_io = tisci_canuart_wakeup_enabled(info);
 	int ret;
-	bool enter_partial_io = false;
-
-	for (i = 0; i != info->nr_wakeup_sources; ++i) {
-		struct platform_device *pdev =
-			of_find_device_by_node(info->wakeup_source_nodes[i]);
-
-		if (!pdev)
-			continue;
-
-		if (device_may_wakeup(&pdev->dev)) {
-			dev_dbg(info->dev, "%pOFp identified as wakeup source\n",
-				info->wakeup_source_nodes[i]);
-			enter_partial_io = true;
-		}
-	}
 
 	if (!enter_partial_io)
 		return NOTIFY_DONE;
 
 	ret = tisci_enter_partial_io(info);
 
-	if (ret)
+	if (ret) {
 		dev_err(info->dev,
-			"Failed to enter Partial-IO %pe, halting system\n",
+			"Failed to enter Partial-IO %pe, trying to do an emergency restart\n",
 			ERR_PTR(ret));
+		emergency_restart();
+	}
 
-	/* Halt system/code execution */
-	while (1)
-		;
+	mdelay(5000);
+	emergency_restart();
 
 	return NOTIFY_DONE;
 }
@@ -4009,6 +4042,13 @@ static int ti_sci_probe(struct platform_device *pdev)
 		goto out;
 	}
 
+	ti_sci_msg_cmd_query_fw_caps(&info->handle, &info->fw_caps);
+	dev_dbg(dev, "Detected firmware capabilities: %s%s%s\n",
+		info->fw_caps & MSG_FLAG_CAPS_GENERIC ? "Generic" : "",
+		info->fw_caps & MSG_FLAG_CAPS_LPM_PARTIAL_IO ? " Partial-IO" : "",
+		info->fw_caps & MSG_FLAG_CAPS_LPM_DM_MANAGED ? " DM-Managed" : ""
+	);
+
 	ti_sci_setup_ops(info);
 
 	ret = devm_register_restart_handler(dev, tisci_reboot_handler, info);
@@ -4017,32 +4057,7 @@ static int ti_sci_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	/*
-	 * Check if the firmware supports any optional low power modes
-	 * and initialize them if present. Old revisions of TIFS (< 08.04)
-	 * will NACK the request.
-	 */
-	ret = ti_sci_msg_cmd_query_fw_caps(&info->handle, &info->fw_caps);
-	if (!ret && (info->fw_caps & MSG_MASK_CAPS_LPM))
-		ti_sci_init_suspend(pdev, info);
-
-	if (of_property_read_bool(dev->of_node, "ti,partial-io-wakeup-sources")) {
-		info->nr_wakeup_sources =
-			of_count_phandle_with_args(dev->of_node,
-						   "ti,partial-io-wakeup-sources",
-						   NULL);
-		info->wakeup_source_nodes =
-			devm_kzalloc(dev, sizeof(*info->wakeup_source_nodes),
-				     GFP_KERNEL);
-
-		for (i = 0; i != info->nr_wakeup_sources; ++i) {
-			struct device_node *devnode =
-				of_parse_phandle(dev->of_node,
-						 "ti,partial-io-wakeup-sources",
-						 i);
-			info->wakeup_source_nodes[i] = devnode;
-		}
-
+	if (info->fw_caps & MSG_FLAG_CAPS_LPM_PARTIAL_IO) {
 		ret = devm_register_sys_off_handler(dev,
 						    SYS_OFF_MODE_POWER_OFF,
 						    SYS_OFF_PRIO_FIRMWARE,

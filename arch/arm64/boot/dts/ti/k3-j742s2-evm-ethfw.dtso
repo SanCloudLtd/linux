@@ -8,7 +8,7 @@
  * provided as a reference for enabling EthFw with CPSW5G on custom boards
  * built with the J742S2 SoC.
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024-2025 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;

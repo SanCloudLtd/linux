@@ -64,6 +64,7 @@ enum dispc_dss_subrevision {
 	DISPC_AM62A7,
 	DISPC_AM62P51,
 	DISPC_AM62P52,
+	DISPC_AM62L,
 	DISPC_AM65X,
 	DISPC_J721E,
 };
@@ -93,13 +94,14 @@ struct dispc_features {
 extern const struct dispc_features dispc_k2g_feats;
 extern const struct dispc_features dispc_am625_feats;
 extern const struct dispc_features dispc_am62a7_feats;
+extern const struct dispc_features dispc_am62l_feats;
 extern const struct dispc_features dispc_am62p51_feats;
 extern const struct dispc_features dispc_am62p52_feats;
 extern const struct dispc_features dispc_am65x_feats;
 extern const struct dispc_features dispc_j721e_feats;
 
-u32 tidss_get_status(struct tidss_device *tidss);
-void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport, u32 val);
+void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport,
+			  u32 oldi_cfg);
 unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate);
 
 void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask);

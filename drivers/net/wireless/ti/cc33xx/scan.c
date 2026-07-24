@@ -10,6 +10,171 @@
 #include "tx.h"
 #include "conf.h"
 
+#define CC33XX_SCAN_TIMEOUT	30000 /* msec */
+
+#define MAX_CHANNELS_2GHZ			14
+#define MAX_CHANNELS_4GHZ			4
+#define MAX_CHANNELS_5GHZ			32
+#define CONN_SCAN_MAX_CHANNELS_ALL_BANDS	46
+
+#define SCHED_SCAN_MAX_SSIDS	16
+
+#define CONN_SCAN_MAX_BAND		2
+#define SCAN_MAX_SCHED_SCAN_PLANS	12
+
+#define SCAN_CHANNEL_FLAGS_DFS		BIT(0)
+
+struct conn_scan_ch_params {
+	__le16 min_duration;
+	__le16 max_duration;
+	__le16 passive_duration;
+
+	u8  channel;
+	u8  tx_power_att;
+
+	/* bit 0: DFS channel; bit 1: DFS enabled */
+	u8  flags;
+
+	u8  padding[3];
+} __packed;
+
+enum {
+	SCAN_SSID_TYPE_PUBLIC = 0,
+	SCAN_SSID_TYPE_HIDDEN = 1,
+};
+
+enum scan_request_type {
+	SCAN_REQUEST_NONE,
+	SCAN_REQUEST_CONNECT_PERIODIC_SCAN,
+	SCAN_REQUEST_ONE_SHOT,
+	SCAN_REQUEST_SURVEY_SCAN,
+	SCAN_NUM_OF_REQUEST_TYPE
+};
+
+enum {
+	SCAN_SSID_FILTER_ANY      = 0,
+	SCAN_SSID_FILTER_SPECIFIC = 1,
+	SCAN_SSID_FILTER_LIST     = 2,
+	SCAN_SSID_FILTER_DISABLED = 3
+};
+
+enum {
+	SCAN_TYPE_SEARCH	= 0,
+	SCAN_TYPE_PERIODIC	= 1,
+	SCAN_TYPE_TRACKING	= 2,
+};
+
+struct cc33xx_ssid {
+	u8 type;
+	u8 len;
+	u8 ssid[IEEE80211_MAX_SSID_LEN];
+	u8 padding[2];
+} __packed;
+
+struct cc33xx_cmd_ssid_list {
+	struct cc33xx_cmd_header header;
+
+	u8 role_id;
+	u8 scan_type;
+	u8 n_ssids;
+	struct cc33xx_ssid ssids[SCHED_SCAN_MAX_SSIDS];
+	u8 padding;
+} __packed;
+
+struct conn_scan_dwell_info {
+	__le16  min_duration;
+	__le16  max_duration;
+	__le16  passive_duration;
+} __packed;
+
+struct conn_scan_ch_info {
+	u8   channel;
+	u8   tx_power_att;
+	u8   flags;
+} __packed;
+
+struct scan_one_shot_info {
+	u8  passive[CONN_SCAN_MAX_BAND];
+	u8  active[CONN_SCAN_MAX_BAND];
+	u8  dfs;
+
+	struct conn_scan_ch_info    channel_list[CONN_SCAN_MAX_CHANNELS_ALL_BANDS];
+	struct conn_scan_dwell_info dwell_info[CONN_SCAN_MAX_BAND];
+	u8  reserved;
+};
+
+struct sched_scan_plan_cmd {
+	u32 interval;
+	u32 iterations;
+};
+
+struct scan_periodic_info {
+	struct sched_scan_plan_cmd  sched_scan_plans[SCAN_MAX_SCHED_SCAN_PLANS];
+	u16 sched_scan_plans_num;
+
+	u8 passive[CONN_SCAN_MAX_BAND];
+	u8 active[CONN_SCAN_MAX_BAND];
+	u8 dfs;
+
+	struct conn_scan_ch_info      channel_list[CONN_SCAN_MAX_CHANNELS_ALL_BANDS];
+	struct conn_scan_dwell_info   dwell_info[CONN_SCAN_MAX_BAND];
+} __packed;
+
+struct scan_param {
+	union {
+		struct scan_one_shot_info    one_shot;
+		struct scan_periodic_info    periodic;
+	} u;
+} __packed;
+
+struct cc33xx_cmd_scan_params {
+	struct cc33xx_cmd_header header;
+	u8 scan_type;
+	u8 role_id;
+
+	struct scan_param   params;
+	s8 rssi_threshold; /* for filtering (in dBm) */
+	s8 snr_threshold;  /* for filtering (in dB) */
+
+	u8 bssid[ETH_ALEN];
+	u8 padding[2];
+
+	u8 ssid_from_list; /* use ssid from configured ssid list */
+	u8 filter;         /* forward only results with matching ssids */
+
+	u8 num_of_ssids;
+} __packed;
+
+#define MAX_EXTRA_IES_LEN 512
+
+struct cc33xx_cmd_set_ies {
+	struct cc33xx_cmd_header header;
+	u8 scan_type;
+	u8 role_id;
+	__le16 len;
+	u8                   data[MAX_EXTRA_IES_LEN];
+} __packed;
+
+struct cc33xx_cmd_scan_stop {
+	struct cc33xx_cmd_header header;
+
+	u8 scan_type;
+	u8 role_id;
+	u8 is_ET;
+	u8 padding;
+} __packed;
+
+struct cc33xx_scan_channels {
+	u8 passive[CONN_SCAN_MAX_BAND]; /* number of passive scan channels */
+	u8 active[CONN_SCAN_MAX_BAND];  /* number of active scan channels */
+	u8 dfs;		   /* number of dfs channels in 5ghz */
+	u8 passive_active; /* number of passive before active channels 2.4ghz */
+
+	struct conn_scan_ch_params channels_2[MAX_CHANNELS_2GHZ];
+	struct conn_scan_ch_params channels_5[MAX_CHANNELS_5GHZ];
+	struct conn_scan_ch_params channels_4[MAX_CHANNELS_4GHZ];
+};
+
 static void cc33xx_adjust_channels(struct scan_param *scan_param,
 				   struct cc33xx_scan_channels *cmd_channels,
 				   enum scan_request_type scan_type)
@@ -81,8 +246,6 @@ static int cc33xx_cmd_build_probe_req(struct cc33xx *cc,
 	struct sk_buff *skb = NULL;
 	struct cc33xx_cmd_set_ies *cmd;
 	int ret;
-
-	cc33xx_debug(DEBUG_SCAN, "build probe request scan_type %d", scan_type);
 
 	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
 	if (!cmd) {
@@ -318,10 +481,6 @@ static bool cc33xx_set_scan_chan_params(struct cc33xx *cc,
 						  MAX_CHANNELS_5GHZ,
 						  &n_pactive_ch, scan_type);
 
-	/* 802.11j channels are not supported yet */
-	cfg->passive[2] = 0;
-	cfg->active[2] = 0;
-
 	cfg->passive_active = n_pactive_ch;
 
 	cc33xx_debug(DEBUG_SCAN, "2.4GHz: active %d passive %d",
@@ -331,7 +490,7 @@ static bool cc33xx_set_scan_chan_params(struct cc33xx *cc,
 	cc33xx_debug(DEBUG_SCAN, "DFS: %d", cfg->dfs);
 
 	return  cfg->passive[0] || cfg->active[0] || cfg->passive[1] ||
-		cfg->active[1] || cfg->dfs || cfg->passive[2] || cfg->active[2];
+		cfg->active[1] || cfg->dfs;
 }
 
 static int cc33xx_scan_send(struct cc33xx *cc, struct cc33xx_vif *wlvif,
@@ -427,7 +586,6 @@ static int cc33xx_scan_sched_scan_ssid_list(struct cc33xx *cc,
 	struct cfg80211_ssid *ssids = req->ssids;
 	int ret = 0, i, j, n_match_ssids = 0;
 
-	cc33xx_debug((DEBUG_CMD | DEBUG_SCAN), "cmd sched scan ssid list");
 	/* count the match sets that contain SSIDs */
 	for (i = 0; i < req->n_match_sets; i++) {
 		if (sets[i].ssid.ssid_len > 0)
@@ -491,8 +649,6 @@ static int cc33xx_scan_sched_scan_ssid_list(struct cc33xx *cc,
 		}
 	}
 
-	cc33xx_debug(DEBUG_CMD, "cmd sched scan with ssid list %d",
-		     cmd->n_ssids);
 	return cmd->n_ssids;
 out:
 	if (ret < 0)
@@ -513,8 +669,6 @@ int cc33xx_sched_scan_start(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	int n_ssids = 0;
 	int alloc_size = sizeof(*cmd);
 
-	cc33xx_debug(DEBUG_CMD, "cmd sched_scan scan config");
-
 	ssid_list = kzalloc(sizeof(*ssid_list), GFP_KERNEL);
 	if (!ssid_list) {
 		ret = -ENOMEM;
@@ -524,8 +678,6 @@ int cc33xx_sched_scan_start(struct cc33xx *cc, struct cc33xx_vif *wlvif,
 	n_ssids = cc33xx_scan_sched_scan_ssid_list(cc, wlvif, req, ssid_list);
 	if (n_ssids < 0)
 		return n_ssids;
-
-	cc33xx_debug(DEBUG_CMD, "ssid list num of ssids %d", ssid_list->n_ssids);
 
 	if (n_ssids <= 5) {
 		alloc_size += (n_ssids * sizeof(struct cc33xx_ssid));
@@ -626,8 +778,6 @@ static int __cc33xx_scan_stop(struct cc33xx *cc,
 	struct cc33xx_cmd_scan_stop *stop;
 	int ret;
 
-	cc33xx_debug(DEBUG_CMD, "cmd periodic scan stop");
-
 	stop = kzalloc(sizeof(*stop), GFP_KERNEL);
 	if (!stop)
 		return -ENOMEM;
@@ -673,8 +823,6 @@ void cc33xx_scan_complete_work(struct work_struct *work)
 
 	dwork = to_delayed_work(work);
 	cc = container_of(dwork, struct cc33xx, scan_complete_work);
-
-	cc33xx_debug(DEBUG_SCAN, "Scanning complete");
 
 	mutex_lock(&cc->mutex);
 
@@ -740,8 +888,6 @@ int cc33xx_scan(struct cc33xx *cc, struct ieee80211_vif *vif, const u8 *ssid,
 
 inline void cc33xx_scan_sched_scan_results(struct cc33xx *cc)
 {
-	cc33xx_debug(DEBUG_SCAN, "got periodic scan results");
-
 	ieee80211_sched_scan_results(cc->hw);
 }
 

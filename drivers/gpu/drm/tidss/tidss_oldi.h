@@ -8,42 +8,22 @@
 #ifndef __TIDSS_OLDI_H__
 #define __TIDSS_OLDI_H__
 
-#include <linux/media-bus-format.h>
-
 #include "tidss_drv.h"
-#include "tidss_dispc.h"
 
 struct tidss_oldi;
-
-/* OLDI Instances */
-#define OLDI(n)		n
 
 /* OLDI PORTS */
 #define OLDI_INPUT_PORT		0
 #define OLDI_OURPUT_PORT	1
 
-/* OLDI Config Bits */
-#define OLDI_ENABLE		BIT(0)
-#define OLDI_MAP		(BIT(1) | BIT(2) | BIT(3))
-#define OLDI_SRC		BIT(4)
-#define OLDI_CLONE_MODE		BIT(5)
-#define OLDI_MASTERSLAVE	BIT(6)
-#define OLDI_DEPOL		BIT(7)
-#define OLDI_MSB		BIT(8)
-#define OLDI_LBEN		BIT(9)
-#define OLDI_LBDATA		BIT(10)
-#define OLDI_DUALMODESYNC	BIT(11)
-#define OLDI_SOFTRST		BIT(12)
-#define OLDI_TPATCFG		BIT(13)
-
-/* Control MMR Register */
+/* Control MMR Registers */
 
 /* Register offsets */
 #define OLDI_PD_CTRL            0x100
 #define OLDI_LB_CTRL            0x104
 
 /* Power control bits */
-#define OLDI_PWRDN_TX(n)	BIT(n)
+#define OLDI_PWRDOWN_TX(n)	BIT(n)
 
 /* LVDS Bandgap reference Enable/Disable */
 #define OLDI_PWRDN_BG		BIT(8)

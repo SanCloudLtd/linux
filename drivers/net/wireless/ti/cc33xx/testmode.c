@@ -55,8 +55,6 @@ static int cc33xx_tm_cmd_test(struct cc33xx *cc, struct nlattr *tb[])
 	void *buf;
 	u8 answer = 0;
 
-	cc33xx_debug(DEBUG_TESTMODE, "testmode cmd test");
-
 	if (!tb[CC33XX_TM_ATTR_DATA])
 		return -EINVAL;
 
@@ -124,14 +122,10 @@ static int cc33xx_tm_cmd_interrogate(struct cc33xx *cc, struct nlattr *tb[])
 	struct sk_buff *skb;
 	u8 ie_id;
 
-	cc33xx_debug(DEBUG_TESTMODE, "testmode cmd interrogate");
-
 	if (!tb[CC33XX_TM_ATTR_IE_ID])
 		return -EINVAL;
 
 	ie_id = nla_get_u8(tb[CC33XX_TM_ATTR_IE_ID]);
-
-	cc33xx_debug(DEBUG_TESTMODE, "testmode cmd interrogate id %d", ie_id);
 
 	mutex_lock(&cc->mutex);
 
@@ -184,8 +178,6 @@ static int cc33xx_tm_cmd_configure(struct cc33xx *cc, struct nlattr *tb[])
 	u16 buf_len;
 	void *buf;
 	u8 ie_id;
-
-	cc33xx_debug(DEBUG_TESTMODE, "testmode cmd configure");
 
 	if (!tb[CC33XX_TM_ATTR_DATA])
 		return -EINVAL;
@@ -252,8 +244,6 @@ static int cc33xx_tm_cmd_set_plt_mode(struct cc33xx *cc, struct nlattr *tb[])
 {
 	u32 val;
 	int ret;
-
-	cc33xx_debug(DEBUG_TESTMODE, "testmode cmd set plt mode");
 
 	if (!tb[CC33XX_TM_ATTR_PLT_MODE])
 		return -EINVAL;

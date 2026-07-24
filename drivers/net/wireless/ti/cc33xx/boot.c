@@ -46,8 +46,6 @@ void cc33xx_handle_boot_irqs(struct cc33xx *cc, u32 pending_interrupts)
 	if (WARN_ON(!cc->fw_download))
 		return;
 
-	cc33xx_debug(DEBUG_BOOT, "BOOT IRQs: 0x%x", pending_interrupts);
-
 	atomic_or(pending_interrupts, &cc->fw_download->pending_irqs);
 	complete(&cc->fw_download->wait_on_irq);
 }
@@ -107,8 +105,6 @@ out:
 static int cc33xx_chip_wakeup(struct cc33xx *cc)
 {
 	int ret = 0;
-
-	cc33xx_debug(DEBUG_BOOT, "Chip wakeup");
 
 	ret = cc33xx_set_power_on(cc);
 	if (ret < 0)
@@ -199,8 +195,6 @@ static int container_download_and_wait(struct cc33xx *cc,
 	u8 *container_data;
 	size_t container_len;
 
-	cc33xx_debug(DEBUG_BOOT, "Downloading %s to device", container_name);
-
 	container_data = fetch_container(cc, container_name, &container_len);
 	if (!container_data)
 		return ret;
@@ -219,7 +213,6 @@ static int container_download_and_wait(struct cc33xx *cc,
 		goto out;
 	}
 
-	cc33xx_debug(DEBUG_BOOT, "%s loaded successfully", container_name);
 	ret = 0;
 
 out:
@@ -259,14 +252,6 @@ static int get_device_info(struct cc33xx *cc)
 	ret = cmd_get_device_info(cc, hw_info.bytes, sizeof(hw_info.bytes));
 	if (ret < 0)
 		return ret;
-
-	cc33xx_debug(DEBUG_BOOT,
-		     "CC33XX device info: PG version: %d, Metal version: %d, Boot ROM version: %d, M3 ROM version: %d, MAC address: 0x%llx, Device part number: %d",
-		     hw_info.bitmap.pg_version, hw_info.bitmap.metal_version,
-		     hw_info.bitmap.boot_rom_version,
-		     hw_info.bitmap.m3_rom_version,
-		     (u64)hw_info.bitmap.mac_address,
-		     hw_info.bitmap.device_part_number);
 
 	cc->fw_download->max_transfer_size = 640;
 
@@ -343,9 +328,6 @@ int cc33xx_init_fw(struct cc33xx *cc)
 	 * 11a channels if not supported
 	 */
 	cc->enable_11a = cc->conf.core.enable_5ghz;
-
-	cc33xx_debug(DEBUG_MAC80211, "11a is %ssupported",
-		     cc->enable_11a ? "" : "not ");
 
 	cc->state = CC33XX_STATE_ON;
 	ret = 0;

@@ -859,8 +859,8 @@ static int am65_cpsw_taprio_replace(struct net_device *ndev,
 	struct am65_cpsw_port *port = am65_ndev_to_port(ndev);
 	struct am65_cpts *cpts = common->cpts;
 	struct am65_cpsw_est *est_new;
-	int ret, tact;
 	u64 cur_time, n;
+	int ret, tact;
 
 	if (!netif_running(ndev)) {
 		NL_SET_ERR_MSG_MOD(extack, "interface is down, link speed unknown");
@@ -916,10 +916,10 @@ static int am65_cpsw_taprio_replace(struct net_device *ndev,
 	am65_cpsw_port_est_assign_buf_num(ndev, est_new->buf);
 
 	/* If the base-time is in the past, start schedule from the time:
-		* base_time + (N*cycle_time)
-		* where N is the smallest possible integer such that the above
-		* time is in the future.
-		*/
+	 * base_time + (N*cycle_time)
+	 * where N is the smallest possible integer such that the above
+	 * time is in the future.
+	 */
 	cur_time = am65_cpts_ns_gettime(cpts);
 	if (est_new->taprio.base_time < cur_time) {
 		n = div64_u64(cur_time - est_new->taprio.base_time, est_new->taprio.cycle_time);
@@ -1038,6 +1038,9 @@ static int am65_cpsw_qos_clsflower_add_policer(struct am65_cpsw_port *port,
 				   "Unsupported keys used");
 		return -EOPNOTSUPP;
 	}
+
+	if (flow_rule_match_has_control_flags(rule, extack))
+		return -EOPNOTSUPP;
 
 	if (!flow_rule_match_key(rule, FLOW_DISSECTOR_KEY_ETH_ADDRS)) {
 		NL_SET_ERR_MSG_MOD(extack, "Not matching on eth address");

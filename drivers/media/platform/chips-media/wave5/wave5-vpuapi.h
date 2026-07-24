@@ -10,6 +10,7 @@
 
 #include <linux/idr.h>
 #include <linux/genalloc.h>
+#include <linux/devfreq.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-mem2mem.h>
 #include <media/v4l2-ctrls.h>
@@ -18,6 +19,7 @@
 #include "wave5-vdi.h"
 
 enum product_id {
+	PRODUCT_ID_515,
 	PRODUCT_ID_521,
 	PRODUCT_ID_511,
 	PRODUCT_ID_517,
@@ -47,14 +49,14 @@ enum vpu_instance_state {
 #define WAVE5_DEC_HEVC_BUF_SIZE(_w, _h) (DIV_ROUND_UP(_w, 64) * DIV_ROUND_UP(_h, 64) * 256 + 64)
 #define WAVE5_DEC_AVC_BUF_SIZE(_w, _h) ((((ALIGN(_w, 256) / 16) * (ALIGN(_h, 16) / 16)) + 16) * 80)
 
+#define IS_WRAP(_v, _max) ((_v % _max) ? 1 : 0)
+#define DEC_BUF_OFFSET 3
+#define MAX_TIMESTAMP_CIR_BUF 30
+
 #define WAVE5_FBC_LUMA_TABLE_SIZE(_w, _h) (ALIGN(_h, 64) * ALIGN(_w, 256) / 32)
 #define WAVE5_FBC_CHROMA_TABLE_SIZE(_w, _h) (ALIGN((_h), 64) * ALIGN((_w) / 2, 256) / 32)
 #define WAVE5_ENC_AVC_BUF_SIZE(_w, _h) (ALIGN(_w, 64) * ALIGN(_h, 64) / 32)
 #define WAVE5_ENC_HEVC_BUF_SIZE(_w, _h) (ALIGN(_w, 64) / 64 * ALIGN(_h, 64) / 64 * 128)
-
-#define IS_WRAP(_v, _max) ((_v % _max) ? 1 : 0)
-#define DEC_BUF_OFFSET 3
-#define MAX_TIMESTAMP_CIR_BUF 30
 
 /*
  * common struct and definition
@@ -331,6 +333,7 @@ struct vpu_attr {
 	u32 support_backbone: 1;
 	u32 support_avc10bit_enc: 1;
 	u32 support_hevc10bit_enc: 1;
+	u32 support_hevc10bit_dec: 1;
 	u32 support_vcore_backbone: 1;
 	u32 support_vcpu_backbone: 1;
 };
@@ -370,8 +373,6 @@ struct dec_open_param {
 struct dec_initial_info {
 	u32 pic_width;
 	u32 pic_height;
-	s32 f_rate_numerator; /* the numerator part of frame rate fraction */
-	s32 f_rate_denominator; /* the denominator part of frame rate fraction */
 	struct vpu_rect pic_crop_rect;
 	u32 min_frame_buffer_count; /* between 1 to 16 */
 
@@ -786,6 +787,7 @@ struct vpu_device {
 	struct gen_pool *sram_pool;
 	struct vpu_buf sram_buf;
 	void __iomem *vdb_register;
+	struct devfreq *vpu_devfreq;
 	u32 product_code;
 	u32 ext_addr;
 	struct ida inst_ida;
@@ -795,9 +797,8 @@ struct vpu_device {
 	struct kthread_worker *worker;
 	int vpu_poll_interval;
 	int num_clks;
+	struct reset_control *resets;
 	bool opp_table_detected;
-	unsigned long opp_pixel_rate;
-	unsigned long opp_freq;
 };
 
 struct timestamp_circ_buf {
@@ -876,7 +877,6 @@ struct vpu_instance {
 	unsigned int encode_aud;
 	unsigned int change_param_flags;
 	struct enc_wave_param enc_param;
-	unsigned long pixel_rate;
 	unsigned int *map_index;
 	dma_addr_t *mapped_dma_addr;
 	unsigned int cap_io_mode;

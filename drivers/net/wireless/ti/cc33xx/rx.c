@@ -170,11 +170,6 @@ static int cc33xx_rx_get_packet_data(struct cc33xx *cc, u8 *raw_buffer_ptr,
 	missing_data_bytes -= cc->partial_rx.handled_bytes;
 	available_data_bytes = min(missing_data_bytes, *raw_buffer_len);
 
-	cc33xx_debug(DEBUG_RX, "current rx data: original bytes: %d, handled bytes %d, desc pad len %d, missing_data_bytes %d",
-		     cc->partial_rx.original_bytes,
-		     cc->partial_rx.handled_bytes,
-		     cc->partial_rx.desc.pad_len, missing_data_bytes);
-
 	skb_put_data(cc->partial_rx.skb, raw_buffer_ptr, available_data_bytes);
 
 	/* Check if we didn't manage to copy the entire packet - got out,

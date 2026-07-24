@@ -1049,18 +1049,14 @@ static int receive_cb_reply(struct svc_sock *svsk, struct svc_rqst *rqstp)
 	struct rpc_rqst *req = NULL;
 	struct kvec *src, *dst;
 	__be32 *p = (__be32 *)rqstp->rq_arg.head[0].iov_base;
-	__be32 xid;
-	__be32 calldir;
-
-	xid = *p++;
-	calldir = *p;
+	__be32 xid = *p;
 
 	if (!bc_xprt)
 		return -EAGAIN;
 	spin_lock(&bc_xprt->queue_lock);
 	req = xprt_lookup_rqst(bc_xprt, xid);
 	if (!req)
-		goto unlock_notfound;
+		goto unlock_eagain;
 
 	memcpy(&req->rq_private_buf, &req->rq_rcv_buf, sizeof(struct xdr_buf));
 	/*
@@ -1077,12 +1073,6 @@ static int receive_cb_reply(struct svc_sock *svsk, struct svc_rqst *rqstp)
 	rqstp->rq_arg.len = 0;
 	spin_unlock(&bc_xprt->queue_lock);
 	return 0;
-unlock_notfound:
-	printk(KERN_NOTICE
-		"%s: Got unrecognized reply: "
-		"calldir 0x%x xpt_bc_xprt %p xid %08x\n",
-		__func__, ntohl(calldir),
-		bc_xprt, ntohl(xid));
 unlock_eagain:
 	spin_unlock(&bc_xprt->queue_lock);
 	return -EAGAIN;
@@ -1093,9 +1083,6 @@ static void svc_tcp_fragment_received(struct svc_sock *svsk)
 	/* If we have more data, signal svc_xprt_enqueue() to try again */
 	svsk->sk_tcplen = 0;
 	svsk->sk_marker = xdr_zero;
-
-	smp_wmb();
-	tcp_set_rcvlowat(svsk->sk_sk, 1);
 }
 
 /**
@@ -1185,17 +1172,10 @@ err_incomplete:
 		goto err_delete;
 	if (len == want)
 		svc_tcp_fragment_received(svsk);
-	else {
-		/* Avoid more ->sk_data_ready() calls until the rest
-		 * of the message has arrived. This reduces service
-		 * thread wake-ups on large incoming messages. */
-		tcp_set_rcvlowat(svsk->sk_sk,
-				 svc_sock_reclen(svsk) - svsk->sk_tcplen);
-
+	else
 		trace_svcsock_tcp_recv_short(&svsk->sk_xprt,
 				svc_sock_reclen(svsk),
 				svsk->sk_tcplen - sizeof(rpc_fraghdr));
-	}
 	goto err_noclose;
 error:
 	if (len != -EAGAIN)
@@ -1388,7 +1368,6 @@ void svc_sock_update_bufs(struct svc_serv *serv)
 		set_bit(XPT_CHNGBUF, &svsk->sk_xprt.xpt_flags);
 	spin_unlock_bh(&serv->sv_lock);
 }
-EXPORT_SYMBOL_GPL(svc_sock_update_bufs);
 
 /*
  * Initialize socket for RPC use and create svc_sock struct
@@ -1562,6 +1541,10 @@ static struct svc_xprt *svc_create_socket(struct svc_serv *serv,
 	newlen = error;
 
 	if (protocol == IPPROTO_TCP) {
+		__netns_tracker_free(net, &sock->sk->ns_tracker, false);
+		sock->sk->sk_net_refcnt = 1;
+		get_net_track(net, &sock->sk->ns_tracker, GFP_KERNEL);
+		sock_inuse_add(net, 1);
 		if ((error = kernel_listen(sock, 64)) < 0)
 			goto bummer;
 	}

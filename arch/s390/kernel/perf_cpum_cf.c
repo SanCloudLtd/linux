@@ -22,6 +22,10 @@
 #include <asm/hwctrset.h>
 #include <asm/debug.h>
 
+/* Perf PMU definitions for the counter facility */
+#define PERF_CPUM_CF_MAX_CTR		0xffffUL  /* Max ctr for ECCTR */
+#define PERF_EVENT_CPUM_CF_DIAG		0xBC000UL /* Event: Counter sets */
+
 enum cpumf_ctr_set {
 	CPUMF_CTR_SET_BASIC   = 0,    /* Basic Counter Set */
 	CPUMF_CTR_SET_USER    = 1,    /* Problem-State Counter Set */
@@ -428,7 +432,7 @@ static void cpum_cf_make_setsize(enum cpumf_ctr_set ctrset)
 	case CPUMF_CTR_SET_CRYPTO:
 		if (cpumf_ctr_info.csvn >= 1 && cpumf_ctr_info.csvn <= 5)
 			ctrset_size = 16;
-		else if (cpumf_ctr_info.csvn == 6 || cpumf_ctr_info.csvn == 7)
+		else if (cpumf_ctr_info.csvn >= 6)
 			ctrset_size = 20;
 		break;
 	case CPUMF_CTR_SET_EXT:
@@ -854,18 +858,13 @@ static int cpumf_pmu_event_type(struct perf_event *event)
 static int cpumf_pmu_event_init(struct perf_event *event)
 {
 	unsigned int type = event->attr.type;
-	int err;
+	int err = -ENOENT;
 
 	if (type == PERF_TYPE_HARDWARE || type == PERF_TYPE_RAW)
 		err = __hw_perf_event_init(event, type);
 	else if (event->pmu->type == type)
 		/* Registered as unknown PMU */
 		err = __hw_perf_event_init(event, cpumf_pmu_event_type(event));
-	else
-		return -ENOENT;
-
-	if (unlikely(err) && event->destroy)
-		event->destroy(event);
 
 	return err;
 }
@@ -977,7 +976,7 @@ static int cfdiag_push_sample(struct perf_event *event,
 	if (event->attr.sample_type & PERF_SAMPLE_RAW) {
 		raw.frag.size = cpuhw->usedss;
 		raw.frag.data = cpuhw->stop;
-		perf_sample_save_raw_data(&data, &raw);
+		perf_sample_save_raw_data(&data, event, &raw);
 	}
 
 	overflow = perf_event_overflow(event, &data, &regs);
@@ -1199,7 +1198,7 @@ static int __init cpumf_pmu_init(void)
 	 * Clear bit 15 of cr0 to unauthorize problem-state to
 	 * extract measurement counters
 	 */
-	ctl_clear_bit(0, 48);
+	system_ctl_clear_bit(0, CR0_CPUMF_EXTRACTION_AUTH_BIT);
 
 	/* register handler for measurement-alert interruptions */
 	rc = register_external_irq(EXT_IRQ_MEASURE_ALERT,
@@ -1694,7 +1693,6 @@ static const struct file_operations cfset_fops = {
 	.release = cfset_release,
 	.unlocked_ioctl	= cfset_ioctl,
 	.compat_ioctl = cfset_ioctl,
-	.llseek = no_llseek
 };
 
 static struct miscdevice cfset_dev = {
@@ -1816,8 +1814,6 @@ static int cfdiag_event_init(struct perf_event *event)
 	event->destroy = hw_perf_event_destroy;
 
 	err = cfdiag_event_init2(event);
-	if (unlikely(err))
-		event->destroy(event);
 out:
 	return err;
 }

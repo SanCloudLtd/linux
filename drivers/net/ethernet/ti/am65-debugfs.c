@@ -29,13 +29,13 @@ cut_thru_tx_pri_mask_get(void *data, u64 *val)
 	struct am65_cpsw_cut_thru *cut_thru;
 	int ret = -EINVAL;
 
-	read_lock(&dev_base_lock);
+	rtnl_lock();
 	cut_thru = &port->qos.cut_thru;
 	if (port->ndev->reg_state == NETREG_REGISTERED) {
 		*val =  cut_thru->tx_pri_mask;
 		ret = 0;
 	}
-	read_unlock(&dev_base_lock);
+	rtnl_unlock();
 
 	return ret;
 }
@@ -80,13 +80,13 @@ cut_thru_rx_pri_mask_get(void *data, u64 *val)
 	struct am65_cpsw_cut_thru *cut_thru;
 	int ret = -EINVAL;
 
-	read_lock(&dev_base_lock);
+	rtnl_lock();
 	cut_thru = &port->qos.cut_thru;
 	if (port->ndev->reg_state == NETREG_REGISTERED) {
 		*val =  cut_thru->rx_pri_mask;
 		ret = 0;
 	}
-	read_unlock(&dev_base_lock);
+	rtnl_unlock();
 
 	return ret;
 }

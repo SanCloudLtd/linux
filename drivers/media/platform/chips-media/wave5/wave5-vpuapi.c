@@ -83,6 +83,7 @@ int wave5_vpu_flush_instance(struct vpu_instance *inst)
 			ret = mutex_lock_interruptible(&inst->dev->hw_lock);
 			if (ret)
 				return ret;
+
 			if (dec_info.index_frame_display > 0)
 				wave5_vpu_dec_set_disp_flag(inst, dec_info.index_frame_display);
 		}
@@ -752,9 +753,11 @@ int wave5_vpu_enc_close(struct vpu_instance *inst, u32 *fail_res)
 	}
 
 	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_task);
+
 	mutex_unlock(&vpu_dev->hw_lock);
 
 	pm_runtime_put_sync(inst->dev->dev);
+
 	return 0;
 }
 

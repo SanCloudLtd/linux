@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
 /*
  * 4 x TEVI OV5640 MIPI Camera module on RPI camera connector.
  *

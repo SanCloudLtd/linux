@@ -189,13 +189,12 @@ jpeg_scale_quant_table(unsigned char *file_q_tab,
 		       const unsigned char *tab, int scale)
 {
 	int i;
-	const u8 *zigzag;
 
+	BUILD_BUG_ON(ARRAY_SIZE(v4l2_jpeg_zigzag_scan_index) != JPEG_QUANT_SIZE);
 	BUILD_BUG_ON(ARRAY_SIZE(hw_reorder) != JPEG_QUANT_SIZE);
 
-	v4l2_jpeg_get_zig_zag_scan(&zigzag);
 	for (i = 0; i < JPEG_QUANT_SIZE; i++) {
-		file_q_tab[i] = jpeg_scale_qp(tab[zigzag[i]], scale);
+		file_q_tab[i] = jpeg_scale_qp(tab[v4l2_jpeg_zigzag_scan_index[i]], scale);
 		reordered_q_tab[i] = jpeg_scale_qp(tab[hw_reorder[i]], scale);
 	}
 }
@@ -203,8 +202,6 @@ jpeg_scale_quant_table(unsigned char *file_q_tab,
 static void jpeg_set_quality(struct hantro_jpeg_ctx *ctx)
 {
 	int scale;
-	const u8 *luma_q_table, *chroma_q_table;
-
 	/*
 	 * Non-linear scaling factor:
 	 * [5,50] -> [1000..100], [51,100] -> [98..0]
@@ -214,23 +211,23 @@ static void jpeg_set_quality(struct hantro_jpeg_ctx *ctx)
 	else
 		scale = 200 - 2 * ctx->quality;
 
+	BUILD_BUG_ON(ARRAY_SIZE(v4l2_jpeg_ref_table_luma_qt) != JPEG_QUANT_SIZE);
+	BUILD_BUG_ON(ARRAY_SIZE(v4l2_jpeg_ref_table_chroma_qt) != JPEG_QUANT_SIZE);
 	BUILD_BUG_ON(ARRAY_SIZE(ctx->hw_luma_qtable) != JPEG_QUANT_SIZE);
 	BUILD_BUG_ON(ARRAY_SIZE(ctx->hw_chroma_qtable) != JPEG_QUANT_SIZE);
 
-	v4l2_jpeg_get_reference_quantization_tables(&luma_q_table, &chroma_q_table);
 	jpeg_scale_quant_table(ctx->buffer + LUMA_QUANT_OFF,
-			       ctx->hw_luma_qtable, (const unsigned char *)luma_q_table, scale);
+			       ctx->hw_luma_qtable,
+			       (const unsigned char *)v4l2_jpeg_ref_table_luma_qt, scale);
 	jpeg_scale_quant_table(ctx->buffer + CHROMA_QUANT_OFF,
-			       ctx->hw_chroma_qtable, (const unsigned char *)chroma_q_table, scale);
+			       ctx->hw_chroma_qtable,
+			       (const unsigned char *)v4l2_jpeg_ref_table_chroma_qt, scale);
 }
 
 void hantro_jpeg_header_assemble(struct hantro_jpeg_ctx *ctx)
 {
 	char *buf = ctx->buffer;
-	const u8 *luma_dc_table, *chroma_dc_table, *luma_ac_table, *chroma_ac_table;
 
-	v4l2_jpeg_get_reference_huffman_tables(&luma_dc_table,  &luma_ac_table, &chroma_dc_table,
-					       &chroma_ac_table);
 	memcpy(buf, hantro_jpeg_header,
 	       sizeof(hantro_jpeg_header));
 
@@ -239,10 +236,10 @@ void hantro_jpeg_header_assemble(struct hantro_jpeg_ctx *ctx)
 	buf[WIDTH_OFF + 0] = ctx->width >> 8;
 	buf[WIDTH_OFF + 1] = ctx->width;
 
-	memcpy(buf + HUFF_LUMA_DC_OFF, luma_dc_table, V4L2_JPEG_REF_HT_DC_LEN);
-	memcpy(buf + HUFF_LUMA_AC_OFF, luma_ac_table, V4L2_JPEG_REF_HT_AC_LEN);
-	memcpy(buf + HUFF_CHROMA_DC_OFF, chroma_dc_table, V4L2_JPEG_REF_HT_DC_LEN);
-	memcpy(buf + HUFF_CHROMA_AC_OFF, chroma_ac_table, V4L2_JPEG_REF_HT_AC_LEN);
+	memcpy(buf + HUFF_LUMA_DC_OFF, v4l2_jpeg_ref_table_luma_dc_ht, V4L2_JPEG_REF_HT_DC_LEN);
+	memcpy(buf + HUFF_LUMA_AC_OFF, v4l2_jpeg_ref_table_luma_ac_ht, V4L2_JPEG_REF_HT_AC_LEN);
+	memcpy(buf + HUFF_CHROMA_DC_OFF, v4l2_jpeg_ref_table_chroma_dc_ht, V4L2_JPEG_REF_HT_DC_LEN);
+	memcpy(buf + HUFF_CHROMA_AC_OFF, v4l2_jpeg_ref_table_chroma_ac_ht, V4L2_JPEG_REF_HT_AC_LEN);
 
 	jpeg_set_quality(ctx);
 }

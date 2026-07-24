@@ -84,7 +84,7 @@ static int emac_send_command_sr1(struct prueth_emac *emac, u32 cmd)
 	__le32 *data = emac->cmd_data;
 	dma_addr_t desc_dma, buf_dma;
 	struct prueth_tx_chn *tx_chn;
-	void **swdata;
+	struct prueth_swdata *swdata;
 	int ret = 0;
 	u32 *epib;
 
@@ -122,7 +122,8 @@ static int emac_send_command_sr1(struct prueth_emac *emac, u32 cmd)
 
 	cppi5_hdesc_attach_buf(first_desc, buf_dma, pkt_len, buf_dma, pkt_len);
 	swdata = cppi5_hdesc_get_swdata(first_desc);
-	*swdata = data;
+	swdata->type = PRUETH_SWDATA_CMD;
+	swdata->data.cmd = le32_to_cpu(data[0]);
 
 	cppi5_hdesc_set_pktlen(first_desc, pkt_len);
 	desc_dma = k3_cppi_desc_pool_virt2dma(tx_chn->desc_pool, first_desc);
@@ -268,16 +269,16 @@ static int emac_phy_connect(struct prueth_emac *emac)
  * Returns skb pointer if packet found else NULL
  * Caller must free the returned skb.
  */
-static struct sk_buff *prueth_process_rx_mgm(struct prueth_emac *emac,
-					     u32 flow_id)
+static struct page *prueth_process_rx_mgm(struct prueth_emac *emac,
+					  u32 flow_id)
 {
 	struct prueth_rx_chn *rx_chn = &emac->rx_mgm_chn;
 	struct net_device *ndev = emac->ndev;
 	struct cppi5_host_desc_t *desc_rx;
-	struct sk_buff *skb, *new_skb;
+	struct page *page, *new_page;
+	struct prueth_swdata *swdata;
 	dma_addr_t desc_dma, buf_dma;
-	u32 buf_dma_len, pkt_len;
-	void **swdata;
+	u32 buf_dma_len;
 	int ret;
 
 	ret = k3_udma_glue_pop_rx_chn(rx_chn->rx_chn, flow_id, &desc_dma);
@@ -299,34 +300,31 @@ static struct sk_buff *prueth_process_rx_mgm(struct prueth_emac *emac,
 	}
 
 	swdata = cppi5_hdesc_get_swdata(desc_rx);
-	skb = *swdata;
+	page = swdata->data.page;
 	cppi5_hdesc_get_obuf(desc_rx, &buf_dma, &buf_dma_len);
-	pkt_len = cppi5_hdesc_get_pktlen(desc_rx);
 
 	dma_unmap_single(rx_chn->dma_dev, buf_dma, buf_dma_len, DMA_FROM_DEVICE);
 	k3_cppi_desc_pool_free(rx_chn->desc_pool, desc_rx);
 
-	new_skb = netdev_alloc_skb_ip_align(ndev, PRUETH_MAX_PKT_SIZE);
+	new_page = page_pool_dev_alloc_pages(rx_chn->pg_pool);
 	/* if allocation fails we drop the packet but push the
 	 * descriptor back to the ring with old skb to prevent a stall
 	 */
-	if (!new_skb) {
+	if (!new_page) {
 		netdev_err(ndev,
-			   "skb alloc failed, dropped mgm pkt from flow %d\n",
+			   "page alloc failed, dropped mgm pkt from flow %d\n",
 			   flow_id);
-		new_skb = skb;
-		skb = NULL;	/* return NULL */
-	} else {
-		/* return the filled skb */
-		skb_put(skb, pkt_len);
+		new_page = page;
+		page = NULL;	/* return NULL */
 	}
 
 	/* queue another DMA */
-	ret = prueth_dma_rx_push(emac, new_skb, &emac->rx_mgm_chn);
+	ret = prueth_dma_rx_push_mapped(emac, &emac->rx_chns, new_page,
+					PRUETH_MAX_PKT_SIZE);
 	if (WARN_ON(ret < 0))
-		dev_kfree_skb_any(new_skb);
+		page_pool_recycle_direct(rx_chn->pg_pool, new_page);
 
-	return skb;
+	return page;
 }
 
 static void prueth_tx_ts_sr1(struct prueth_emac *emac,
@@ -362,14 +360,14 @@ static void prueth_tx_ts_sr1(struct prueth_emac *emac,
 static irqreturn_t prueth_rx_mgm_ts_thread_sr1(int irq, void *dev_id)
 {
 	struct prueth_emac *emac = dev_id;
-	struct sk_buff *skb;
+	struct page *page;
 
-	skb = prueth_process_rx_mgm(emac, PRUETH_RX_MGM_FLOW_TIMESTAMP_SR1);
-	if (!skb)
+	page = prueth_process_rx_mgm(emac, PRUETH_RX_MGM_FLOW_TIMESTAMP_SR1);
+	if (!page)
 		return IRQ_NONE;
 
-	prueth_tx_ts_sr1(emac, (void *)skb->data);
-	dev_kfree_skb_any(skb);
+	prueth_tx_ts_sr1(emac, (void *)page_address(page));
+	page_pool_recycle_direct(page->pp, page);
 
 	return IRQ_HANDLED;
 }
@@ -377,15 +375,15 @@ static irqreturn_t prueth_rx_mgm_ts_thread_sr1(int irq, void *dev_id)
 static irqreturn_t prueth_rx_mgm_rsp_thread(int irq, void *dev_id)
 {
 	struct prueth_emac *emac = dev_id;
-	struct sk_buff *skb;
+	struct page *page;
 	u32 rsp;
 
-	skb = prueth_process_rx_mgm(emac, PRUETH_RX_MGM_FLOW_RESPONSE_SR1);
-	if (!skb)
+	page = prueth_process_rx_mgm(emac, PRUETH_RX_MGM_FLOW_RESPONSE_SR1);
+	if (!page)
 		return IRQ_NONE;
 
 	/* Process command response */
-	rsp = le32_to_cpu(*(__le32 *)skb->data) & 0xffff0000;
+	rsp = le32_to_cpu(*(__le32 *)page_address(page)) & 0xffff0000;
 	if (rsp == ICSSG_SHUTDOWN_CMD_SR1) {
 		netdev_dbg(emac->ndev, "f/w Shutdown cmd resp %x\n", rsp);
 		complete(&emac->cmd_complete);
@@ -394,7 +392,7 @@ static irqreturn_t prueth_rx_mgm_rsp_thread(int irq, void *dev_id)
 		complete(&emac->cmd_complete);
 	}
 
-	dev_kfree_skb_any(skb);
+	page_pool_recycle_direct(page->pp, page);
 
 	return IRQ_HANDLED;
 }
@@ -440,13 +438,35 @@ static int prueth_emac_start(struct prueth *prueth, struct prueth_emac *emac)
 		goto halt_pru;
 	}
 
-	emac->fw_running = 1;
 	return 0;
 
 halt_pru:
 	rproc_shutdown(prueth->pru[slice]);
 
 	return ret;
+}
+
+static void prueth_emac_stop(struct prueth_emac *emac)
+{
+	struct prueth *prueth = emac->prueth;
+	int slice;
+
+	switch (emac->port_id) {
+	case PRUETH_PORT_MII0:
+		slice = ICSS_SLICE0;
+		break;
+	case PRUETH_PORT_MII1:
+		slice = ICSS_SLICE1;
+		break;
+	default:
+		netdev_err(emac->ndev, "invalid port\n");
+		return;
+	}
+
+	if (!emac->is_sr1)
+		rproc_shutdown(prueth->txpru[slice]);
+	rproc_shutdown(prueth->rtu[slice]);
+	rproc_shutdown(prueth->pru[slice]);
 }
 
 /**
@@ -722,14 +742,14 @@ static void emac_ndo_set_rx_mode_sr1(struct net_device *ndev)
 static const struct net_device_ops emac_netdev_ops = {
 	.ndo_open = emac_ndo_open,
 	.ndo_stop = emac_ndo_stop,
-	.ndo_start_xmit = emac_ndo_start_xmit,
+	.ndo_start_xmit = icssg_ndo_start_xmit,
 	.ndo_set_mac_address = eth_mac_addr,
 	.ndo_validate_addr = eth_validate_addr,
-	.ndo_tx_timeout = emac_ndo_tx_timeout,
+	.ndo_tx_timeout = icssg_ndo_tx_timeout,
 	.ndo_set_rx_mode = emac_ndo_set_rx_mode_sr1,
-	.ndo_eth_ioctl = emac_ndo_ioctl,
-	.ndo_get_stats64 = emac_ndo_get_stats64,
-	.ndo_get_phys_port_name = emac_ndo_get_phys_port_name,
+	.ndo_eth_ioctl = icssg_ndo_ioctl,
+	.ndo_get_stats64 = icssg_ndo_get_stats64,
+	.ndo_get_phys_port_name = icssg_ndo_get_phys_port_name,
 };
 
 static int prueth_netdev_init(struct prueth *prueth,
@@ -767,7 +787,7 @@ static int prueth_netdev_init(struct prueth *prueth,
 		goto free_ndev;
 	}
 
-	INIT_DELAYED_WORK(&emac->stats_work, emac_stats_work_handler);
+	INIT_DELAYED_WORK(&emac->stats_work, icssg_stats_work_handler);
 
 	ret = pruss_request_mem_region(prueth->pruss,
 				       port == PRUETH_PORT_MII0 ?
@@ -847,6 +867,7 @@ static int prueth_netdev_init(struct prueth *prueth,
 	}
 	ether_addr_copy(emac->mac_addr, ndev->dev_addr);
 
+	ndev->dev.of_node = eth_node;
 	ndev->min_mtu = PRUETH_MIN_PKT_SIZE;
 	ndev->max_mtu = PRUETH_MAX_MTU;
 	ndev->netdev_ops = &emac_netdev_ops;
@@ -854,7 +875,7 @@ static int prueth_netdev_init(struct prueth *prueth,
 	ndev->hw_features = NETIF_F_SG;
 	ndev->features = ndev->hw_features;
 
-	netif_napi_add(ndev, &emac->napi_rx, emac_napi_rx_poll);
+	netif_napi_add(ndev, &emac->napi_rx, icssg_napi_rx_poll);
 	prueth->emac[mac] = emac;
 
 	return 0;
@@ -1011,16 +1032,44 @@ static int prueth_probe(struct platform_device *pdev)
 	dev_dbg(dev, "sram: pa %llx va %p size %zx\n", prueth->msmcram.pa,
 		prueth->msmcram.va, prueth->msmcram.size);
 
+	prueth->iep0 = icss_iep_get_idx(np, 0);
+	if (IS_ERR(prueth->iep0)) {
+		ret = dev_err_probe(dev, PTR_ERR(prueth->iep0),
+				    "iep0 get failed\n");
+		goto free_pool;
+	}
+
+	prueth->iep1 = icss_iep_get_idx(np, 1);
+	if (IS_ERR(prueth->iep1)) {
+		ret = dev_err_probe(dev, PTR_ERR(prueth->iep1),
+				    "iep1 get failed\n");
+		goto put_iep0;
+	}
+
+	ret = icss_iep_init(prueth->iep0, NULL, NULL, 0);
+	if (ret) {
+		dev_err_probe(dev, ret, "failed to init iep0\n");
+		goto put_iep;
+	}
+
+	ret = icss_iep_init(prueth->iep1, NULL, NULL, 0);
+	if (ret) {
+		dev_err_probe(dev, ret, "failed to init iep1\n");
+		goto exit_iep0;
+	}
+
 	if (eth0_node) {
 		ret = prueth_netdev_init(prueth, eth0_node);
 		if (ret) {
 			dev_err_probe(dev, ret, "netdev init %s failed\n",
 				      eth0_node->name);
-			goto free_pool;
+			goto exit_iep;
 		}
 
-		if (of_find_property(eth0_node, "ti,half-duplex-capable", NULL))
-			prueth->emac[PRUETH_MAC0]->half_duplex = 1;
+		prueth->emac[PRUETH_MAC0]->half_duplex =
+			of_property_read_bool(eth0_node, "ti,half-duplex-capable");
+
+		prueth->emac[PRUETH_MAC0]->iep = prueth->iep0;
 	}
 
 	if (eth1_node) {
@@ -1031,8 +1080,10 @@ static int prueth_probe(struct platform_device *pdev)
 			goto netdev_exit;
 		}
 
-		if (of_find_property(eth1_node, "ti,half-duplex-capable", NULL))
-			prueth->emac[PRUETH_MAC1]->half_duplex = 1;
+		prueth->emac[PRUETH_MAC1]->half_duplex =
+			of_property_read_bool(eth1_node, "ti,half-duplex-capable");
+
+		prueth->emac[PRUETH_MAC1]->iep = prueth->iep1;
 	}
 
 	/* register the network devices */
@@ -1091,6 +1142,19 @@ netdev_exit:
 		prueth_netdev_exit(prueth, eth_node);
 	}
 
+exit_iep:
+	icss_iep_exit(prueth->iep1);
+exit_iep0:
+	icss_iep_exit(prueth->iep0);
+
+put_iep:
+	icss_iep_put(prueth->iep1);
+
+put_iep0:
+	icss_iep_put(prueth->iep0);
+	prueth->iep0 = NULL;
+	prueth->iep1 = NULL;
+
 free_pool:
 	gen_pool_free(prueth->sram_pool,
 		      (unsigned long)prueth->msmcram.va, msmc_ram_size);
@@ -1137,6 +1201,12 @@ static void prueth_remove(struct platform_device *pdev)
 
 		prueth_netdev_exit(prueth, eth_node);
 	}
+
+	icss_iep_exit(prueth->iep1);
+	icss_iep_exit(prueth->iep0);
+
+	icss_iep_put(prueth->iep1);
+	icss_iep_put(prueth->iep0);
 
 	gen_pool_free(prueth->sram_pool,
 		      (unsigned long)prueth->msmcram.va,

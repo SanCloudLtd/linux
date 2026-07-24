@@ -129,7 +129,6 @@ struct dmtimer {
 	void __iomem	*func_base;	/* function register base */
 
 	atomic_t enabled;
-	unsigned long rate;
 	unsigned reserved:1;
 	unsigned posted:1;
 	unsigned omap1:1;
@@ -1105,12 +1104,8 @@ static int omap_dm_timer_probe(struct platform_device *pdev)
 		return  -ENOMEM;
 
 	timer->irq = platform_get_irq(pdev, 0);
-	if (timer->irq < 0) {
-		if (of_property_read_bool(dev->of_node, "ti,timer-pwm"))
-			dev_err(dev, "Did not find timer interrupt, timer usable in PWM mode only\n");
-		else
-			return timer->irq;
-	}
+	if (timer->irq < 0)
+		return timer->irq;
 
 	timer->io_base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(timer->io_base))

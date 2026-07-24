@@ -14,6 +14,7 @@
 #define TIDSS_MAX_OLDI_TXES 2
 
 typedef u32 dispc_irq_t;
+struct tidss_oldi;
 
 struct tidss_device {
 	struct drm_device ddev;		/* DRM device for DSS */

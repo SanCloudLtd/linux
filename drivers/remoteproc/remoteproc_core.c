@@ -34,6 +34,7 @@
 #include <linux/idr.h>
 #include <linux/elf.h>
 #include <linux/crc32.h>
+#include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_ring.h>
@@ -46,7 +47,6 @@
 
 static DEFINE_MUTEX(rproc_list_mutex);
 static LIST_HEAD(rproc_list);
-static DEFINE_MUTEX(dmabuf_list_mutex);
 static struct notifier_block rproc_panic_nb;
 
 typedef int (*rproc_handle_resource_t)(struct rproc *rproc,
@@ -901,14 +901,10 @@ static struct rproc_dmabuf_entry *rproc_find_entry_for_dmabuf(struct rproc *rpro
 {
 	struct rproc_dmabuf_entry *dmabuf_entry;
 
-	mutex_lock(&dmabuf_list_mutex);
 	list_for_each_entry(dmabuf_entry, &rproc->dmabufs, node) {
-		if (dmabuf_entry->dmabuf == dmabuf) {
-			mutex_unlock(&dmabuf_list_mutex);
+		if (dmabuf_entry->dmabuf == dmabuf)
 			return dmabuf_entry;
-		}
 	}
-	mutex_unlock(&dmabuf_list_mutex);
 
 	return NULL;
 }
@@ -917,6 +913,8 @@ static struct rproc_dmabuf_entry *rproc_find_entry_for_dmabuf(struct rproc *rpro
 int rproc_dmabuf_get_da(struct rproc *rproc, struct dma_buf *dmabuf, dma_addr_t *dma)
 {
 	struct rproc_dmabuf_entry *dmabuf_entry;
+
+	guard(mutex)(&rproc->lock);
 
 	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
 	if (!dmabuf_entry)
@@ -943,6 +941,9 @@ int rproc_attach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
 	struct sg_table *sgt;
 	int ret;
 
+	/* Prevent multiple entries in list for same dmabuf */
+	guard(mutex)(&rproc->lock);
+
 	/* Check if already in list */
 	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
 	if (dmabuf_entry) {
@@ -951,10 +952,8 @@ int rproc_attach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
 	}
 
 	attachment = dma_buf_attach(dmabuf, dev);
-	if (IS_ERR(attachment)) {
-		ret = PTR_ERR(attachment);
-		goto out;
-	}
+	if (IS_ERR(attachment))
+		return PTR_ERR(attachment);
 
 	/* TODO: Move mapping to get_da()? */
 	sgt = dma_buf_map_attachment(attachment, DMA_BIDIRECTIONAL);
@@ -980,9 +979,7 @@ int rproc_attach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
 	dmabuf_entry->sgt = sgt;
 	dmabuf_entry->refcount = 1;
 
-	mutex_lock(&dmabuf_list_mutex);
 	list_add_tail(&dmabuf_entry->node, &rproc->dmabufs);
-	mutex_unlock(&dmabuf_list_mutex);
 
 	return 0;
 
@@ -990,7 +987,6 @@ fail_unmap:
 	dma_buf_unmap_attachment(attachment, sgt, DMA_BIDIRECTIONAL);
 fail_detach:
 	dma_buf_detach(dmabuf, attachment);
-out:
 	return ret;
 }
 EXPORT_SYMBOL(rproc_attach_dmabuf);
@@ -1001,15 +997,15 @@ static void rproc_release_dmabuf(struct rproc *rproc, struct rproc_dmabuf_entry 
 		dma_buf_unmap_attachment(dmabuf_entry->attachment, dmabuf_entry->sgt, DMA_BIDIRECTIONAL);
 	if (dmabuf_entry->dmabuf && dmabuf_entry->attachment)
 		dma_buf_detach(dmabuf_entry->dmabuf, dmabuf_entry->attachment);
-	mutex_lock(&dmabuf_list_mutex);
 	list_del(&dmabuf_entry->node);
-	mutex_unlock(&dmabuf_list_mutex);
 	kfree(dmabuf_entry);
 }
 
 int rproc_detach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
 {
 	struct rproc_dmabuf_entry *dmabuf_entry;
+
+	guard(mutex)(&rproc->lock);
 
 	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
 	if (!dmabuf_entry)
@@ -1750,7 +1746,7 @@ static int rproc_attach(struct rproc *rproc)
 	ret = rproc_set_rsc_table(rproc);
 	if (ret) {
 		dev_err(dev, "can't load resource table: %d\n", ret);
-		goto unprepare_device;
+		goto clean_up_resources;
 	}
 
 	/* reset max_notifyid */
@@ -1767,7 +1763,7 @@ static int rproc_attach(struct rproc *rproc)
 	ret = rproc_handle_resources(rproc, rproc_loading_handlers);
 	if (ret) {
 		dev_err(dev, "Failed to process resources: %d\n", ret);
-		goto unprepare_device;
+		goto clean_up_resources;
 	}
 
 	/* Allocate carveout resources associated to rproc */
@@ -1786,9 +1782,9 @@ static int rproc_attach(struct rproc *rproc)
 
 clean_up_resources:
 	rproc_resource_cleanup(rproc);
-unprepare_device:
 	/* release HW resources if needed */
 	rproc_unprepare_device(rproc);
+	kfree(rproc->clean_table);
 disable_iommu:
 	rproc_disable_iommu(rproc);
 	return ret;
@@ -2158,6 +2154,7 @@ int rproc_shutdown(struct rproc *rproc)
 	kfree(rproc->cached_table);
 	rproc->cached_table = NULL;
 	rproc->table_ptr = NULL;
+	rproc->table_sz = 0;
 out:
 	mutex_unlock(&rproc->lock);
 	return ret;
@@ -2246,6 +2243,7 @@ EXPORT_SYMBOL(rproc_detach);
 struct rproc *rproc_get_by_phandle(phandle phandle)
 {
 	struct rproc *rproc = NULL, *r;
+	struct device_driver *driver;
 	struct device_node *np;
 
 	np = of_find_node_by_phandle(phandle);
@@ -2256,7 +2254,26 @@ struct rproc *rproc_get_by_phandle(phandle phandle)
 	list_for_each_entry_rcu(r, &rproc_list, node) {
 		if (r->dev.parent && device_match_of_node(r->dev.parent, np)) {
 			/* prevent underlying implementation from being removed */
-			if (!try_module_get(r->dev.parent->driver->owner)) {
+
+			/*
+			 * If the remoteproc's parent has a driver, the
+			 * remoteproc is not part of a cluster and we can use
+			 * that driver.
+			 */
+			driver = r->dev.parent->driver;
+
+			/*
+			 * If the remoteproc's parent does not have a driver,
+			 * look for the driver associated with the cluster.
+			 */
+			if (!driver) {
+				if (r->dev.parent->parent)
+					driver = r->dev.parent->parent->driver;
+				if (!driver)
+					break;
+			}
+
+			if (!try_module_get(driver->owner)) {
 				dev_err(&r->dev, "can't get owner\n");
 				break;
 			}
@@ -2599,6 +2616,13 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	rproc->dev.driver_data = rproc;
 	idr_init(&rproc->notifyids);
 
+	/* Assign a unique device index and name */
+	rproc->index = ida_alloc(&rproc_dev_index, GFP_KERNEL);
+	if (rproc->index < 0) {
+		dev_err(dev, "ida_alloc failed: %d\n", rproc->index);
+		goto put_device;
+	}
+
 	/* Make device dma capable by inheriting from parent's capabilities */
 	set_dma_ops(&rproc->dev, get_dma_ops(rproc->dev.parent));
 	if (dma_coerce_mask_and_coherent(&rproc->dev, dma_get_mask(rproc->dev.parent)))
@@ -2620,13 +2644,6 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 
 	if (rproc_alloc_ops(rproc, ops))
 		goto put_device;
-
-	/* Assign a unique device index and name */
-	rproc->index = ida_alloc(&rproc_dev_index, GFP_KERNEL);
-	if (rproc->index < 0) {
-		dev_err(dev, "ida_alloc failed: %d\n", rproc->index);
-		goto put_device;
-	}
 
 	dev_set_name(&rproc->dev, "remoteproc%d", rproc->index);
 
@@ -2680,7 +2697,11 @@ EXPORT_SYMBOL(rproc_free);
  */
 void rproc_put(struct rproc *rproc)
 {
-	module_put(rproc->dev.parent->driver->owner);
+	if (rproc->dev.parent->driver)
+		module_put(rproc->dev.parent->driver->owner);
+	else
+		module_put(rproc->dev.parent->parent->driver->owner);
+
 	put_device(&rproc->dev);
 }
 EXPORT_SYMBOL(rproc_put);

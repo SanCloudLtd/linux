@@ -318,7 +318,7 @@ static bool check_storage_bpf_ma(struct bpf_local_storage *local_storage,
 	 *
 	 * If the local_storage->list is already empty, the caller will not
 	 * care about the bpf_ma value also because the caller is not
-	 * responsibile to free the local_storage.
+	 * responsible to free the local_storage.
 	 */
 
 	if (storage_smap)
@@ -414,47 +414,21 @@ void bpf_selem_unlink(struct bpf_local_storage_elem *selem, bool reuse_now)
 	bpf_selem_unlink_storage(selem, reuse_now);
 }
 
-/* If cacheit_lockit is false, this lookup function is lockless */
-struct bpf_local_storage_data *
-bpf_local_storage_lookup(struct bpf_local_storage *local_storage,
-			 struct bpf_local_storage_map *smap,
-			 bool cacheit_lockit)
+void __bpf_local_storage_insert_cache(struct bpf_local_storage *local_storage,
+				      struct bpf_local_storage_map *smap,
+				      struct bpf_local_storage_elem *selem)
 {
-	struct bpf_local_storage_data *sdata;
-	struct bpf_local_storage_elem *selem;
+	unsigned long flags;
 
-	/* Fast path (cache hit) */
-	sdata = rcu_dereference_check(local_storage->cache[smap->cache_idx],
-				      bpf_rcu_lock_held());
-	if (sdata && rcu_access_pointer(sdata->smap) == smap)
-		return sdata;
-
-	/* Slow path (cache miss) */
-	hlist_for_each_entry_rcu(selem, &local_storage->list, snode,
-				  rcu_read_lock_trace_held())
-		if (rcu_access_pointer(SDATA(selem)->smap) == smap)
-			break;
-
-	if (!selem)
-		return NULL;
-
-	sdata = SDATA(selem);
-	if (cacheit_lockit) {
-		unsigned long flags;
-
-		/* spinlock is needed to avoid racing with the
-		 * parallel delete.  Otherwise, publishing an already
-		 * deleted sdata to the cache will become a use-after-free
-		 * problem in the next bpf_local_storage_lookup().
-		 */
-		raw_spin_lock_irqsave(&local_storage->lock, flags);
-		if (selem_linked_to_storage(selem))
-			rcu_assign_pointer(local_storage->cache[smap->cache_idx],
-					   sdata);
-		raw_spin_unlock_irqrestore(&local_storage->lock, flags);
-	}
-
-	return sdata;
+	/* spinlock is needed to avoid racing with the
+	 * parallel delete.  Otherwise, publishing an already
+	 * deleted sdata to the cache will become a use-after-free
+	 * problem in the next bpf_local_storage_lookup().
+	 */
+	raw_spin_lock_irqsave(&local_storage->lock, flags);
+	if (selem_linked_to_storage(selem))
+		rcu_assign_pointer(local_storage->cache[smap->cache_idx], SDATA(selem));
+	raw_spin_unlock_irqrestore(&local_storage->lock, flags);
 }
 
 static int check_flags(const struct bpf_local_storage_data *old_sdata,
@@ -823,8 +797,12 @@ bpf_local_storage_map_alloc(union bpf_attr *attr,
 	smap->elem_size = offsetof(struct bpf_local_storage_elem,
 				   sdata.data[attr->value_size]);
 
-	smap->bpf_ma = bpf_ma;
-	if (bpf_ma) {
+	/* In PREEMPT_RT, kmalloc(GFP_ATOMIC) is still not safe in non
+	 * preemptible context. Thus, enforce all storages to use
+	 * bpf_mem_alloc when CONFIG_PREEMPT_RT is enabled.
+	 */
+	smap->bpf_ma = IS_ENABLED(CONFIG_PREEMPT_RT) ? true : bpf_ma;
+	if (smap->bpf_ma) {
 		err = bpf_mem_alloc_init(&smap->selem_ma, smap->elem_size, false);
 		if (err)
 			goto free_smap;

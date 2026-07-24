@@ -418,7 +418,7 @@ static void ox05b_init_formats(struct v4l2_subdev_state *state)
 	int i;
 
 	for (i = 0; i < 2; ++i) {
-		format = v4l2_subdev_state_get_stream_format(state, 0, i);
+		format = v4l2_subdev_state_get_format(state, 0, i);
 		format->code = ox05b_mbus_formats[0];
 		format->width = ox05b_framesizes[0].width;
 		format->height = ox05b_framesizes[0].height;
@@ -452,23 +452,16 @@ static int ox05b_set_fmt(struct v4l2_subdev *sd,
 				       height, fmt->format.width,
 				       fmt->format.height);
 
-	v4l2_subdev_lock_state(state);
+	format = v4l2_subdev_state_get_format(state, fmt->pad, fmt->stream);
 
-	format = v4l2_subdev_state_get_stream_format(state, fmt->pad, fmt->stream);
-
-	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && ox05b->streaming) {
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && ox05b->streaming)
 		ret = -EBUSY;
-		goto done;
-	}
 
 	format->code = code;
 	format->width = fsize->width;
 	format->height = fsize->height;
 
 	fmt->format = *format;
-
-done:
-	v4l2_subdev_unlock_state(state);
 
 	return ret;
 }
@@ -517,7 +510,7 @@ static int ox05b_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 	if (pad != 0)
 		return -EINVAL;
 	state = v4l2_subdev_lock_and_get_active_state(sd);
-	fmt = v4l2_subdev_state_get_stream_format(state, 0, 0);
+	fmt = v4l2_subdev_state_get_format(state, 0, 0);
 	if (!fmt) {
 		ret = -EPIPE;
 		goto out;
@@ -567,8 +560,8 @@ static int ox05b_set_routing(struct v4l2_subdev *sd,
 	return ret;
 }
 
-static int ox05b_init_cfg(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_state *state)
+static int ox05b_init_state(struct v4l2_subdev *sd,
+			    struct v4l2_subdev_state *state)
 {
 	int ret;
 
@@ -615,6 +608,7 @@ static int ox05b_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int ox05b_get_frame_interval(struct v4l2_subdev *sd,
+				    struct v4l2_subdev_state *sd_state,
 				    struct v4l2_subdev_frame_interval *fi)
 {
 	struct ox05b *ox05b = to_ox05b(sd);
@@ -625,6 +619,7 @@ static int ox05b_get_frame_interval(struct v4l2_subdev *sd,
 }
 
 static int ox05b_set_frame_interval(struct v4l2_subdev *sd,
+				    struct v4l2_subdev_state *sd_state,
 				    struct v4l2_subdev_frame_interval *fi)
 {
 	struct ox05b *ox05b = to_ox05b(sd);
@@ -664,7 +659,7 @@ static int ox05b_set_groupA(struct ox05b *ox05b)
 	u32 exposure = ox05b->ir_exposure->val;
 	u32 again = ox05b->ir_again->val;
 	u32 dgain = ox05b->ir_dgain->val;
-	struct reg_sequence ox05b_groupA[] = {
+	const struct reg_sequence ox05b_groupA[] = {
 		{0x3208, 0x01}, /* Group 1 (IR Dominant VC0) hold start */
 		{OX05B_AEC_PK_EXPO_HI, (exposure >> 8) & 0xff}, /* Exposure time Hi */
 		{OX05B_AEC_PK_EXPO_LO, exposure & 0xff}, /* Exposure time Low */
@@ -695,7 +690,7 @@ static int ox05b_set_groupB(struct ox05b *ox05b)
 	u32 exposure = ox05b->exposure->val;
 	u32 again = ox05b->again->val;
 	u32 dgain = ox05b->dgain->val;
-	struct reg_sequence ox05b_groupB[] = {
+	const struct reg_sequence ox05b_groupB[] = {
 		{0x3208, 0x00}, /* Group 0 (RGB Dominant VC1) hold start */
 		{OX05B_AEC_PK_EXPO_HI, (exposure >> 8) & 0xff}, /* Exposure time Hi */
 		{OX05B_AEC_PK_EXPO_LO, exposure & 0xff}, /* Exposure time Low */
@@ -723,7 +718,7 @@ static int ox05b_set_groupB(struct ox05b *ox05b)
 static int ox05b_set_AB_mode_regs(struct ox05b *ox05b)
 {
 	int i, ret;
-	struct reg_sequence ox5b_AB_mode_regs[] = {
+	const struct reg_sequence ox5b_AB_mode_regs[] = {
 		{0x3211, 0xF1}, /* AB mode enable */
 		{0x3212, 0x21}, /* Enable sync between holds of group 0 and group 1*/
 		{0x3208, 0xA0}, /* Always use for repeat launch */
@@ -924,25 +919,94 @@ err_unlock:
 	return ret;
 }
 
+static int ox05b_sd_enable_streams(struct v4l2_subdev *sd,
+				   struct v4l2_subdev_state *state,
+				   u32 pad, u64 streams_mask)
+{
+	struct ox05b *ox05b = to_ox05b(sd);
+	int ret;
+
+	mutex_lock(&ox05b->lock);
+
+	if (ox05b->streaming) {
+		mutex_unlock(&ox05b->lock);
+		return 0;
+	}
+
+	ret = pm_runtime_resume_and_get(ox05b->dev);
+	if (ret < 0)
+		goto err_unlock;
+
+	ret = ox05b_start_stream(ox05b);
+	if (ret < 0)
+		goto err_runtime_put;
+
+	ox05b->streaming = true;
+	mutex_unlock(&ox05b->lock);
+	return 0;
+
+err_runtime_put:
+	pm_runtime_put(ox05b->dev);
+
+err_unlock:
+	mutex_unlock(&ox05b->lock);
+	dev_err(ox05b->dev,
+		"%s: failed to enable streams %d\n", __func__, ret);
+	return ret;
+}
+
+static int ox05b_sd_disable_streams(struct v4l2_subdev *sd,
+				    struct v4l2_subdev_state *state,
+				    u32 pad, u64 streams_mask)
+{
+	struct ox05b *ox05b = to_ox05b(sd);
+	int ret;
+
+	mutex_lock(&ox05b->lock);
+
+	if (!ox05b->streaming) {
+		mutex_unlock(&ox05b->lock);
+		return 0;
+	}
+
+	ret = ox05b_stop_stream(ox05b);
+		if (ret < 0)
+			goto err_runtime_put;
+
+	ox05b->streaming = false;
+	mutex_unlock(&ox05b->lock);
+
+	return 0;
+
+err_runtime_put:
+	pm_runtime_put(ox05b->dev);
+	return ret;
+}
+
 static const struct v4l2_subdev_video_ops ox05b_subdev_video_ops = {
-	.g_frame_interval = ox05b_get_frame_interval,
-	.s_frame_interval = ox05b_set_frame_interval,
 	.s_stream = ox05b_set_stream,
 };
 
 static const struct v4l2_subdev_pad_ops ox05b_subdev_pad_ops = {
-	.init_cfg = ox05b_init_cfg,
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = ox05b_set_fmt,
 	.enum_mbus_code	= ox05b_enum_mbus_code,
 	.enum_frame_size = ox05b_enum_frame_sizes,
 	.set_routing = ox05b_set_routing,
 	.get_frame_desc	= ox05b_get_frame_desc,
+	.get_frame_interval = ox05b_get_frame_interval,
+	.set_frame_interval = ox05b_set_frame_interval,
+	.enable_streams = ox05b_sd_enable_streams,
+	.disable_streams = ox05b_sd_disable_streams,
 };
 
 static const struct v4l2_subdev_ops ox05b_subdev_ops = {
 	.video	= &ox05b_subdev_video_ops,
 	.pad	= &ox05b_subdev_pad_ops,
+};
+
+static const struct v4l2_subdev_internal_ops ox05b_internal_ops = {
+		.init_state = ox05b_init_state,
 };
 
 static const struct v4l2_ctrl_ops ox05b_ctrl_ops = {
@@ -997,6 +1061,7 @@ static int ox05b_probe(struct i2c_client *client)
 	/* Initialize the subdev and its controls. */
 	sd = &ox05b->subdev;
 	v4l2_i2c_subdev_init(sd, client, &ox05b_subdev_ops);
+	sd->internal_ops = &ox05b_internal_ops;
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
 		     V4L2_SUBDEV_FL_HAS_EVENTS |

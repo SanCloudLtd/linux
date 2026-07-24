@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only or MIT */
 /* Texas Instruments Ethernet Switch Firmware (EthFw) ABIs
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024-2025 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 

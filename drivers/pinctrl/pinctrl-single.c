@@ -81,8 +81,6 @@ struct pcs_conf_type {
  * @name:	pinctrl function name
  * @vals:	register and vals array
  * @nvals:	number of entries in vals array
- * @pgnames:	array of pingroup names the function uses
- * @npgnames:	number of pingroup names the function uses
  * @conf:	array of pin configurations
  * @nconfs:	number of pin configurations available
  * @node:	list node
@@ -91,8 +89,6 @@ struct pcs_function {
 	const char *name;
 	struct pcs_func_vals *vals;
 	unsigned nvals;
-	const char **pgnames;
-	int npgnames;
 	struct pcs_conf_vals *conf;
 	int nconfs;
 	struct list_head node;
@@ -239,32 +235,32 @@ static struct lock_class_key pcs_request_class;
  * does not help in this case.
  */
 
-static unsigned __maybe_unused pcs_readb(void __iomem *reg)
+static unsigned int pcs_readb(void __iomem *reg)
 {
 	return readb(reg);
 }
 
-static unsigned __maybe_unused pcs_readw(void __iomem *reg)
+static unsigned int pcs_readw(void __iomem *reg)
 {
 	return readw(reg);
 }
 
-static unsigned __maybe_unused pcs_readl(void __iomem *reg)
+static unsigned int pcs_readl(void __iomem *reg)
 {
 	return readl(reg);
 }
 
-static void __maybe_unused pcs_writeb(unsigned val, void __iomem *reg)
+static void pcs_writeb(unsigned int val, void __iomem *reg)
 {
 	writeb(val, reg);
 }
 
-static void __maybe_unused pcs_writew(unsigned val, void __iomem *reg)
+static void pcs_writew(unsigned int val, void __iomem *reg)
 {
 	writew(val, reg);
 }
 
-static void __maybe_unused pcs_writel(unsigned val, void __iomem *reg)
+static void pcs_writel(unsigned int val, void __iomem *reg)
 {
 	writel(val, reg);
 }
@@ -556,21 +552,30 @@ static int pcs_pinconf_set(struct pinctrl_dev *pctldev,
 	unsigned offset = 0, shift = 0, i, data, ret;
 	u32 arg;
 	int j;
+	enum pin_config_param param;
 
 	ret = pcs_get_function(pctldev, pin, &func);
 	if (ret)
 		return ret;
 
 	for (j = 0; j < num_configs; j++) {
+		param = pinconf_to_config_param(configs[j]);
+
+		/* BIAS_DISABLE has no entry in the func->conf table */
+		if (param == PIN_CONFIG_BIAS_DISABLE) {
+			/* This just disables all bias entries */
+			pcs_pinconf_clear_bias(pctldev, pin);
+			continue;
+		}
+
 		for (i = 0; i < func->nconfs; i++) {
-			if (pinconf_to_config_param(configs[j])
-				!= func->conf[i].param)
+			if (param != func->conf[i].param)
 				continue;
 
 			offset = pin * (pcs->width / BITS_PER_BYTE);
 			data = pcs->read(pcs->base + offset);
 			arg = pinconf_to_config_argument(configs[j]);
-			switch (func->conf[i].param) {
+			switch (param) {
 			/* 2 parameters */
 			case PIN_CONFIG_INPUT_SCHMITT:
 			case PIN_CONFIG_DRIVE_STRENGTH:
@@ -582,9 +587,6 @@ static int pcs_pinconf_set(struct pinctrl_dev *pctldev,
 				data |= (arg << shift) & func->conf[i].mask;
 				break;
 			/* 4 parameters */
-			case PIN_CONFIG_BIAS_DISABLE:
-				pcs_pinconf_clear_bias(pctldev, pin);
-				break;
 			case PIN_CONFIG_BIAS_PULL_DOWN:
 			case PIN_CONFIG_BIAS_PULL_UP:
 				if (arg)
@@ -1922,16 +1924,11 @@ free:
 	return ret;
 }
 
-static int pcs_remove(struct platform_device *pdev)
+static void pcs_remove(struct platform_device *pdev)
 {
 	struct pcs_device *pcs = platform_get_drvdata(pdev);
 
-	if (!pcs)
-		return 0;
-
 	pcs_free_resources(pcs);
-
-	return 0;
 }
 
 static const struct pcs_soc_data pinctrl_single_omap_wkup = {
@@ -1984,7 +1981,7 @@ MODULE_DEVICE_TABLE(of, pcs_of_match);
 
 static struct platform_driver pcs_driver = {
 	.probe		= pcs_probe,
-	.remove		= pcs_remove,
+	.remove_new	= pcs_remove,
 	.driver = {
 		.name		= DRIVER_NAME,
 		.of_match_table	= pcs_of_match,

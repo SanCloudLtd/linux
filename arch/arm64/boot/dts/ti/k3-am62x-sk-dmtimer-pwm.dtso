@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * DT Overlay to enable DM timer in PWM mode for AM62*-SK
+ * DT Overlay to enable DM timer in PWM mode on AM625-SK, AM62 LP-SK, and AM62A7-SK
  *
  * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
  */
@@ -32,21 +32,13 @@
 	};
 
 	main_pwm3: dmtimer-main-pwm-3 {
-		/* PWM signal routed to pin 8 of J3 header */
+		/* dmtimer PWM output */
+		/* Pin 8 of J3 */
 		compatible = "ti,omap-dmtimer-pwm";
 		#pwm-cells = <3>;
 		ti,timers = <&main_timer3>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&main_timer3_pins_default>;
-	};
-
-	mcu_pwm0: dmtimer-mcu-pwm-0 {
-		/* PWM signal routed to pin 22 of J10/J9 header */
-		compatible = "ti,omap-dmtimer-pwm";
-		#pwm-cells = <3>;
-		ti,timers = <&mcu_timer0>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mcu_timer0_pins_default>;
 	};
 };
 
@@ -62,17 +54,4 @@
 			AM62X_IOPAD(0x01dc, PIN_OUTPUT, 2) /* (A15) MCAN0_RX.TIMER_IO3 */
 		>;
 	};
-};
-
-&mcu_pmx0 {
-	mcu_timer0_pins_default: mcu_timer0-default-pins {
-		pinctrl-single,pins = <
-			AM62X_MCU_IOPAD(0x0038, PIN_OUTPUT, 1) /* (C4) MCU_MCAN0_RX.MCU_TIMER_IO0 */
-		>;
-	};
-};
-
-&mcu_timer0 {
-	/* Caution: ESM might use a MCU_TIMER in an ESM example */
-	status = "okay";
 };
