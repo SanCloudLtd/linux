@@ -4,5 +4,7 @@ config CRYPTO_DEV_TI_MCRC64
 	depends on ARCH_K3
 	select CRYPTO_HASH
 	help
-	  This enables support for the MCRC hw accelerator which can be found
-	  on TI SOC.
+	  This enables support for the MCRC hw accelerator
+	  which can be found on TI SOC.
+	  MCRC support 64-bit CRC calculation using
+	  Full-CPU mode.

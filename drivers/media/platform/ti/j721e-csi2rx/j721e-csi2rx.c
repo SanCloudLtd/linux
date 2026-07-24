@@ -749,17 +749,7 @@ static void ti_csi2rx_cleanup_buffers(struct ti_csi2rx_ctx *ctx,
 	int ret;
 
 	spin_lock_irqsave(&dma->lock, flags);
-	list_for_each_entry_safe(buf, tmp, &ctx->dma.queue, list) {
-		list_del(&buf->list);
-		vb2_buffer_done(&buf->vb.vb2_buf, buf_state);
-	}
-
-	if (dma->curr)
-		vb2_buffer_done(&dma->curr->vb.vb2_buf, buf_state);
-
 	state = ctx->dma.state;
-
-	dma->curr = NULL;
 	dma->state = TI_CSI2RX_DMA_STOPPED;
 	spin_unlock_irqrestore(&dma->lock, flags);
 
@@ -769,6 +759,17 @@ static void ti_csi2rx_cleanup_buffers(struct ti_csi2rx_ctx *ctx,
 			dev_dbg(ctx->csi->dev,
 				"Failed to drain DMA. Next frame might be bogus\n");
 	}
+	dmaengine_terminate_sync(ctx->dma.chan);
+
+	spin_lock_irqsave(&dma->lock, flags);
+	list_for_each_entry_safe(buf, tmp, &ctx->dma.queue, list) {
+		list_del(&buf->list);
+		vb2_buffer_done(&buf->vb.vb2_buf, buf_state);
+	}
+
+	if (dma->curr)
+		vb2_buffer_done(&dma->curr->vb.vb2_buf, buf_state);
+	spin_unlock_irqrestore(&dma->lock, flags);
 }
 
 static int ti_csi2rx_restart_dma(struct ti_csi2rx_ctx *ctx,
@@ -926,7 +927,7 @@ static int ti_csi2rx_start_streaming(struct vb2_queue *vq, unsigned int count)
 	remote_pad = media_entity_remote_source_pad_unique(ctx->pad.entity);
 	if (!remote_pad) {
 		ret = -ENODEV;
-		goto err;
+		goto err_pipeline;
 	}
 
 	state = v4l2_subdev_lock_and_get_active_state(&csi->subdev);
@@ -950,7 +951,7 @@ static int ti_csi2rx_start_streaming(struct vb2_queue *vq, unsigned int count)
 	if (!route) {
 		ret = -ENODEV;
 		v4l2_subdev_unlock_state(state);
-		goto err;
+		goto err_pipeline;
 	}
 
 	ctx->stream = route->sink_stream;
@@ -961,7 +962,7 @@ static int ti_csi2rx_start_streaming(struct vb2_queue *vq, unsigned int count)
 	if (ret == -ENOIOCTLCMD)
 		ctx->vc = 0;
 	else if (ret < 0)
-		goto err;
+		goto err_pipeline;
 	else
 		ctx->vc = ret;
 
@@ -972,16 +973,16 @@ static int ti_csi2rx_start_streaming(struct vb2_queue *vq, unsigned int count)
 	spin_lock_irqsave(&dma->lock, flags);
 	buf = list_entry(dma->queue.next, struct ti_csi2rx_buffer, list);
 	list_del(&buf->list);
-	dma->state = TI_CSI2RX_DMA_ACTIVE;
 	dma->curr = buf;
 
 	ret = ti_csi2rx_start_dma(ctx, buf);
 	if (ret) {
 		dev_err(csi->dev, "Failed to start DMA: %d\n", ret);
 		spin_unlock_irqrestore(&dma->lock, flags);
-		goto err_pipeline;
+		goto err_dma;
 	}
 
+	dma->state = TI_CSI2RX_DMA_ACTIVE;
 	spin_unlock_irqrestore(&dma->lock, flags);
 
 	ret = v4l2_subdev_enable_streams(&csi->subdev,
@@ -993,7 +994,6 @@ static int ti_csi2rx_start_streaming(struct vb2_queue *vq, unsigned int count)
 	return 0;
 
 err_dma:
-	dmaengine_terminate_sync(ctx->dma.chan);
 	writel(0, csi->shim + SHIM_DMACNTX(ctx->idx));
 err_pipeline:
 	video_device_pipeline_stop(&ctx->vdev);
@@ -1015,10 +1015,6 @@ static void ti_csi2rx_stop_streaming(struct vb2_queue *vq)
 					  BIT(0));
 	if (ret)
 		dev_err(csi->dev, "Failed to stop subdev stream\n");
-
-	ret = dmaengine_terminate_sync(ctx->dma.chan);
-	if (ret)
-		dev_err(csi->dev, "Failed to stop DMA: %d\n", ret);
 
 	writel(0, csi->shim + SHIM_DMACNTX(ctx->idx));
 
@@ -1477,37 +1473,45 @@ cleanup_dma:
 static int ti_csi2rx_suspend(struct device *dev)
 {
 	struct ti_csi2rx_dev *csi = dev_get_drvdata(dev);
+	enum ti_csi2rx_dma_state state;
 	struct ti_csi2rx_ctx *ctx;
 	struct ti_csi2rx_dma *dma;
 	unsigned long flags = 0;
 	int i, ret = 0;
+
+	/* Assert the pixel reset. */
+	writel(0, csi->shim + SHIM_CNTL);
 
 	for (i = 0; i < csi->num_ctx; i++) {
 		ctx = &csi->ctx[i];
 		dma = &ctx->dma;
 
 		spin_lock_irqsave(&dma->lock, flags);
-		if (dma->state != TI_CSI2RX_DMA_STOPPED) {
-			spin_unlock_irqrestore(&dma->lock, flags);
+		state = dma->state;
+		spin_unlock_irqrestore(&dma->lock, flags);
+
+		if (state != TI_CSI2RX_DMA_STOPPED) {
 			ret = v4l2_subdev_disable_streams(&csi->subdev,
 							  TI_CSI2RX_PAD_FIRST_SOURCE + ctx->idx,
 							  BIT(0));
 			if (ret)
 				dev_err(csi->dev, "Failed to stop subdev stream\n");
-			/* Terminate DMA */
-			ret = dmaengine_terminate_sync(ctx->dma.chan);
-			if (ret)
-				dev_err(csi->dev, "Failed to stop DMA\n");
-		} else {
-			spin_unlock_irqrestore(&dma->lock, flags);
+
 		}
 
 		/* Stop any on-going streams */
 		writel(0, csi->shim + SHIM_DMACNTX(ctx->idx));
+
+		/* Drain DMA */
+		ti_csi2rx_drain_dma(ctx);
+
+		/* Terminate DMA */
+		ret = dmaengine_terminate_sync(ctx->dma.chan);
+		if (ret)
+			dev_err(csi->dev, "Failed to stop DMA\n");
+
 	}
 
-	/* Assert the pixel reset. */
-	writel(0, csi->shim + SHIM_CNTL);
 
 	return ret;
 }

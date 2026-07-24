@@ -112,12 +112,29 @@ static int mcrc_reset_signature(void __iomem *regs, u32 channel)
 	return 0;
 }
 
+/* This helper implements crc64 calculation using CPU */
+static u64 mcrc_calculate_sw_crc(u64 crc, u8 byte)
+{
+	u64 bit = 0;
+	u8 j;
+
+	for (j = 0; j < 8; j++) {
+		bit = crc & MCRC_ALG_MASK;
+		crc <<= 1;
+		if (byte & (0x80 >> j))
+			bit ^= MCRC_ALG_MASK;
+		if (bit)
+			crc ^= MCRC_CRC64_POLY;
+	}
+
+	return crc;
+}
+
 static int mcrc_calculate_crc(void __iomem *regs, u32 channel,
 			      const u8 *d8, size_t length, u64 *crc64)
 {
 	void __iomem *psa_reg;
-	u64 signature = 0, bit = 0;
-	u8 j;
+	u64 signature = 0;
 
 	if (channel <= 0 || channel >= MCRC_CHANNEL_INVALID)
 		return -EINVAL;
@@ -129,19 +146,8 @@ static int mcrc_calculate_crc(void __iomem *regs, u32 channel,
 		signature = readq_relaxed(psa_reg);
 	}
 
-	if (length) {
-		while (length--) {
-			for (j = 0; j < 8; j++) {
-				bit = signature & MCRC_ALG_MASK;
-				signature <<= 1;
-				if (*d8 & (0x80 >> j))
-					bit ^= MCRC_ALG_MASK;
-				if (bit)
-					signature ^= MCRC_CRC64_POLY;
-			}
-			d8++;
-		}
-	}
+	while (length--)
+		signature = mcrc_calculate_sw_crc(signature, *d8++);
 
 	*crc64 = signature;
 
@@ -363,4 +369,4 @@ module_platform_driver(mcrc_driver);
 
 MODULE_AUTHOR("Kamlesh Gurudasani <kamlesh@ti.com>");
 MODULE_DESCRIPTION("Texas Instruments MCRC hardware driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

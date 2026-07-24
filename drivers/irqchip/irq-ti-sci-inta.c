@@ -64,7 +64,7 @@ struct ti_sci_inta_event_desc {
  * @events:		Array of event descriptors assigned to this vint.
  * @parent_virq:	Linux IRQ number that gets attached to parent
  * @vint_id:		TISCI vint ID
- * @affinity_managed	flag to indicate VINT affinity is managed
+ * @affinity_managed:	flag to indicate VINT affinity is managed
  */
 struct ti_sci_inta_vint_desc {
 	struct irq_domain *domain;
@@ -201,6 +201,7 @@ static int ti_sci_inta_xlate_irq(struct ti_sci_inta_irq_domain *inta,
 /**
  * ti_sci_inta_alloc_parent_irq() - Allocate parent irq to Interrupt aggregator
  * @domain:	IRQ domain corresponding to Interrupt Aggregator
+ * @vint_id:	vint_id to which event is to be mapped to
  *
  * Return 0 if all went well else corresponding error value.
  */
@@ -525,6 +526,10 @@ static int ti_sci_inta_set_affinity(struct irq_data *d,
 	event_desc = irq_data_get_irq_chip_data(d);
 	if (event_desc) {
 		vint_desc = to_vint_desc(event_desc, event_desc->vint_bit);
+		parent_irq_data = irq_get_irq_data(vint_desc->parent_virq);
+
+		if (!parent_irq_data || !parent_irq_data->chip->irq_set_affinity)
+			return -EINVAL;
 
 		/*
 		 * Cannot set affinity if there is more than one event
@@ -536,9 +541,8 @@ static int ti_sci_inta_set_affinity(struct irq_data *d,
 		vint_desc->affinity_managed = true;
 
 		irq_data_update_effective_affinity(d, mask_val);
-		parent_irq_data = irq_get_irq_data(vint_desc->parent_virq);
-		if (parent_irq_data->chip->irq_set_affinity)
-			return parent_irq_data->chip->irq_set_affinity(parent_irq_data, mask_val, force);
+
+		return parent_irq_data->chip->irq_set_affinity(parent_irq_data, mask_val, force);
 	}
 
 	return -EINVAL;
