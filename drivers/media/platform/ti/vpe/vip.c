@@ -63,14 +63,18 @@ MODULE_PARM_DESC(debug, "debug level (0-8)");
 		v4l2_info(dev, fmt, ##arg)
 
 #define CTRL_CORE_SMA_SW_1      0x534
+
 /*
- * The srce_info structure contains per-srce data.
+ * port flag bits
  */
-struct vip_srce_info {
-	u8	base_channel;	/* the VPDMA channel nummber */
-	u8	vb_index;	/* input frame f, f-1, f-2 index */
-	u8	vb_part;	/* identifies section of co-planar formats */
-};
+#define FLAG_FRAME_1D		BIT(0)
+#define FLAG_EVEN_LINE_SKIP	BIT(1)
+#define FLAG_ODD_LINE_SKIP	BIT(2)
+#define FLAG_MODE_TILED		BIT(3)
+#define FLAG_INTERLACED		BIT(4)
+#define FLAG_MULTIPLEXED	BIT(5)
+#define FLAG_MULT_PORT		BIT(6)
+#define FLAG_MULT_ANC		BIT(7)
 
 #define VIP_VPDMA_FIFO_SIZE	2
 #define VIP_DROPQ_SIZE		3
@@ -79,11 +83,51 @@ struct vip_srce_info {
  * Define indices into the srce_info tables
  */
 
-#define VIP_SRCE_MULT_PORT		0
-#define VIP_SRCE_MULT_ANC		1
+#define VIP_SRCE_MULT_PORT	0
+#define VIP_SRCE_MULT_ANC	1
 #define VIP_SRCE_LUMA		2
 #define VIP_SRCE_CHROMA		3
 #define VIP_SRCE_RGB		4
+
+#define reg_read(dev, offset) ioread32((dev)->base + (offset))
+#define reg_write(dev, offset, val) iowrite32((val), (dev)->base + (offset))
+
+#define GET_OFFSET_TOP(port, obj, reg)	\
+	((obj)->res->start - (port)->dev->res->start + (reg))
+
+#define VIP_SET_MMR_ADB_HDR(port, hdr, regs, offset_a)	\
+	VPDMA_SET_MMR_ADB_HDR((port)->mmr_adb, vip_mmr_adb, hdr, regs, offset_a)
+
+/*
+ * These represent the module resets bit for slice 1
+ * Upon detecting slice2 we simply left shift by 1
+ */
+#define VIP_DP_RST	BIT(16)
+#define VIP_PARSER_RST	BIT(18)
+#define VIP_CSC_RST	BIT(20)
+#define VIP_SC_RST	BIT(22)
+#define VIP_DS0_RST	BIT(25)
+#define VIP_DS1_RST	BIT(27)
+
+#define VIP_PARSER_PORT(p)		(VIP_PARSER_PORTA_0 + ((p) * 0x8U))
+#define VIP_PARSER_EXTRA_PORT(p)	(VIP_PARSER_PORTA_1 + ((p) * 0x8U))
+#define VIP_PARSER_CROP_H_PORT(p) \
+		(VIP_PARSER_PORTA_EXTRA4 + ((p) * 0x10U))
+#define VIP_PARSER_CROP_V_PORT(p) \
+		(VIP_PARSER_PORTA_EXTRA5 + ((p) * 0x10U))
+#define VIP_PARSER_STOP_IMM_PORT(p)	(VIP_PARSER_PORTA_EXTRA6 + ((p) * 0x4U))
+
+#define PARSER_IRQ_MASK (VIP_PORTA_OUTPUT_FIFO_YUV | \
+			 VIP_PORTB_OUTPUT_FIFO_YUV)
+
+/*
+ * The srce_info structure contains per-srce data.
+ */
+struct vip_srce_info {
+	u8	base_channel;	/* the VPDMA channel number */
+	u8	vb_index;	/* input frame f, f-1, f-2 index */
+	u8	vb_part;	/* identifies section of co-planar formats */
+};
 
 static struct vip_srce_info srce_info[5] = {
 	[VIP_SRCE_MULT_PORT] = {
@@ -245,6 +289,44 @@ static struct vip_fmt vip_formats[VIP_MAX_ACTIVE_FMT] = {
 	},
 };
 
+/*
+ * DMA address/data block for the shadow registers
+ */
+struct vip_mmr_adb {
+	struct vpdma_adb_hdr	sc_hdr0;
+	u32			sc_regs0[7];
+	u32			sc_pad0[1];
+	struct vpdma_adb_hdr	sc_hdr8;
+	u32			sc_regs8[6];
+	u32			sc_pad8[2];
+	struct vpdma_adb_hdr	sc_hdr17;
+	u32			sc_regs17[9];
+	u32			sc_pad17[3];
+	struct vpdma_adb_hdr	csc_hdr;
+	u32			csc_regs[6];
+	u32			csc_pad[2];
+};
+
+/*
+ * Function prototype declarations
+ */
+static int alloc_port(struct vip_dev *, int);
+static void free_port(struct vip_port *);
+static int vip_setup_parser(struct vip_port *port);
+static int vip_setup_scaler(struct vip_stream *stream);
+static void vip_enable_parser(struct vip_port *port, bool on);
+static void vip_reset_parser(struct vip_port *port, bool on);
+static void vip_parser_stop_imm(struct vip_port *port, bool on);
+static void stop_dma(struct vip_stream *stream, bool clear_list);
+static int vip_load_vpdma_list_fifo(struct vip_stream *stream);
+static inline bool is_scaler_available(struct vip_port *port);
+static inline bool allocate_scaler(struct vip_port *port);
+static inline void free_scaler(struct vip_port *port);
+static bool is_csc_available(struct vip_port *port);
+static bool allocate_csc(struct vip_port *port,
+			 enum vip_csc_state csc_direction);
+static void free_csc(struct vip_port *port);
+
 /* initialize  v4l2_format_info member in vip_formats array */
 static void vip_init_format_info(struct device *dev)
 {
@@ -274,7 +356,6 @@ static char *fourcc_to_str(u32 fmt)
 /*
  * Find our format description corresponding to the passed v4l2_format
  */
-
 static struct vip_fmt *find_port_format_by_pix(struct vip_port *port,
 					       u32 pixelformat)
 {
@@ -312,17 +393,17 @@ inline struct vip_port *notifier_to_vip_port(struct v4l2_async_notifier *n)
 
 static bool vip_is_mbuscode_yuv(u32 code)
 {
-	return ((code & 0xFF00) == 0x2000);
+	return ((code & 0xff00) == 0x2000);
 }
 
 static bool vip_is_mbuscode_rgb(u32 code)
 {
-	return ((code & 0xFF00) == 0x1000);
+	return ((code & 0xff00) == 0x1000);
 }
 
 static bool vip_is_mbuscode_raw(u32 code)
 {
-	return ((code & 0xFF00) == 0x3000);
+	return ((code & 0xff00) == 0x3000);
 }
 
 /*
@@ -352,41 +433,6 @@ vip_csc_direction(u32 src_code, const struct v4l2_format_info *dfinfo)
 }
 
 /*
- * port flag bits
- */
-#define FLAG_FRAME_1D		BIT(0)
-#define FLAG_EVEN_LINE_SKIP	BIT(1)
-#define FLAG_ODD_LINE_SKIP	BIT(2)
-#define FLAG_MODE_TILED		BIT(3)
-#define FLAG_INTERLACED		BIT(4)
-#define FLAG_MULTIPLEXED	BIT(5)
-#define FLAG_MULT_PORT		BIT(6)
-#define FLAG_MULT_ANC		BIT(7)
-
-/*
- * Function prototype declarations
- */
-static int alloc_port(struct vip_dev *, int);
-static void free_port(struct vip_port *);
-static int vip_setup_parser(struct vip_port *port);
-static int vip_setup_scaler(struct vip_stream *stream);
-static void vip_enable_parser(struct vip_port *port, bool on);
-static void vip_reset_parser(struct vip_port *port, bool on);
-static void vip_parser_stop_imm(struct vip_port *port, bool on);
-static void stop_dma(struct vip_stream *stream, bool clear_list);
-static int vip_load_vpdma_list_fifo(struct vip_stream *stream);
-static inline bool is_scaler_available(struct vip_port *port);
-static inline bool allocate_scaler(struct vip_port *port);
-static inline void free_scaler(struct vip_port *port);
-static bool is_csc_available(struct vip_port *port);
-static bool allocate_csc(struct vip_port *port,
-			 enum vip_csc_state csc_direction);
-static void free_csc(struct vip_port *port);
-
-#define reg_read(dev, offset) ioread32((dev)->base + (offset))
-#define reg_write(dev, offset, val) iowrite32((val), (dev)->base + (offset))
-
-/*
  * Insert a masked field into a 32-bit field
  */
 static void insert_field(u32 *valp, u32 field, u32 mask, int shift)
@@ -397,30 +443,6 @@ static void insert_field(u32 *valp, u32 field, u32 mask, int shift)
 	val |= (field & mask) << shift;
 	*valp = val;
 }
-
-/*
- * DMA address/data block for the shadow registers
- */
-struct vip_mmr_adb {
-	struct vpdma_adb_hdr	sc_hdr0;
-	u32			sc_regs0[7];
-	u32			sc_pad0[1];
-	struct vpdma_adb_hdr	sc_hdr8;
-	u32			sc_regs8[6];
-	u32			sc_pad8[2];
-	struct vpdma_adb_hdr	sc_hdr17;
-	u32			sc_regs17[9];
-	u32			sc_pad17[3];
-	struct vpdma_adb_hdr	csc_hdr;
-	u32			csc_regs[6];
-	u32			csc_pad[2];
-};
-
-#define GET_OFFSET_TOP(port, obj, reg)	\
-	((obj)->res->start - (port)->dev->res->start + (reg))
-
-#define VIP_SET_MMR_ADB_HDR(port, hdr, regs, offset_a)	\
-	VPDMA_SET_MMR_ADB_HDR((port)->mmr_adb, vip_mmr_adb, hdr, regs, offset_a)
 
 /*
  * Set the headers for all of the address/data block structures.
@@ -437,17 +459,6 @@ static void init_adb_hdrs(struct vip_port *port)
 			    GET_OFFSET_TOP(port, port->dev->csc, CSC_CSC00));
 
 };
-
-/*
- * These represent the module resets bit for slice 1
- * Upon detecting slice2 we simply left shift by 1
- */
-#define VIP_DP_RST	BIT(16)
-#define VIP_PARSER_RST	BIT(18)
-#define VIP_CSC_RST	BIT(20)
-#define VIP_SC_RST	BIT(22)
-#define VIP_DS0_RST	BIT(25)
-#define VIP_DS1_RST	BIT(27)
 
 static void vip_module_reset(struct vip_dev *dev, uint32_t module, bool on)
 {
@@ -581,14 +592,6 @@ static void vip_set_pclk_invert(struct vip_port *port)
 				   1 << offset, 1 << offset);
 }
 
-#define VIP_PARSER_PORT(p)	(VIP_PARSER_PORTA_0 + ((p) * 0x8U))
-#define VIP_PARSER_EXTRA_PORT(p)	(VIP_PARSER_PORTA_1 + ((p) * 0x8U))
-#define VIP_PARSER_CROP_H_PORT(p) \
-		(VIP_PARSER_PORTA_EXTRA4 + ((p) * 0x10U))
-#define VIP_PARSER_CROP_V_PORT(p) \
-		(VIP_PARSER_PORTA_EXTRA5 + ((p) * 0x10U))
-#define VIP_PARSER_STOP_IMM_PORT(p)	(VIP_PARSER_PORTA_EXTRA6 + ((p) * 0x4U))
-
 static void vip_set_data_interface(struct vip_port *port,
 				   enum data_interface_modes mode)
 {
@@ -605,8 +608,6 @@ static void vip_set_slice_path(struct vip_dev *dev,
 {
 	u32 val = 0;
 	int data_path_reg;
-
-	vip_dbg(3, dev, "%s:\n", __func__);
 
 	data_path_reg = VIP_VIP1_DATA_PATH_SELECT + 4 * dev->slice_id;
 
@@ -781,7 +782,6 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 				  stream->bytesperline, c_rect,
 				  fmt->vpdma_fmt[plane], dma_addr,
 				  max_width, max_height, channel, flags);
-
 	return 0;
 }
 
@@ -807,9 +807,6 @@ static void add_stream_dtds(struct vip_stream *stream)
 	if (srce_type == VIP_SRCE_LUMA && port->fmt->coplanar)
 		add_out_dtd(stream, VIP_SRCE_CHROMA);
 }
-
-#define PARSER_IRQ_MASK (VIP_PORTA_OUTPUT_FIFO_YUV | \
-			 VIP_PORTB_OUTPUT_FIFO_YUV)
 
 static void enable_irqs(struct vip_dev *dev, int irq_num, int list_num)
 {
@@ -1387,17 +1384,18 @@ static int vip_enum_framesizes(struct file *file, void *priv,
 	struct vip_stream *stream = file2stream(file);
 	struct vip_port *port = stream->port;
 	struct vip_fmt *fmt;
-	struct v4l2_subdev_frame_size_enum fse;
 	int ret;
+	struct v4l2_subdev_frame_size_enum fse = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 
 	fmt = find_port_format_by_pix(port, f->pixel_format);
 	if (!fmt)
 		return -EINVAL;
 
 	fse.index = f->index;
-	fse.pad = 0;
 	fse.code = fmt->code;
-	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(port->subdev, pad, enum_frame_size, NULL, &fse);
 	if (ret)
 		return -EINVAL;
@@ -1525,11 +1523,14 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct vip_stream *stream = file2stream(file);
 	struct vip_port *port = stream->port;
-	struct v4l2_subdev_frame_size_enum fse;
 	struct vip_fmt *fmt;
 	u32 best_width, best_height, largest_width, largest_height;
 	int ret, found;
 	enum vip_csc_state csc_direction;
+	struct v4l2_subdev_frame_size_enum fse = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 
 	vip_dbg(3, stream, "try_fmt fourcc:%s size: %dx%d\n",
 		fourcc_to_str(f->fmt.pix.pixelformat),
@@ -1580,9 +1581,8 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 	best_height = 0;
 	largest_width = 0;
 	largest_height = 0;
-	fse.pad = 0;
+
 	fse.code = fmt->code;
-	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	for (fse.index = 0; ; fse.index++) {
 		u32 bpp = fmt->vpdma_fmt[0]->depth >> 3;
 
@@ -1831,6 +1831,7 @@ static int vip_s_fmt_vid_cap(struct file *file, void *priv,
 		f->fmt.pix.width, f->fmt.pix.height,
 		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
 
+	memset(&sfmt, 0, sizeof(sfmt));
 	mf = &sfmt.format;
 	v4l2_fill_mbus_format(mf, &f->fmt.pix, port->fmt->code);
 	/* Make sure to use the subdev size found in the try_fmt */
@@ -2693,8 +2694,6 @@ static void vip_stop_streaming(struct vb2_queue *vq)
 	struct vip_buffer *buf;
 	int ret;
 
-	vip_dbg(2, stream, "%s:\n", __func__);
-
 	vip_parser_stop_imm(port, true);
 	vip_enable_parser(port, false);
 	unset_fmt_params(stream);
@@ -2830,7 +2829,10 @@ static int vip_init_port(struct vip_port *port)
 {
 	int ret;
 	struct vip_fmt *fmt;
-	struct v4l2_subdev_format sd_fmt;
+	struct v4l2_subdev_format sd_fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 	struct v4l2_mbus_framefmt *mbus_fmt = &sd_fmt.format;
 
 	if (port->num_streams != 0)
@@ -2841,8 +2843,6 @@ static int vip_init_port(struct vip_port *port)
 		goto done;
 
 	/* Get subdevice current frame format */
-	sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
-	sd_fmt.pad = 0;
 	ret = v4l2_subdev_call(port->subdev, pad, get_fmt, NULL, &sd_fmt);
 	if (ret)
 		vip_dbg(1, port, "init_port get_fmt failed in subdev: (%d)\n",
@@ -3221,8 +3221,6 @@ static int vip_open(struct file *file)
 	struct vip_dev *dev = port->dev;
 	int ret = 0;
 
-	vip_dbg(2, stream, "%s\n", __func__);
-
 	mutex_lock(&dev->mutex);
 
 	ret = v4l2_fh_open(file);
@@ -3252,8 +3250,6 @@ static int vip_release(struct file *file)
 	struct vip_dev *dev = port->dev;
 	bool fh_singular;
 	int ret;
-
-	vip_dbg(2, stream, "%s\n", __func__);
 
 	mutex_lock(&dev->mutex);
 
@@ -3520,8 +3516,8 @@ static void free_port(struct vip_port *port)
 	if (!port)
 		return;
 
-	v4l2_async_notifier_unregister(&port->notifier);
-	v4l2_async_notifier_cleanup(&port->notifier);
+	v4l2_async_nf_unregister(&port->notifier);
+	v4l2_async_nf_cleanup(&port->notifier);
 	free_stream(port->cap_streams[0]);
 }
 
@@ -3542,7 +3538,7 @@ static void vip_vpdma_fw_cb(struct platform_device *pdev)
 static int vip_create_streams(struct vip_port *port,
 			      struct v4l2_subdev *subdev)
 {
-	struct v4l2_fwnode_bus_parallel *bus;
+	struct v4l2_mbus_config_parallel *bus;
 	struct vip_bt656_bus *bt656_ep;
 	int i;
 
@@ -3579,8 +3575,6 @@ static int vip_async_bound(struct v4l2_async_notifier *notifier,
 	struct vip_port *port = notifier_to_vip_port(notifier);
 	int ret;
 
-	vip_dbg(1, port, "%s\n", __func__);
-
 	if (port->subdev) {
 		vip_info(port, "Rejecting subdev %s (Already set!!)",
 			 subdev->name);
@@ -3599,9 +3593,6 @@ static int vip_async_bound(struct v4l2_async_notifier *notifier,
 
 static int vip_async_complete(struct v4l2_async_notifier *notifier)
 {
-	struct vip_port *port = notifier_to_vip_port(notifier);
-
-	vip_dbg(1, port, "%s\n", __func__);
 	return 0;
 }
 
@@ -3667,22 +3658,21 @@ static int vip_register_subdev_notif(struct vip_port *port,
 		vip_dbg(3, port, "ti,vip-channels %u\n", bt656_vep->num_channels);
 	}
 
-	v4l2_async_notifier_init(notifier);
+	v4l2_async_nf_init(notifier);
 
-	asd = v4l2_async_notifier_add_fwnode_subdev(notifier, subdev,
-					sizeof(struct v4l2_async_subdev));
+	asd = v4l2_async_nf_add_fwnode(notifier, subdev, struct v4l2_async_subdev);
 	if (IS_ERR(asd)) {
 		vip_dbg(1, port, "Error adding asd\n");
 		fwnode_handle_put(subdev);
-		v4l2_async_notifier_cleanup(notifier);
+		v4l2_async_nf_cleanup(notifier);
 		return -EINVAL;
 	}
 
 	notifier->ops = &vip_async_ops;
-	ret = v4l2_async_notifier_register(dev->v4l2_dev, notifier);
+	ret = v4l2_async_nf_register(dev->v4l2_dev, notifier);
 	if (ret) {
 		vip_dbg(1, port, "Error registering async notifier\n");
-		v4l2_async_notifier_cleanup(notifier);
+		v4l2_async_nf_cleanup(notifier);
 		ret = -EINVAL;
 	}
 
@@ -3992,4 +3982,4 @@ module_platform_driver(vip_pdrv);
 
 MODULE_DESCRIPTION("TI VIP driver");
 MODULE_AUTHOR("Texas Instruments");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

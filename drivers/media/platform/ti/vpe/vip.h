@@ -36,7 +36,7 @@
 #define VIP_NUM_SLICES	2
 
 /*
- * Additionnal client identifiers used for VPDMA configuration descriptors
+ * Additional client identifiers used for VPDMA configuration descriptors
  */
 #define VIP_SLICE1_CFD_SC_CLIENT	7
 #define VIP_SLICE2_CFD_SC_CLIENT	8
@@ -255,7 +255,6 @@ enum data_path_select {
 	VIP_CHR_DS_1_DATA_BYPASS,
 	VIP_CHR_DS_2_DATA_BYPASS,
 };
-
 
 enum data_interface_modes {
 	SINGLE_24B_INTERFACE = 0,

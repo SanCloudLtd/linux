@@ -19,6 +19,7 @@
 
 	aliases {
 		serial0 = &wkup_uart0;
+		serial1 = &mcu_uart0;
 		serial2 = &main_uart0;
 		serial3 = &main_uart1;
 		mmc0 = &sdhci0;
@@ -32,7 +33,21 @@
 	};
 
 	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
 		stdout-path = &main_uart0;
+
+		framebuffer0: framebuffer@0 {
+			compatible = "simple-framebuffer";
+			power-domains = <&k3_pds 186 TI_SCI_PD_EXCLUSIVE>;
+			clocks = <&k3_clks 186 6>,
+				 <&k3_clks 186 0>,
+				 <&k3_clks 186 2>;
+			display = <&dss0>;
+			status = "disabled";
+		};
 	};
 
 	memory@80000000 {
@@ -43,7 +58,7 @@
 		bootph-pre-ram;
 	};
 
-	reserved-memory {
+	reserved_memory: reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
@@ -438,13 +453,6 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
-};
-
-&main_i2c0 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_i2c0_pins_default>;
-	clock-frequency = <400000>;
 
 	typec_pd0: tps6598x@3f {
 		compatible = "ti,tps6598x";
@@ -587,7 +595,6 @@
 	vqmmc-supply = <&vddshv_sdio>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mmc1_pins_default>;
-	ti,driver-strength-ohm = <50>;
 	disable-wp;
 	bootph-all;
 };
@@ -673,8 +680,8 @@
 	       0 0 0 0
 	       0 0 0 0
 	>;
-	tx-num-evt = <32>;
-	rx-num-evt = <32>;
+	tx-num-evt = <0>;
+	rx-num-evt = <0>;
 };
 
 &fss {
@@ -758,10 +765,19 @@
 		ti,mbox-tx = <1 0 0>;
 	};
 };
+
+&wkup_r5fss0 {
+	status = "okay";
+};
+
 &wkup_r5fss0_core0 {
 	mboxes = <&mailbox0_cluster0 &mbox_r5_0>;
 	memory-region = <&wkup_r5fss0_core0_dma_memory_region>,
 			<&wkup_r5fss0_core0_memory_region>;
+};
+
+&mcu_r5fss0 {
+	status = "okay";
 };
 
 &mcu_r5fss0_core0 {
@@ -793,8 +809,6 @@
 
 	wkup_uart0_pins_default: wkup-uart0-default-pins {
 		pinctrl-single,pins = <
-			AM62PX_MCU_IOPAD(0x02c, PIN_INPUT, 0)	/* (C7) WKUP_UART0_CTSn */
-			AM62PX_MCU_IOPAD(0x030, PIN_OUTPUT, 0)	/* (C6) WKUP_UART0_RTSn */
 			AM62PX_MCU_IOPAD(0x024, PIN_INPUT, 0)	/* (D8) WKUP_UART0_RXD */
 			AM62PX_MCU_IOPAD(0x028, PIN_OUTPUT, 0)	/* (D7) WKUP_UART0_TXD */
 		>;
@@ -818,7 +832,7 @@
 
 &dss0_ports {
 	/* DSS0-VP2: DPI/HDMI Output */
-	port@1 {
+	hdmi0_dss: port@1 {
 		reg = <1>;
 		dss0_dpi1_out: endpoint {
 			remote-endpoint = <&sii9022_in>;

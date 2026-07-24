@@ -2,7 +2,7 @@
 /*
  * OmniVision OV1063X Camera Driver
  *
- * Copyright (C) 2018 Texas Instruments Incorporated -  http://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated -  http://www.ti.com/
  */
 
 struct ov1063x_reg {

@@ -5,7 +5,7 @@
  * Based on the original driver written by Phil Edworthy.
  * Copyright (C) 2013 Phil Edworthy
  * Copyright (C) 2013 Renesas Electronics
- * Copyright (C) 2018 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - http://www.ti.com/
  *
  * This driver has been tested at QVGA, VGA and 720p, and 1280x800 at up to
  * 30fps and it should work at any resolution in between and any frame rate
@@ -32,37 +32,68 @@
 #include "ov1063x_regs.h"
 
 /* Register definitions */
-#define	OV1063X_VFLIP			0x381c
-#define	 OV1063X_VFLIP_ON		GENMASK(7, 6)
-#define	 OV1063X_VFLIP_SUBSAMPLE	BIT(0)
-#define	OV1063X_HMIRROR			0x381d
-#define	 OV1063X_HMIRROR_ON		GENMASK(1, 0)
-#define	OV1063X_HORIZ_COLORCORRECT	0x6900
-#define	 OV1063X_HORIZ_COLORCORRECT_ON	BIT(0)
-#define OV1063X_PID			0x300a
-#define OV1063X_VER			0x300b
+#define OV1063X_STREAM_MODE			0x0100
 
-#define OV1063X_FORMAT_CTRL00		0x4300
-#define   OV1063X_FORMAT_YUYV		0x38
-#define   OV1063X_FORMAT_YYYU		0x39
-#define   OV1063X_FORMAT_UYVY		0x3A
-#define   OV1063X_FORMAT_VYUY		0x3B
+#define OV1063X_SC_CMMN_PLL_CTRL0		0x3003
+#define OV1063X_SC_CMMN_PLL_CTRL1		0x3004
+#define OV1063X_SC_CMMN_PCLK_DIV_CTRL		0x3007
+#define OV1063X_PID				0x300a
+#define OV1063X_VER				0x300b
+#define OV1063X_SC_CMMN_CLKRST2			0x301c
+#define OV1063X_ANA_ARRAY1			0x3621
+#define OV1063X_SENSOR_RSTGOLOW			0x3702
+#define OV1063X_SENSOR_HLDWIDTH			0x3703
+#define OV1063X_SENSOR_TXWIDTH			0x3704
+#define OV1063X_TIMING_Y_START_ADDR		0x3802
+#define OV1063X_TIMING_Y_END_ADDR		0x3806
+#define OV1063X_TIMING_X_OUTPUT_SIZE		0x3808
+#define OV1063X_TIMING_Y_OUTPUT_SIZE		0x380a
+#define OV1063X_TIMING_HTS			0x380c
+#define OV1063X_TIMING_VTS			0x380e
+#define OV1063X_VFLIP				0x381c
+#define OV1063X_VFLIP_ON			GENMASK(7, 6)
+#define OV1063X_VFLIP_SUBSAMPLE			BIT(0)
+#define OV1063X_HMIRROR				0x381d
+#define OV1063X_HMIRROR_ON			GENMASK(1, 0)
+
+#define OV1063X_FORMAT_CTRL00			0x4300
+#define OV1063X_VFIFO_LLEN_FIRS1_SEL		0x4605
+#define OV1063X_VFIFO_LINE_LENGTH_MAN		0x4606
+#define OV1063X_VFIFO_HSYNC_START_POSITION	0x460a
+#define OV1063X_DVP_MOD_SEL			0x4700
+
+#define OV1063X_ISP_RW05			0x5005
+
+#define OV1063X_HORIZ_COLORCORRECT		0x6900
+#define OV1063X_HORIZ_COLORCORRECT_ON		BIT(0)
+
+#define OV1063X_AEC_MAX_EXP_LONG_1		0xc488
+#define OV1063X_AEC_MAX_EXP_SHORT_1		0xc48a
+#define OV1063X_AWB_SIMPLE_MIN_NUM_1		0xc4cc
+#define OV1063X_AWB_CT_MIN_NUM_1		0xc4ce
+#define OV1063X_VTS_ADDR_1			0xc518
+#define OV1063X_HTS_ADDR			0xc51a
+
+#define OV1063X_FORMAT_YUYV			0x38
+#define OV1063X_FORMAT_YYYU			0x39
+#define OV1063X_FORMAT_UYVY			0x3A
+#define OV1063X_FORMAT_VYUY			0x3B
 
 /* IDs */
-#define OV10633_VERSION_REG		0xa630
-#define OV10635_VERSION_REG		0xa635
-#define OV1063X_VERSION(pid, ver)	(((pid) << 8) | ((ver) & 0xff))
+#define OV10633_VERSION_REG			0xa630
+#define OV10635_VERSION_REG			0xa635
+#define OV1063X_VERSION(pid, ver)		(((pid) << 8) | ((ver) & 0xff))
+
+#define OV1063X_SENSOR_WIDTH			1312
+#define OV1063X_SENSOR_HEIGHT			814
+
+#define OV1063X_MAX_WIDTH			1280
+#define OV1063X_MAX_HEIGHT			800
 
 enum ov1063x_model {
 	SENSOR_OV10633,
 	SENSOR_OV10635,
 };
-
-#define OV1063X_SENSOR_WIDTH		1312
-#define OV1063X_SENSOR_HEIGHT		814
-
-#define OV1063X_MAX_WIDTH		1280
-#define OV1063X_MAX_HEIGHT		800
 
 struct ov1063x_color_format {
 	u32 code;
@@ -181,11 +212,11 @@ static int ov1063x_s_stream(struct v4l2_subdev *sd, int enable)
 	struct regmap *map = priv->regmap;
 	int ret;
 
-	ret = regmap_write(map, 0x0100, enable);
+	ret = regmap_write(map, OV1063X_STREAM_MODE, enable);
 	if (ret)
 		return ret;
 
-	return regmap_write(map, 0x301c, enable ? 0xf0 : 0x70);
+	return regmap_write(map, OV1063X_SC_CMMN_CLKRST2, enable ? 0xf0 : 0x70);
 }
 
 static int ov1063x_set_regs(struct i2c_client *client,
@@ -407,15 +438,15 @@ static int ov1063x_set_params(struct i2c_client *client, u32 width, u32 height)
 		return ret;
 
 	/* Set PLL */
-	ret = regmap_write(map, 0x3003, r3003);
+	ret = regmap_write(map, OV1063X_SC_CMMN_PLL_CTRL0, r3003);
 	if (ret)
 		return ret;
-	ret = regmap_write(map, 0x3004, r3004);
+	ret = regmap_write(map, OV1063X_SC_CMMN_PLL_CTRL1, r3004);
 	if (ret)
 		return ret;
 
 	/* Set HSYNC */
-	ret = regmap_write(map, 0x4700, 0x00);
+	ret = regmap_write(map, OV1063X_DVP_MOD_SEL, 0x00);
 	if (ret)
 		return ret;
 
@@ -445,52 +476,57 @@ static int ov1063x_set_params(struct i2c_client *client, u32 width, u32 height)
 	dev_dbg(&client->dev, "r4300=0x%X\n", r4300);
 
 	/* Set output to 8-bit yuv */
-	ret = regmap_write(map, 0x4605, 0x08);
+	ret = regmap_write(map, OV1063X_VFIFO_LLEN_FIRS1_SEL, 0x08);
 	if (ret)
 		return ret;
 
 	/* Horizontal cropping */
-	ret = regmap_write(map, 0x3621, horiz_crop_mode);
+	ret = regmap_write(map, OV1063X_ANA_ARRAY1, horiz_crop_mode);
 	if (ret)
 		return ret;
 
-	ret = regmap_write(map, 0x3702, (pclk + 1500000) / 3000000);
+	ret = regmap_write(map, OV1063X_SENSOR_RSTGOLOW,
+			   (pclk + 1500000) / 3000000);
 	if (ret)
 		return ret;
-	ret = regmap_write(map, 0x3703, (pclk + 666666) / 1333333);
+	ret = regmap_write(map, OV1063X_SENSOR_HLDWIDTH,
+			   (pclk + 666666) / 1333333);
 	if (ret)
 		return ret;
-	ret = regmap_write(map, 0x3704, (pclk + 961500) / 1923000);
+	ret = regmap_write(map, OV1063X_SENSOR_TXWIDTH,
+			   (pclk + 961500) / 1923000);
 	if (ret)
 		return ret;
 
 	/* Vertical cropping */
 	tmp = ((OV1063X_SENSOR_HEIGHT - height_pre_subsample) / 2) & ~0x1;
-	ret = ov1063x_regmap_write16(map, 0x3802, tmp);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_Y_START_ADDR, tmp);
 	if (ret)
 		return ret;
 	tmp = tmp + height_pre_subsample + 3;
-	ret = ov1063x_regmap_write16(map, 0x3806, tmp);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_Y_END_ADDR, tmp);
 	if (ret)
 		return ret;
 
 	dev_dbg(&client->dev, "width x height = %x x %x\n",
 		priv->width, priv->height);
 	/* Output size */
-	ret = ov1063x_regmap_write16(map, 0x3808, priv->width);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_X_OUTPUT_SIZE,
+				     priv->width);
 	if (ret)
 		return ret;
-	ret = ov1063x_regmap_write16(map, 0x380a, priv->height);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_Y_OUTPUT_SIZE,
+				     priv->height);
 	if (ret)
 		return ret;
 
 	dev_dbg(&client->dev, "hts x vts = %x x %x\n", hts, vts);
 
-	ret = ov1063x_regmap_write16(map, 0x380c, hts);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_HTS, hts);
 	if (ret)
 		return ret;
 
-	ret = ov1063x_regmap_write16(map, 0x380e, vts);
+	ret = ov1063x_regmap_write16(map, OV1063X_TIMING_VTS, vts);
 	if (ret)
 		return ret;
 
@@ -507,27 +543,30 @@ static int ov1063x_set_params(struct i2c_client *client, u32 width, u32 height)
 			return ret;
 	}
 
-	ret = ov1063x_regmap_write16(map, 0x4606, 2 * hts);
+	ret = ov1063x_regmap_write16(map, OV1063X_VFIFO_LINE_LENGTH_MAN,
+				     2 * hts);
 	if (ret)
 		return ret;
-	ret = ov1063x_regmap_write16(map, 0x460a,
+	ret = ov1063x_regmap_write16(map, OV1063X_VFIFO_HSYNC_START_POSITION,
 				     2 * (hts - width_pre_subsample));
 	if (ret)
 		return ret;
 
 	tmp = (vts - 8) * 16;
-	ret = ov1063x_regmap_write16(map, 0xc488, tmp);
+	ret = ov1063x_regmap_write16(map, OV1063X_AEC_MAX_EXP_LONG_1, tmp);
 	if (ret)
 		return ret;
-	ret = ov1063x_regmap_write16(map, 0xc48a, tmp);
+	ret = ov1063x_regmap_write16(map, OV1063X_AEC_MAX_EXP_SHORT_1, tmp);
 	if (ret)
 		return ret;
 
 	nr_isp_pixels = sensor_width * (priv->height + 4);
-	ret = ov1063x_regmap_write16(map, 0xc4cc, nr_isp_pixels / 256);
+	ret = ov1063x_regmap_write16(map, OV1063X_AWB_SIMPLE_MIN_NUM_1,
+				     nr_isp_pixels / 256);
 	if (ret)
 		return ret;
-	ret = ov1063x_regmap_write16(map, 0xc4ce, nr_isp_pixels / 256);
+	ret = ov1063x_regmap_write16(map, OV1063X_AWB_CT_MIN_NUM_1,
+				     nr_isp_pixels / 256);
 	if (ret)
 		return ret;
 	ret = ov1063x_regmap_write16(map, 0xc512, nr_isp_pixels / 16);
@@ -536,19 +575,19 @@ static int ov1063x_set_params(struct i2c_client *client, u32 width, u32 height)
 
 	/* Horizontal sub-sampling */
 	if (horiz_sub_sample) {
-		ret = regmap_write(map, 0x5005, 0x9);
+		ret = regmap_write(map, OV1063X_ISP_RW05, 0x9);
 		if (ret)
 			return ret;
 
-		ret = regmap_write(map, 0x3007, 0x2);
+		ret = regmap_write(map, OV1063X_SC_CMMN_PCLK_DIV_CTRL, 0x2);
 		if (ret)
 			return ret;
 	}
 
-	ret = ov1063x_regmap_write16(map, 0xc518, vts);
+	ret = ov1063x_regmap_write16(map, OV1063X_VTS_ADDR_1, vts);
 	if (ret)
 		return ret;
-	ret = ov1063x_regmap_write16(map, 0xc51a, hts);
+	ret = ov1063x_regmap_write16(map, OV1063X_HTS_ADDR, hts);
 	if (ret)
 		return ret;
 
@@ -564,7 +603,6 @@ static int ov1063x_set_params(struct i2c_client *client, u32 width, u32 height)
 /*
  * V4L2 subdev video and pad level operations
  */
-
 static void ov1063x_get_default_format(struct v4l2_mbus_framefmt *mf)
 {
 	mf->width = ov1063x_framesizes[0].width;
@@ -772,10 +810,7 @@ static int ov1063x_video_probe(struct i2c_client *client)
  */
 static int ov1063x_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct v4l2_mbus_framefmt *mf;
-
-	dev_dbg(&client->dev, "%s:\n", __func__);
 
 	mf = v4l2_subdev_get_try_format(sd, fh->state, 0);
 	ov1063x_get_default_format(mf);
@@ -812,7 +847,7 @@ static const struct v4l2_subdev_pad_ops ov1063x_subdev_pad_ops = {
 	.set_fmt		= ov1063x_set_fmt,
 };
 
-static struct v4l2_subdev_ops ov1063x_subdev_ops = {
+static const struct v4l2_subdev_ops ov1063x_subdev_ops = {
 	.core	= &ov1063x_subdev_core_ops,
 	.video	= &ov1063x_subdev_video_ops,
 	.pad	= &ov1063x_subdev_pad_ops,
@@ -826,7 +861,6 @@ static const struct regmap_config ov1063x_regmap_config = {
 /*
  * i2c_driver function
  */
-
 static int ov1063x_probe(struct i2c_client *client)
 {
 	struct ov1063x_priv *priv;
@@ -927,7 +961,7 @@ err:
 	return ret;
 }
 
-static int ov1063x_remove(struct i2c_client *client)
+static void ov1063x_remove(struct i2c_client *client)
 {
 	struct ov1063x_priv *priv = i2c_get_clientdata(client);
 
@@ -935,8 +969,6 @@ static int ov1063x_remove(struct i2c_client *client)
 	v4l2_async_unregister_subdev(&priv->subdev);
 	ov1063x_set_power(client, false);
 	clk_disable_unprepare(priv->xvclk);
-
-	return 0;
 }
 
 static const struct i2c_device_id ov1063x_id[] = {
@@ -972,4 +1004,4 @@ module_i2c_driver(ov1063x_i2c_driver);
 
 MODULE_DESCRIPTION("SoC Camera driver for OmniVision OV1063X");
 MODULE_AUTHOR("Texas Instruments Inc.");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

@@ -235,6 +235,8 @@ struct prueth_emac {
 
 	struct bpf_prog *xdp_prog;
 	struct xdp_attachment_info xdpi;
+
+	struct netdev_hw_addr_list mcast_list;
 };
 
 /* The buf includes headroom compatible with both skb and xdpf */
@@ -330,6 +332,7 @@ struct prueth {
 	unsigned char switch_id[MAX_PHYS_ITEM_ID_LEN];
 	int default_vlan;
 	struct devlink *devlink;
+	spinlock_t vtbl_lock; /* Lock for vtbl in shared memory */
 };
 
 struct emac_tx_ts_response {
