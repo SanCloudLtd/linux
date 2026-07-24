@@ -14,8 +14,10 @@
 #include <linux/io.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/of_address.h>
-#include <linux/of_device.h>
+#include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/pruss_driver.h>
 #include <linux/regmap.h>
@@ -292,6 +294,11 @@ static void pruss_of_free_clk_provider(void *data)
 	of_node_put(clk_mux_np);
 }
 
+static void pruss_clk_unregister_mux(void *data)
+{
+	clk_unregister_mux(data);
+}
+
 static int pruss_clk_mux_setup(struct pruss *pruss, struct clk *clk_mux,
 			       char *mux_name, struct device_node *clks_np)
 {
@@ -347,8 +354,7 @@ static int pruss_clk_mux_setup(struct pruss *pruss, struct clk *clk_mux,
 		goto put_clk_mux_np;
 	}
 
-	ret = devm_add_action_or_reset(dev, (void(*)(void *))clk_unregister_mux,
-				       clk_mux);
+	ret = devm_add_action_or_reset(dev, pruss_clk_unregister_mux, clk_mux);
 	if (ret) {
 		dev_err(dev, "failed to add clkmux unregister action %d", ret);
 		goto put_clk_mux_np;

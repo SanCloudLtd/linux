@@ -17,17 +17,21 @@ description: |
 
 properties:
   compatible:
-    const: img,e5010-jpeg-enc
+    oneOf:
+      - items:
+          - const: ti,am62a-jpeg-enc
+          - const: img,e5010-jpeg-enc
+      - const: img,e5010-jpeg-enc
 
   reg:
     items:
-      - description: The E5010 main register region
+      - description: The E5010 core register region
       - description: The E5010 mmu register region
 
   reg-names:
     items:
-      - const: regjasper
-      - const: regmmu
+      - const: core
+      - const: mmu
 
   power-domains:
     maxItems: 1
@@ -36,12 +40,7 @@ properties:
     maxItems: 1
 
   clocks:
-    minItems: 1
-    maxItems: 2
-
-  clock-names:
-    minItems: 1
-    maxItems: 2
+    maxItems: 1
 
   interrupts:
     maxItems: 1
@@ -52,8 +51,6 @@ required:
   - reg-names
   - interrupts
   - clocks
-  - clock-names
-  - power-domains
 
 additionalProperties: false
 
@@ -63,13 +60,16 @@ examples:
     #include <dt-bindings/interrupt-controller/arm-gic.h>
     #include <dt-bindings/interrupt-controller/irq.h>
 
-    e5010: e5010@fd20000 {
-        compatible = "img,e5010-jpeg-enc";
-        reg = <0x00 0xfd20000 0x00 0x100>,
-              <0x00 0xfd20200 0x00 0x200>;
-        reg-names = "regjasper", "regmmu";
-        clocks = <&k3_clks 201 0>;
-        clock-names = "core_clk";
-        power-domains = <&k3_pds 201 TI_SCI_PD_EXCLUSIVE>;
-        interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
+    soc {
+      #address-cells = <2>;
+      #size-cells = <2>;
+      jpeg-encoder@fd20000 {
+          compatible = "img,e5010-jpeg-enc";
+          reg = <0x00 0xfd20000 0x00 0x100>,
+                <0x00 0xfd20200 0x00 0x200>;
+          reg-names = "core", "mmu";
+          clocks = <&k3_clks 201 0>;
+          power-domains = <&k3_pds 201 TI_SCI_PD_EXCLUSIVE>;
+          interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
+      };
     };

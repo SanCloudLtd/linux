@@ -106,8 +106,13 @@
 			      <0x00 0x4c000000 0x00 0x20000>,
 			      <0x00 0x4a820000 0x00 0x20000>,
 			      <0x00 0x4aa40000 0x00 0x20000>,
-			      <0x00 0x4bc00000 0x00 0x100000>;
-			reg-names = "gcfg", "bchanrt", "rchanrt", "tchanrt", "ringrt";
+			      <0x00 0x4bc00000 0x00 0x100000>,
+			      <0x00 0x48600000 0x00 0x8000>,
+			      <0x00 0x484a4000 0x00 0x2000>,
+			      <0x00 0x484c2000 0x00 0x2000>,
+			      <0x00 0x48420000 0x00 0x2000>;
+			reg-names = "gcfg", "bchanrt", "rchanrt", "tchanrt", "ringrt",
+				    "ring", "tchan", "rchan", "bchan";
 			msi-parent = <&inta_main_dmss>;
 			#dma-cells = <3>;
 
@@ -124,8 +129,13 @@
 			reg = <0x00 0x485c0000 0x00 0x100>,
 			      <0x00 0x4a800000 0x00 0x20000>,
 			      <0x00 0x4aa00000 0x00 0x40000>,
-			      <0x00 0x4b800000 0x00 0x400000>;
-			reg-names = "gcfg", "rchanrt", "tchanrt", "ringrt";
+			      <0x00 0x4b800000 0x00 0x400000>,
+			      <0x00 0x485e0000 0x00 0x10000>,
+			      <0x00 0x484a0000 0x00 0x2000>,
+			      <0x00 0x484c0000 0x00 0x2000>,
+			      <0x00 0x48430000 0x00 0x1000>;
+			reg-names = "gcfg", "rchanrt", "tchanrt", "ringrt",
+				    "ring", "tchan", "rchan", "rflow";
 			msi-parent = <&inta_main_dmss>;
 			#dma-cells = <2>;
 			bootph-all;
@@ -155,11 +165,10 @@
 
 	dmss_csi: bus@4e000000 {
 		compatible = "simple-bus";
+		ranges = <0x00 0x4e000000 0x00 0x4e000000 0x00 0x408000>;
 		#address-cells = <2>;
 		#size-cells = <2>;
 		dma-ranges;
-		ranges = <0x00 0x4e000000 0x00 0x4e000000 0x00 0x408000>;
-
 		ti,sci-dev-id = <198>;
 
 		inta_main_dmss_csi: interrupt-controller@4e400000 {
@@ -169,11 +178,11 @@
 			interrupt-controller;
 			interrupt-parent = <&gic500>;
 			msi-controller;
+			power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 			ti,sci = <&dmsc>;
 			ti,sci-dev-id = <200>;
 			ti,interrupt-ranges = <0 237 8>;
 			ti,unmapped-event-sources = <&main_bcdma_csi>;
-			power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 		};
 
 		main_bcdma_csi: dma-controller@4e230000 {
@@ -182,12 +191,12 @@
 			      <0x00 0x4e180000 0x00 0x8000>,
 			      <0x00 0x4e100000 0x00 0x10000>;
 			reg-names = "gcfg", "rchanrt", "ringrt";
-			msi-parent = <&inta_main_dmss_csi>;
 			#dma-cells = <3>;
+			msi-parent = <&inta_main_dmss_csi>;
+			power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 			ti,sci = <&dmsc>;
 			ti,sci-dev-id = <199>;
 			ti,sci-rm-range-rchan = <0x21>;
-			power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 		};
 	};
 
@@ -232,6 +241,13 @@
 		dma-names = "tx", "rx1", "rx2";
 	};
 
+	crc: crc@30300000 {
+		compatible = "ti,am62-mcrc64";
+		reg = <0x00 0x30300000 0x00 0x1000>;
+		clocks = <&k3_clks 116 0>;
+		power-domains = <&k3_pds 116 TI_SCI_PD_EXCLUSIVE>;
+	};
+
 	secure_proxy_sa3: mailbox@43600000 {
 		compatible = "ti,am654-secure-proxy";
 		#mbox-cells = <1>;
@@ -249,15 +265,36 @@
 	};
 
 	main_pmx0: pinctrl@f4000 {
-		compatible = "ti,am6-padconf";
+		compatible = "ti,am654-padconf", "pinctrl-single";
 		reg = <0x00 0xf4000 0x00 0x2ac>;
 		#pinctrl-cells = <1>;
 		pinctrl-single,register-width = <32>;
 		pinctrl-single,function-mask = <0xffffffff>;
+		pinctrl-single,gpio-range =
+			<&main_pmx0_range 0 32 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
+			<&main_pmx0_range 33 92 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
+			<&main_pmx0_range 137 5 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
+			<&main_pmx0_range 143 3 (PIN_INPUT | PIN_GPIO_MUX_MODE)>,
+			<&main_pmx0_range 149 2 (PIN_INPUT | PIN_GPIO_MUX_MODE)>;
+
+		/*
+		 * pinctrl IP DOES NOT give any functional IRQs when a
+		 * system is in active state. This IRQ is only a dummy IRQ
+		 * that is being used to trick Linux into thinking that
+		 * GIC can potentially recieve an interrupt from this IP.
+		 * This helps us setup the IO daisychain wakeups for deep
+		 * sleep via chained wake IRQs.
+		 * Please feel free to assign a different number here as
+		 * long as it is unused if 98 conflicts with another use case.
+		 */
 		interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-controller;
 		#interrupt-cells = <1>;
 		bootph-all;
+
+		main_pmx0_range: gpio-range {
+			#pinctrl-single,gpio-range-cells = <3>;
+		};
 	};
 
 	main_esm: esm@420000 {
@@ -482,40 +519,6 @@
 		status = "disabled";
 	};
 
-	vpu: video-codec@30210000 {
-		compatible = "cnm,cm521c-vpu";
-		reg = <0x00 0x30210000 0x00 0x10000>;
-		interrupts = <GIC_SPI 225 IRQ_TYPE_LEVEL_HIGH>;
-		clocks = <&k3_clks 204 2>;
-		clock-names = "vcodec";
-		power-domains = <&k3_pds 204 TI_SCI_PD_EXCLUSIVE>;
-		sram = <&oc_sram>;
-		sram-size = <0xf800>;
-		operating-points-v2 = <&vpu_opp_table>;
-		vpu_opp_table: opp-table {
-			compatible = "operating-points-v2";
-			opp-20000000 {
-				opp-hz = /bits/ 64 <20000000>;
-			};
-
-			opp-100000000 {
-				opp-hz = /bits/ 64 <100000000>;
-			};
-
-			opp-200000000 {
-				opp-hz = /bits/ 64 <200000000>;
-			};
-
-			opp-400000000 {
-				opp-hz = /bits/ 64 <400000000>;
-			};
-
-			opp-500000000 {
-				opp-hz = /bits/ 64 <500000000>;
-			};
-		};
-	};
-
 	main_spi0: spi@20100000 {
 		compatible = "ti,am654-mcspi", "ti,omap4-mcspi";
 		reg = <0x00 0x20100000 0x00 0x400>;
@@ -576,6 +579,8 @@
 		power-domains = <&k3_pds 77 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 77 0>;
 		clock-names = "gpio";
+		gpio-ranges = <&main_pmx0 0 0 32>, <&main_pmx0 32 33 38>,
+				<&main_pmx0 70 72 22>;
 	};
 
 	main_gpio1: gpio@601000 {
@@ -593,6 +598,8 @@
 		power-domains = <&k3_pds 78 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 78 0>;
 		clock-names = "gpio";
+		gpio-ranges = <&main_pmx0 0 94 32>, <&main_pmx0 42 137 5>,
+				<&main_pmx0 47 143 3>, <&main_pmx0 50 149 2>;
 	};
 
 	sdhci0: mmc@fa10000 {
@@ -668,13 +675,13 @@
 		status = "disabled";
 	};
 
-	usbss0: dwc3-usb@f900000 {
+	usbss0: usb@f900000 {
 		compatible = "ti,am62-usb";
 		reg = <0x00 0x0f900000 0x00 0x800>,
 		      <0x00 0x0f908000 0x00 0x400>;
 		clocks = <&k3_clks 161 3>;
 		clock-names = "ref";
-		ti,syscon-phy-pll-refclk = <&wkup_conf 0x4008>;
+		ti,syscon-phy-pll-refclk = <&usb0_phy_ctrl 0x0>;
 		#address-cells = <2>;
 		#size-cells = <2>;
 		power-domains = <&k3_pds 178 TI_SCI_PD_EXCLUSIVE>;
@@ -689,16 +696,18 @@
 			interrupt-names = "host", "peripheral";
 			maximum-speed = "high-speed";
 			dr_mode = "otg";
+			snps,usb2-gadget-lpm-disable;
+			snps,usb2-lpm-disable;
 		};
 	};
 
-	usbss1: dwc3-usb@f910000 {
+	usbss1: usb@f910000 {
 		compatible = "ti,am62-usb";
 		reg = <0x00 0x0f910000 0x00 0x800>,
 		      <0x00 0x0f918000 0x00 0x400>;
 		clocks = <&k3_clks 162 3>;
 		clock-names = "ref";
-		ti,syscon-phy-pll-refclk = <&wkup_conf 0x4018>;
+		ti,syscon-phy-pll-refclk = <&usb1_phy_ctrl 0x0>;
 		#address-cells = <2>;
 		#size-cells = <2>;
 		power-domains = <&k3_pds 179 TI_SCI_PD_EXCLUSIVE>;
@@ -713,6 +722,8 @@
 			interrupt-names = "host", "peripheral";
 			maximum-speed = "high-speed";
 			dr_mode = "otg";
+			snps,usb2-gadget-lpm-disable;
+			snps,usb2-lpm-disable;
 		};
 	};
 
@@ -777,6 +788,7 @@
 				label = "port1";
 				phys = <&phy_gmii_sel 1>;
 				mac-address = [00 00 00 00 00 00];
+				ti,syscon-efuse = <&cpsw_mac_syscon 0x0>;
 			};
 
 			cpsw_port2: port@2 {
@@ -884,31 +896,28 @@
 	};
 
 	eqep0: counter@23200000 {
-		compatible = "ti,am3352-eqep";
+		compatible = "ti,am62-eqep";
 		reg = <0x00 0x23200000 0x00 0x100>;
 		power-domains = <&k3_pds 59 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 59 0>;
-		clock-names = "fck";
 		interrupts = <GIC_SPI 116 IRQ_TYPE_EDGE_RISING>;
 		status = "disabled";
 	};
 
 	eqep1: counter@23210000 {
-		compatible = "ti,am3352-eqep";
+		compatible = "ti,am62-eqep";
 		reg = <0x00 0x23210000 0x00 0x100>;
 		power-domains = <&k3_pds 60 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 60 0>;
-		clock-names = "fck";
 		interrupts = <GIC_SPI 117 IRQ_TYPE_EDGE_RISING>;
 		status = "disabled";
 	};
 
 	eqep2: counter@23220000 {
-		compatible = "ti,am3352-eqep";
+		compatible = "ti,am62-eqep";
 		reg = <0x00 0x23220000 0x00 0x100>;
 		power-domains = <&k3_pds 62 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 62 0>;
-		clock-names = "fck";
 		interrupts = <GIC_SPI 118 IRQ_TYPE_EDGE_RISING>;
 		status = "disabled";
 	};
@@ -1078,32 +1087,36 @@
 		status = "disabled";
 	};
 
-	dss0: dss@30200000 {
-		compatible = "ti,am62p51-dss";
-		reg = <0x00 0x30200000 0x00 0x1000>, /* common */
-		      <0x00 0x30202000 0x00 0x1000>, /* vidl1 */
-		      <0x00 0x30206000 0x00 0x1000>, /* vid */
-		      <0x00 0x30207000 0x00 0x1000>, /* ovr1 */
-		      <0x00 0x30208000 0x00 0x1000>, /* ovr2 */
-		      <0x00 0x3020a000 0x00 0x1000>, /* vp1: Used for OLDI */
-		      <0x00 0x3020b000 0x00 0x1000>, /* vp2: Used as DPI Out */
-		      <0x00 0x30201000 0x00 0x1000>; /* common1 */
-		reg-names = "common", "vidl1", "vid",
-			    "ovr1", "ovr2", "vp1", "vp2", "common1";
-		ti,am65x-oldi-io-ctrl = <&dss_oldi_io_ctrl>;
-		power-domains = <&k3_pds 186 TI_SCI_PD_EXCLUSIVE>,	/* DSS0 */
-				<&k3_pds 243 TI_SCI_PD_EXCLUSIVE>,	/* OLDI0 */
-				<&k3_pds 244 TI_SCI_PD_EXCLUSIVE>;	/* OLDI1 */
-		clocks = <&k3_clks 186 6>,
-			 <&k3_clks 186 0>,
-			 <&k3_clks 186 2>;
-		clock-names = "fck", "vp1", "vp2";
-		interrupts = <GIC_SPI 84 IRQ_TYPE_LEVEL_HIGH>;
-		status = "disabled";
+	vpu: video-codec@30210000 {
+		compatible = "ti,j721s2-wave521c", "cnm,wave521c";
+		reg = <0x00 0x30210000 0x00 0x10000>;
+		interrupts = <GIC_SPI 225 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&k3_clks 204 2>;
+		power-domains = <&k3_pds 204 TI_SCI_PD_EXCLUSIVE>;
+		sram = <&oc_sram>;
+		sram-size = <0xf800>;
+		operating-points-v2 = <&vpu_opp_table>;
+		vpu_opp_table: opp-table {
+			compatible = "operating-points-v2";
+			opp-20000000 {
+				opp-hz = /bits/ 64 <20000000>;
+			};
 
-		dss0_ports: ports {
-			#address-cells = <1>;
-			#size-cells = <0>;
+			opp-100000000 {
+				opp-hz = /bits/ 64 <100000000>;
+			};
+
+			opp-200000000 {
+				opp-hz = /bits/ 64 <200000000>;
+			};
+
+			opp-400000000 {
+				opp-hz = /bits/ 64 <400000000>;
+			};
+
+			opp-500000000 {
+				opp-hz = /bits/ 64 <500000000>;
+			};
 		};
 	};
 
@@ -1121,20 +1134,20 @@
 	};
 
 	ti_csi2rx0: ticsi2rx@30102000 {
-		compatible = "ti,j721e-csi2rx";
-		dmas = <&main_bcdma_csi 0 0x5000 0>, <&main_bcdma_csi 0 0x5001 0>,
-			<&main_bcdma_csi 0 0x5002 0>, <&main_bcdma_csi 0 0x5003 0>,
-			<&main_bcdma_csi 0 0x5004 0>, <&main_bcdma_csi 0 0x5005 0>;
-		dma-names = "rx0", "rx1", "rx2", "rx3", "rx4", "rx5";
+		compatible = "ti,j721e-csi2rx-shim";
 		reg = <0x00 0x30102000 0x00 0x1000>;
-		power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
+		ranges;
 		#address-cells = <2>;
 		#size-cells = <2>;
-		ranges;
+		dmas = <&main_bcdma_csi 0 0x5000 0>, <&main_bcdma_csi 0 0x5001 0>,
+		       <&main_bcdma_csi 0 0x5002 0>, <&main_bcdma_csi 0 0x5003 0>,
+		       <&main_bcdma_csi 0 0x5004 0>, <&main_bcdma_csi 0 0x5005 0>;
+		dma-names = "rx0", "rx1", "rx2", "rx3", "rx4", "rx5";
+		power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 		status = "disabled";
 
 		cdns_csi2rx0: csi-bridge@30101000 {
-			compatible = "cdns,csi2rx";
+			compatible = "ti,j721e-csi2rx", "cdns,csi2rx";
 			reg = <0x00 0x30101000 0x00 0x1000>;
 			clocks = <&k3_clks 182 0>, <&k3_clks 182 3>, <&k3_clks 182 0>,
 				<&k3_clks 182 0>, <&k3_clks 182 4>, <&k3_clks 182 4>;
@@ -1142,7 +1155,6 @@
 				"pixel_if1_clk", "pixel_if2_clk", "pixel_if3_clk";
 			phys = <&dphy0>;
 			phy-names = "dphy";
-			power-domains = <&k3_pds 182 TI_SCI_PD_EXCLUSIVE>;
 
 			ports {
 				#address-cells = <1>;
@@ -1184,6 +1196,60 @@
 		status = "disabled";
 	};
 
+	dss0: dss@30200000 {
+		compatible = "ti,am62p51-dss";
+		reg = <0x00 0x30200000 0x00 0x1000>, /* common */
+		      <0x00 0x30202000 0x00 0x1000>, /* vidl1 */
+		      <0x00 0x30206000 0x00 0x1000>, /* vid */
+		      <0x00 0x30207000 0x00 0x1000>, /* ovr1 */
+		      <0x00 0x30208000 0x00 0x1000>, /* ovr2 */
+		      <0x00 0x3020a000 0x00 0x1000>, /* vp1: Used for OLDI */
+		      <0x00 0x3020b000 0x00 0x1000>, /* vp2: Used as DPI Out */
+		      <0x00 0x30201000 0x00 0x1000>; /* common1 */
+		reg-names = "common", "vidl1", "vid",
+			    "ovr1", "ovr2", "vp1", "vp2", "common1";
+		power-domains = <&k3_pds 186 TI_SCI_PD_EXCLUSIVE>,	/* DSS0 */
+				<&k3_pds 243 TI_SCI_PD_EXCLUSIVE>,	/* OLDI0 */
+				<&k3_pds 244 TI_SCI_PD_EXCLUSIVE>;	/* OLDI1 */
+		clocks = <&k3_clks 186 6>,
+			 <&dss0_vp1_clk>,
+			 <&k3_clks 186 2>;
+		clock-names = "fck", "vp1", "vp2";
+		interrupts = <GIC_SPI 84 IRQ_TYPE_LEVEL_HIGH>;
+		status = "disabled";
+
+		oldi-txes {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			oldi0_dss0: oldi@0 {
+				reg = <0>;
+				clocks = <&k3_clks 186 0>;
+				clock-names = "s_clk";
+				ti,companion-oldi = <&oldi1_dss0>;
+				ti,oldi-io-ctrl = <&dss_oldi_io_ctrl>;
+				status = "disabled";
+
+				oldi0_dss0_ports: ports {
+				};
+			};
+
+			oldi1_dss0: oldi@1 {
+				reg = <1>;
+				ti,secondary-oldi;
+				status = "disabled";
+
+				oldi1_dss0_ports: ports {
+				};
+			};
+		};
+
+		dss0_ports: ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+
 	dss1: dss@30220000 {
 		compatible = "ti,am62p52-dss";
 		reg = <0x00 0x30220000 0x00 0x1000>, /* common */
@@ -1192,18 +1258,34 @@
 		      <0x00 0x30227000 0x00 0x1000>, /* ovr1 */
 		      <0x00 0x30228000 0x00 0x1000>, /* ovr2 */
 		      <0x00 0x3022a000 0x00 0x1000>, /* vp1: Used for OLDI */
-		      <0x00 0x3022b000 0x00 0x1000>; /* vp2: Used as DPI Out */
+		      <0x00 0x3022b000 0x00 0x1000>, /* vp2: Used as DPI Out */
+		      <0x00 0x30221000 0x00 0x1000>; /* common1 */
 		reg-names = "common", "vidl1", "vid",
-			    "ovr1", "ovr2", "vp1", "vp2";
-		ti,am65x-oldi-io-ctrl = <&dss_oldi_io_ctrl>;
+			    "ovr1", "ovr2", "vp1", "vp2", "common1";
 		power-domains = <&k3_pds 232 TI_SCI_PD_EXCLUSIVE>,	/* DSS0 */
 				<&k3_pds 244 TI_SCI_PD_EXCLUSIVE>;	/* OLDI1 */
 		clocks = <&k3_clks 232 8>,
-			 <&k3_clks 232 0>,
+			 <&dss1_vp1_clk>,
 			 <&k3_clks 232 4>;
 		clock-names = "fck", "vp1", "vp2";
 		interrupts = <GIC_SPI 30 IRQ_TYPE_LEVEL_HIGH>;
 		status = "disabled";
+
+		oldi-txes {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			oldi1_dss1: oldi@1 {
+				reg = <0>;
+				clocks = <&k3_clks 232 0>;
+				clock-names = "s_clk";
+				ti,oldi-io-ctrl = <&dss_oldi_io_ctrl>;
+				status = "disabled";
+
+				oldi1_dss1_ports: ports {
+				};
+			};
+		};
 
 		dss1_ports: ports {
 			#address-cells = <1>;

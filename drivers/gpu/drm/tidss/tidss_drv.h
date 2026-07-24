@@ -9,19 +9,9 @@
 
 #include <linux/spinlock.h>
 
-#define TIDSS_MAX_VPS 4
+#define TIDSS_MAX_PORTS 4
 #define TIDSS_MAX_PLANES 4
-
-/*
- * This is not dependent on the number of VPs.
- * For example, some SoCs have 2 VPs but 3 outputs coming out.
- */
-#define TIDSS_MAX_OUTPUTS 4
-
-/* For DSSes with 2 OLDI TXes */
-#define TIDSS_MAX_BRIDGES_PER_PIPE	2
-
-#define TIDSS_AM625_IDLE_OLDI_CLOCK 25000000
+#define TIDSS_MAX_OLDI_TXES 2
 
 typedef u32 dispc_irq_t;
 
@@ -33,15 +23,23 @@ struct tidss_device {
 	struct dispc_device *dispc;
 
 	unsigned int num_crtcs;
-	struct drm_crtc *crtcs[TIDSS_MAX_VPS];
+	struct drm_crtc *crtcs[TIDSS_MAX_PORTS];
 
 	unsigned int num_planes;
 	struct drm_plane *planes[TIDSS_MAX_PLANES];
+
+	unsigned int num_oldis;
+	struct tidss_oldi *oldis[TIDSS_MAX_OLDI_TXES];
 
 	unsigned int irq;
 
 	spinlock_t wait_lock;	/* protects the irq masks */
 	dispc_irq_t irq_mask;	/* enabled irqs in addition to wait_list */
+
+	bool shared_mode; /* DSS resources shared between remote core and Linux */
+	/* 1: VP owned by Linux 0: VP is owned by remote and shared with Linux */
+	u32 shared_mode_owned_vps[TIDSS_MAX_PORTS];
+	bool shared_mode_own_oldi; /* Linux needs to configure OLDI in shared mode */
 
 	int num_domains; /* Handle attached PM domains */
 	struct device **pd_dev;
@@ -49,12 +47,6 @@ struct tidss_device {
 
 	u32 boot_enabled_vp_mask;
 	bool simplefb_enabled;
-
-	bool shared_mode; /* DSS resources shared between remote core and Linux */
-
-	/* 1: VP owned by Linux 0: VP is owned by remote and shared with Linux */
-	u32 shared_mode_owned_vps[TIDSS_MAX_VPS];
-	bool shared_mode_own_oldi; /* Linux needs to configure OLDI in shared mode */
 };
 
 #define to_tidss(__dev) container_of(__dev, struct tidss_device, ddev)

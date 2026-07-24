@@ -304,7 +304,7 @@ static int __init rpmsg_pru_init(void)
 {
 	int ret;
 
-	rpmsg_pru_class = class_create(THIS_MODULE, "rpmsg_pru");
+	rpmsg_pru_class = class_create("rpmsg_pru");
 	if (IS_ERR(rpmsg_pru_class)) {
 		pr_err("Unable to create class\n");
 		ret = PTR_ERR(rpmsg_pru_class);

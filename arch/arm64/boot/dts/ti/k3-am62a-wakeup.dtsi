@@ -15,18 +15,23 @@
 		#size-cells = <1>;
 		ranges = <0x00 0x00 0x43000000 0x20000>;
 
+		opp_efuse_table: syscon@18 {
+			compatible = "ti,am62-opp-efuse-table", "syscon";
+			reg = <0x18 0x4>;
+		};
+
 		chipid: chipid@14 {
 			compatible = "ti,am654-chipid";
 			reg = <0x14 0x4>;
 		};
 
 		usb0_phy_ctrl: syscon@4008 {
-			compatible = "syscon";
+			compatible = "ti,am62-usb-phy-ctrl", "syscon";
 			reg = <0x4008 0x4>;
 		};
 
 		usb1_phy_ctrl: syscon@4018 {
-			compatible = "syscon";
+			compatible = "ti,am62-usb-phy-ctrl", "syscon";
 			reg = <0x4018 0x4>;
 		};
 	};
@@ -81,6 +86,17 @@
 		clock-names = "vbus", "osc32k";
 		power-domains = <&k3_pds 117 TI_SCI_PD_EXCLUSIVE>;
 		wakeup-source;
+	};
+
+	wkup_rti0: watchdog@2b000000 {
+		compatible = "ti,j7-rti-wdt";
+		reg = <0x00 0x2b000000 0x00 0x100>;
+		clocks = <&k3_clks 132 0>;
+		power-domains = <&k3_pds 132 TI_SCI_PD_EXCLUSIVE>;
+		assigned-clocks = <&k3_clks 132 0>;
+		assigned-clock-parents = <&k3_clks 132 2>;
+		/* Used by DM firmware */
+		status = "reserved";
 	};
 
 	wkup_r5fss0: r5fss@78000000 {

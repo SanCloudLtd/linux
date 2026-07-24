@@ -31,8 +31,8 @@ static bool is_slave_up(struct net_device *dev)
 static void __hsr_set_operstate(struct net_device *dev, int transition)
 {
 	write_lock(&dev_base_lock);
-	if (dev->operstate != transition) {
-		dev->operstate = transition;
+	if (READ_ONCE(dev->operstate) != transition) {
+		WRITE_ONCE(dev->operstate, transition);
 		write_unlock(&dev_base_lock);
 		netdev_state_change(dev);
 	} else {
@@ -71,39 +71,36 @@ static bool hsr_check_carrier(struct hsr_port *master)
 	return false;
 }
 
-static void hsr_check_announce(struct net_device *hsr_dev,
-			       unsigned char old_operstate)
+static void hsr_check_announce(struct net_device *hsr_dev)
 {
 	struct hsr_priv *hsr;
 
 	hsr = netdev_priv(hsr_dev);
-
-	if (hsr_dev->operstate == IF_OPER_UP && old_operstate != IF_OPER_UP) {
-		/* Went up */
-		hsr->announce_count = 0;
-		mod_timer(&hsr->announce_timer,
-			  jiffies + msecs_to_jiffies(HSR_ANNOUNCE_INTERVAL));
+	if (netif_running(hsr_dev) && netif_oper_up(hsr_dev)) {
+		/* Enable announce timer and start sending supervisory frames */
+		if (!timer_pending(&hsr->announce_timer)) {
+			hsr->announce_count = 0;
+			mod_timer(&hsr->announce_timer, jiffies +
+				  msecs_to_jiffies(HSR_ANNOUNCE_INTERVAL));
+		}
+	} else {
+		/* Deactivate the announce timer  */
+		timer_delete(&hsr->announce_timer);
 	}
-
-	if (hsr_dev->operstate != IF_OPER_UP && old_operstate == IF_OPER_UP)
-		/* Went down */
-		del_timer(&hsr->announce_timer);
 }
 
 void hsr_check_carrier_and_operstate(struct hsr_priv *hsr)
 {
 	struct hsr_port *master;
-	unsigned char old_operstate;
 	bool has_carrier;
 
 	master = hsr_port_get_hsr(hsr, HSR_PT_MASTER);
 	/* netif_stacked_transfer_operstate() cannot be used here since
 	 * it doesn't set IF_OPER_LOWERLAYERDOWN (?)
 	 */
-	old_operstate = master->dev->operstate;
 	has_carrier = hsr_check_carrier(master);
 	hsr_set_operstate(master, has_carrier);
-	hsr_check_announce(master->dev, old_operstate);
+	hsr_check_announce(master->dev);
 }
 
 int hsr_get_max_mtu(struct hsr_priv *hsr)
@@ -467,68 +464,6 @@ static void hsr_change_rx_flags(struct net_device *dev, int change)
 	}
 }
 
-static int hsr_ndo_vlan_rx_add_vid(struct net_device *dev,
-				   __be16 proto, u16 vid)
-{
-	struct hsr_port *port;
-	struct hsr_priv *hsr;
-	int ret = 0;
-
-	hsr = netdev_priv(dev);
-
-	hsr_for_each_port(hsr, port) {
-		if (port->type == HSR_PT_MASTER)
-			continue;
-
-		ret = vlan_vid_add(port->dev, proto, vid);
-		switch (port->type) {
-		case HSR_PT_SLAVE_A:
-			if (ret) {
-				netdev_err(dev, "add vid failed for Slave-A\n");
-				return ret;
-			}
-			break;
-
-		case HSR_PT_SLAVE_B:
-			if (ret) {
-				/* clean up Slave-A */
-				netdev_err(dev, "add vid failed for Slave-B\n");
-				vlan_vid_del(port->dev, proto, vid);
-				return ret;
-			}
-			break;
-		default:
-			break;
-		};
-	}
-
-	return 0;
-}
-
-static int hsr_ndo_vlan_rx_kill_vid(struct net_device *dev,
-				    __be16 proto, u16 vid)
-{
-	struct hsr_port *port;
-	struct hsr_priv *hsr;
-
-	hsr = netdev_priv(dev);
-
-	hsr_for_each_port(hsr, port) {
-		if (port->type == HSR_PT_MASTER)
-			continue;
-		switch (port->type) {
-		case HSR_PT_SLAVE_A:
-		case HSR_PT_SLAVE_B:
-			vlan_vid_del(port->dev, proto, vid);
-			break;
-		default:
-			break;
-		};
-	}
-
-	return 0;
-}
-
 static const struct net_device_ops hsr_device_ops = {
 	.ndo_change_mtu = hsr_dev_change_mtu,
 	.ndo_open = hsr_dev_open,
@@ -537,8 +472,6 @@ static const struct net_device_ops hsr_device_ops = {
 	.ndo_change_rx_flags = hsr_change_rx_flags,
 	.ndo_fix_features = hsr_fix_features,
 	.ndo_set_rx_mode = hsr_set_rx_mode,
-	.ndo_vlan_rx_add_vid = hsr_ndo_vlan_rx_add_vid,
-	.ndo_vlan_rx_kill_vid = hsr_ndo_vlan_rx_kill_vid,
 };
 
 static struct device_type hsr_type = {
@@ -579,14 +512,16 @@ void hsr_dev_setup(struct net_device *dev)
 
 	dev->hw_features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_HIGHDMA |
 			   NETIF_F_GSO_MASK | NETIF_F_HW_CSUM |
-			   NETIF_F_HW_VLAN_CTAG_TX |
-			   NETIF_F_HW_VLAN_CTAG_FILTER;
+			   NETIF_F_HW_VLAN_CTAG_TX;
 
 	dev->features = dev->hw_features;
 
 	/* Prevent recursive tx locking */
 	dev->features |= NETIF_F_LLTX;
-
+	/* VLAN on top of HSR needs testing and probably some work on
+	 * hsr_header_create() etc.
+	 */
+	dev->features |= NETIF_F_VLAN_CHALLENGED;
 	/* Not sure about this. Taken from bridge code. netdev_features.h says
 	 * it means "Does not change network namespaces".
 	 */
@@ -617,7 +552,6 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 	hsr = netdev_priv(hsr_dev);
 	INIT_LIST_HEAD(&hsr->ports);
 	INIT_LIST_HEAD(&hsr->node_db);
-	INIT_LIST_HEAD(&hsr->self_node_db);
 	spin_lock_init(&hsr->list_lock);
 
 	eth_hw_addr_set(hsr_dev, slave[0]->dev_addr);
@@ -663,10 +597,6 @@ int hsr_dev_finalize(struct net_device *hsr_dev, struct net_device *slave[2],
 	if ((slave[0]->features & NETIF_F_HW_HSR_FWD) &&
 	    (slave[1]->features & NETIF_F_HW_HSR_FWD))
 		hsr->fwd_offloaded = true;
-
-	if ((slave[0]->features & NETIF_F_HW_VLAN_CTAG_FILTER) &&
-	    (slave[1]->features & NETIF_F_HW_VLAN_CTAG_FILTER))
-		hsr_dev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 
 	res = register_netdevice(hsr_dev);
 	if (res)

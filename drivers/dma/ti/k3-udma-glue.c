@@ -300,18 +300,19 @@ k3_udma_glue_request_tx_chn_common(struct device *dev,
 	}
 	tx_chn->udma_tchan_id = xudma_tchan_get_id(tx_chn->udma_tchanx);
 
-	if (xudma_is_pktdma(tx_chn->common.udmax)) {
-		tx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
-		tx_chn->common.chan_dev.parent = xudma_get_device(tx_chn->common.udmax);
-		dev_set_name(&tx_chn->common.chan_dev, "tchan%d-0x%04x",
-			     tx_chn->udma_tchan_id, tx_chn->common.dst_thread);
-		ret = device_register(&tx_chn->common.chan_dev);
-		if (ret) {
-			dev_err(dev, "Channel Device registration failed %d\n", ret);
-			tx_chn->common.chan_dev.parent = NULL;
-			return ret;
-		}
+	tx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
+	tx_chn->common.chan_dev.parent = xudma_get_device(tx_chn->common.udmax);
+	dev_set_name(&tx_chn->common.chan_dev, "tchan%d-0x%04x",
+		     tx_chn->udma_tchan_id, tx_chn->common.dst_thread);
+	ret = device_register(&tx_chn->common.chan_dev);
+	if (ret) {
+		dev_err(dev, "Channel Device registration failed %d\n", ret);
+		put_device(&tx_chn->common.chan_dev);
+		tx_chn->common.chan_dev.parent = NULL;
+		return ret;
+	}
 
+	if (xudma_is_pktdma(tx_chn->common.udmax)) {
 		/* prepare the channel device as coherent */
 		tx_chn->common.chan_dev.dma_coherent = true;
 		dma_coerce_mask_and_coherent(&tx_chn->common.chan_dev,
@@ -410,8 +411,9 @@ err:
 EXPORT_SYMBOL_GPL(k3_udma_glue_request_tx_chn);
 
 struct k3_udma_glue_tx_channel *
-k3_udma_glue_request_tx_chn_by_id(struct device *dev, struct k3_udma_glue_tx_channel_cfg *cfg,
-				  struct device_node *udmax_np, u32 thread_id)
+k3_udma_glue_request_tx_chn_for_thread_id(struct device *dev,
+					  struct k3_udma_glue_tx_channel_cfg *cfg,
+					  struct device_node *udmax_np, u32 thread_id)
 {
 	struct k3_udma_glue_tx_channel *tx_chn;
 	int ret;
@@ -441,7 +443,7 @@ err:
 	k3_udma_glue_release_tx_chn(tx_chn);
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(k3_udma_glue_request_tx_chn_by_id);
+EXPORT_SYMBOL_GPL(k3_udma_glue_request_tx_chn_for_thread_id);
 
 void k3_udma_glue_release_tx_chn(struct k3_udma_glue_tx_channel *tx_chn)
 {
@@ -628,6 +630,9 @@ int k3_udma_glue_tx_get_irq(struct k3_udma_glue_tx_channel *tx_chn)
 	} else {
 		tx_chn->virq = k3_ringacc_get_ring_irq_num(tx_chn->ringtxcq);
 	}
+
+	if (!tx_chn->virq)
+		return -ENXIO;
 
 	return tx_chn->virq;
 }
@@ -983,18 +988,19 @@ k3_udma_glue_request_rx_chn_priv(struct device *dev, const char *name,
 	}
 	rx_chn->udma_rchan_id = xudma_rchan_get_id(rx_chn->udma_rchanx);
 
-	if (xudma_is_pktdma(rx_chn->common.udmax)) {
-		rx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
-		rx_chn->common.chan_dev.parent = xudma_get_device(rx_chn->common.udmax);
-		dev_set_name(&rx_chn->common.chan_dev, "rchan%d-0x%04x",
-			     rx_chn->udma_rchan_id, rx_chn->common.src_thread);
-		ret = device_register(&rx_chn->common.chan_dev);
-		if (ret) {
-			dev_err(dev, "Channel Device registration failed %d\n", ret);
-			rx_chn->common.chan_dev.parent = NULL;
-			goto err;
-		}
+	rx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
+	rx_chn->common.chan_dev.parent = xudma_get_device(rx_chn->common.udmax);
+	dev_set_name(&rx_chn->common.chan_dev, "rchan%d-0x%04x",
+		     rx_chn->udma_rchan_id, rx_chn->common.src_thread);
+	ret = device_register(&rx_chn->common.chan_dev);
+	if (ret) {
+		dev_err(dev, "Channel Device registration failed %d\n", ret);
+		put_device(&rx_chn->common.chan_dev);
+		rx_chn->common.chan_dev.parent = NULL;
+		goto err;
+	}
 
+	if (xudma_is_pktdma(rx_chn->common.udmax)) {
 		/* prepare the channel device as coherent */
 		rx_chn->common.chan_dev.dma_coherent = true;
 		dma_coerce_mask_and_coherent(&rx_chn->common.chan_dev,
@@ -1083,19 +1089,19 @@ k3_udma_glue_request_remote_rx_chn_common(struct k3_udma_glue_rx_channel *rx_chn
 	if (!rx_chn->flows)
 		return -ENOMEM;
 
+	rx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
+	rx_chn->common.chan_dev.parent = xudma_get_device(rx_chn->common.udmax);
+	dev_set_name(&rx_chn->common.chan_dev, "rchan_remote-0x%04x-0x%02x",
+		     rx_chn->common.src_thread, rx_chn->flow_id_base);
+	ret = device_register(&rx_chn->common.chan_dev);
+	if (ret) {
+		dev_err(dev, "Channel Device registration failed %d\n", ret);
+		put_device(&rx_chn->common.chan_dev);
+		rx_chn->common.chan_dev.parent = NULL;
+		return ret;
+	}
+
 	if (xudma_is_pktdma(rx_chn->common.udmax)) {
-		rx_chn->common.chan_dev.class = &k3_udma_glue_devclass;
-		rx_chn->common.chan_dev.parent = xudma_get_device(rx_chn->common.udmax);
-		dev_set_name(&rx_chn->common.chan_dev, "rchan_remote-0x%04x-0x%02x",
-			     rx_chn->common.src_thread, rx_chn->flow_id_base);
-
-		ret = device_register(&rx_chn->common.chan_dev);
-		if (ret) {
-			dev_err(dev, "Channel Device registration failed %d\n", ret);
-			rx_chn->common.chan_dev.parent = NULL;
-			return ret;
-		}
-
 		/* prepare the channel device as coherent */
 		rx_chn->common.chan_dev.dma_coherent = true;
 		dma_coerce_mask_and_coherent(&rx_chn->common.chan_dev,
@@ -1162,8 +1168,9 @@ err:
 }
 
 struct k3_udma_glue_rx_channel *
-k3_udma_glue_request_remote_rx_chn_by_id(struct device *dev, struct device_node *udmax_np,
-					 struct k3_udma_glue_rx_channel_cfg *cfg, u32 thread_id)
+k3_udma_glue_request_remote_rx_chn_for_thread_id(struct device *dev,
+						 struct k3_udma_glue_rx_channel_cfg *cfg,
+						 struct device_node *udmax_np, u32 thread_id)
 {
 	struct k3_udma_glue_rx_channel *rx_chn;
 	int ret;
@@ -1205,7 +1212,7 @@ err:
 	k3_udma_glue_release_rx_chn(rx_chn);
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(k3_udma_glue_request_remote_rx_chn_by_id);
+EXPORT_SYMBOL_GPL(k3_udma_glue_request_remote_rx_chn_for_thread_id);
 
 struct k3_udma_glue_rx_channel *
 k3_udma_glue_request_rx_chn(struct device *dev, const char *name,

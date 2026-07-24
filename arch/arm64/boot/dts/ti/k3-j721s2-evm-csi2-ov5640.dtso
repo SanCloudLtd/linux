@@ -2,7 +2,7 @@
 /*
  * LI OV5640 MIPI Camera module on MIPI CSI connector.
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;
@@ -40,13 +40,29 @@
 	};
 };
 
-&csi0_port0 {
-	status = "okay";
+&cdns_csi2rx0 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	csi2rx0_in_sensor: endpoint {
-		remote-endpoint = <&csi2_cam0>;
-		bus-type = <4>; /* CSI2 DPHY */
-		clock-lanes = <0>;
-		data-lanes = <1 2>;
+		csi0_port0: port@0 {
+			reg = <0>;
+			status = "okay";
+
+			csi2rx0_in_sensor: endpoint {
+				remote-endpoint = <&csi2_cam0>;
+				bus-type = <4>; /* CSI2 DPHY */
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+			};
+		};
 	};
+};
+
+&ti_csi2rx0 {
+	status = "okay";
+};
+
+&dphy0 {
+	status = "okay";
 };

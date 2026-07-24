@@ -166,12 +166,12 @@ static unsigned int __maybe_unused serial_icr_read(struct uart_8250_port *up,
 
 void serial8250_clear_and_reinit_fifos(struct uart_8250_port *p);
 
-static inline int serial_dl_read(struct uart_8250_port *up)
+static inline u32 serial_dl_read(struct uart_8250_port *up)
 {
 	return up->dl_read(up);
 }
 
-static inline void serial_dl_write(struct uart_8250_port *up, int value)
+static inline void serial_dl_write(struct uart_8250_port *up, u32 value)
 {
 	up->dl_write(up, value);
 }
@@ -215,6 +215,9 @@ static inline void serial8250_set_IER(struct uart_8250_port *up, int ier)
 
 static inline bool serial8250_set_THRI(struct uart_8250_port *up)
 {
+	/* Port locked to synchronize UART_IER access against the console. */
+	lockdep_assert_held_once(&up->port.lock);
+
 	if (up->ier & UART_IER_THRI)
 		return false;
 	up->ier |= UART_IER_THRI;
@@ -224,6 +227,9 @@ static inline bool serial8250_set_THRI(struct uart_8250_port *up)
 
 static inline bool serial8250_clear_THRI(struct uart_8250_port *up)
 {
+	/* Port locked to synchronize UART_IER access against the console. */
+	lockdep_assert_held_once(&up->port.lock);
+
 	if (!(up->ier & UART_IER_THRI))
 		return false;
 	up->ier &= ~UART_IER_THRI;

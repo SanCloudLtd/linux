@@ -919,6 +919,10 @@ static inline void cmos_check_acpi_rtc_status(struct device *dev,
 #define	INITSECTION	__init
 #endif
 
+#define SECS_PER_DAY	(24 * 60 * 60)
+#define SECS_PER_MONTH	(28 * SECS_PER_DAY)
+#define SECS_PER_YEAR	(365 * SECS_PER_DAY)
+
 static int INITSECTION
 cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 {
@@ -1025,6 +1029,13 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 		goto cleanup0;
 	}
 
+	if (cmos_rtc.mon_alrm)
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_YEAR - 1;
+	else if (cmos_rtc.day_alrm)
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_MONTH - 1;
+	else
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_DAY - 1;
+
 	rename_region(ports, dev_name(&cmos_rtc.rtc->dev));
 
 	if (!mc146818_does_rtc_work()) {
@@ -1103,13 +1114,6 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 	/* export at least the first block of NVRAM */
 	nvmem_cfg.size = address_space - NVRAM_OFFSET;
 	devm_rtc_nvmem_register(cmos_rtc.rtc, &nvmem_cfg);
-
-	/*
-	 * Everything has gone well so far, so by default register a handler for
-	 * the ACPI RTC fixed event.
-	 */
-	if (!info)
-		acpi_rtc_event_setup(dev);
 
 	/*
 	 * Everything has gone well so far, so by default register a handler for
@@ -1502,10 +1506,9 @@ static int __init cmos_platform_probe(struct platform_device *pdev)
 	return cmos_do_probe(&pdev->dev, resource, irq);
 }
 
-static int cmos_platform_remove(struct platform_device *pdev)
+static void cmos_platform_remove(struct platform_device *pdev)
 {
 	cmos_do_remove(&pdev->dev);
-	return 0;
 }
 
 static void cmos_platform_shutdown(struct platform_device *pdev)
@@ -1527,7 +1530,7 @@ static void cmos_platform_shutdown(struct platform_device *pdev)
 MODULE_ALIAS("platform:rtc_cmos");
 
 static struct platform_driver cmos_platform_driver = {
-	.remove		= cmos_platform_remove,
+	.remove_new	= cmos_platform_remove,
 	.shutdown	= cmos_platform_shutdown,
 	.driver = {
 		.name		= driver_name,

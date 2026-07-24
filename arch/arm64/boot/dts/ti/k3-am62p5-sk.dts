@@ -19,7 +19,6 @@
 
 	aliases {
 		serial0 = &wkup_uart0;
-		serial1 = &mcu_uart0;
 		serial2 = &main_uart0;
 		serial3 = &main_uart1;
 		mmc0 = &sdhci0;
@@ -41,9 +40,11 @@
 
 		framebuffer0: framebuffer@0 {
 			compatible = "simple-framebuffer";
-			power-domains = <&k3_pds 186 TI_SCI_PD_EXCLUSIVE>;
+			power-domains = <&k3_pds 186 TI_SCI_PD_EXCLUSIVE>,
+					<&k3_pds 243 TI_SCI_PD_EXCLUSIVE>,	/* OLDI0 */
+					<&k3_pds 244 TI_SCI_PD_EXCLUSIVE>;	/* OLDI1 */
 			clocks = <&k3_clks 186 6>,
-				 <&k3_clks 186 0>,
+				 <&dss0_vp1_clk>,
 				 <&k3_clks 186 2>;
 			display = <&dss0>;
 			status = "disabled";
@@ -454,7 +455,7 @@
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
 
-	typec_pd0: tps6598x@3f {
+	typec_pd0: usb-power-controller@3f {
 		compatible = "ti,tps6598x";
 		reg = <0x3f>;
 
@@ -558,6 +559,7 @@
 			 */
 			port@0 {
 				reg = <0>;
+
 				sii9022_in: endpoint {
 					remote-endpoint = <&dss0_dpi1_out>;
 				};
@@ -616,9 +618,9 @@
 };
 
 &cpsw3g_mdio {
-	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mdio1_pins_default>;
+	status = "okay";
 
 	cpsw3g_phy0: ethernet-phy@0 {
 		reg = <0>;
@@ -824,7 +826,21 @@
 	bootph-all;
 };
 
+/* mcu_gpio0 and mcu_gpio_intr are reserved for mcu firmware usage */
+&mcu_gpio0 {
+	status = "reserved";
+};
+
+&mcu_gpio_intr {
+	status = "reserved";
+};
+
+&dss_oldi_io_ctrl {
+	bootph-all;
+};
+
 &dss0 {
+	bootph-all;
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_dpi_pins_default>;
@@ -834,25 +850,9 @@
 	/* DSS0-VP2: DPI/HDMI Output */
 	hdmi0_dss: port@1 {
 		reg = <1>;
+
 		dss0_dpi1_out: endpoint {
 			remote-endpoint = <&sii9022_in>;
 		};
 	};
-};
-
-&ti_csi2rx0 {
-	status = "okay";
-};
-
-&dphy0 {
-	status = "okay";
-};
-
-/* mcu_gpio0 and mcu_gpio_intr are reserved for mcu firmware usage */
-&mcu_gpio0 {
-	status = "reserved";
-};
-
-&mcu_gpio_intr {
-	status = "reserved";
 };

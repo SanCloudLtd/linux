@@ -32,7 +32,7 @@
 #define  CDNS_PCIE_LM_ID_SUBSYS(sub) \
 	(((sub) << CDNS_PCIE_LM_ID_SUBSYS_SHIFT) & CDNS_PCIE_LM_ID_SUBSYS_MASK)
 
-/* Root Port Requestor ID Register */
+/* Root Port Requester ID Register */
 #define CDNS_PCIE_LM_RP_RID	(CDNS_PCIE_LM_BASE + 0x0228)
 #define  CDNS_PCIE_LM_RP_RID_MASK	GENMASK(15, 0)
 #define  CDNS_PCIE_LM_RP_RID_SHIFT	0
@@ -520,12 +520,24 @@ static inline bool cdns_pcie_link_up(struct cdns_pcie *pcie)
 	return true;
 }
 
-#if IS_ENABLED(CONFIG_PCIE_CADENCE_HOST)
+#ifdef CONFIG_PCIE_CADENCE_HOST
+int cdns_pcie_host_link_setup(struct cdns_pcie_rc *rc);
+int cdns_pcie_host_init(struct cdns_pcie_rc *rc);
 int cdns_pcie_host_setup(struct cdns_pcie_rc *rc);
 int cdns_pcie_host_remove_setup(struct cdns_pcie_rc *rc);
 void __iomem *cdns_pci_map_bus(struct pci_bus *bus, unsigned int devfn,
 			       int where);
 #else
+static inline int cdns_pcie_host_link_setup(struct cdns_pcie_rc *rc)
+{
+	return 0;
+}
+
+static inline int cdns_pcie_host_init(struct cdns_pcie_rc *rc)
+{
+	return 0;
+}
+
 static inline int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 {
 	return 0;
@@ -543,7 +555,7 @@ static inline void __iomem *cdns_pci_map_bus(struct pci_bus *bus, unsigned int d
 }
 #endif
 
-#if IS_ENABLED(CONFIG_PCIE_CADENCE_EP)
+#ifdef CONFIG_PCIE_CADENCE_EP
 int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep);
 #else
 static inline int cdns_pcie_ep_setup(struct cdns_pcie_ep *ep)

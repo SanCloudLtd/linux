@@ -36,6 +36,7 @@ struct drm_bridge;
 struct drm_bridge_timings;
 struct drm_connector;
 struct drm_display_info;
+struct drm_minor;
 struct drm_panel;
 struct edid;
 struct i2c_adapter;
@@ -204,20 +205,6 @@ struct drm_bridge_funcs {
 	void (*post_disable)(struct drm_bridge *bridge);
 
 	/**
-	 * @late_disable:
-	 *
-	 * This callback should disable the bridge. It is called right after the
-	 * preceding element in the display pipe is disabled. If the preceding
-	 * element is a bridge this means it's called after that bridge's
-	 * @atomic_post_disable. If the preceding element is a &drm_crtc it's
-	 * called right after the crtc's &drm_crtc_helper_funcs.atomic_disable
-	 * hook.
-	 *
-	 * The @elate_disable callback is optional.
-	 */
-	void (*late_disable)(struct drm_bridge *bridge);
-
-	/**
 	 * @mode_set:
 	 *
 	 * This callback should set the given mode on the bridge. It is called
@@ -246,25 +233,6 @@ struct drm_bridge_funcs {
 	void (*mode_set)(struct drm_bridge *bridge,
 			 const struct drm_display_mode *mode,
 			 const struct drm_display_mode *adjusted_mode);
-
-	/**
-	 * @early_enable:
-	 *
-	 * This callback should enable the bridge. It is called right before
-	 * the preceding element in the display pipe is enabled. If the
-	 * preceding element is a bridge this means it's called before that
-	 * bridge's @atomic_early_enable. If the preceding element is a
-	 * &drm_crtc it's called right before the crtc's
-	 * &drm_crtc_helper_funcs.atomic_enable hook.
-	 *
-	 * The display pipe (i.e. clocks and timing signals) feeding this bridge
-	 * will not yet be running when this callback is called. The bridge can
-	 * enable the display link feeding the next bridge in the chain (if
-	 * there is one) when this callback is called.
-	 *
-	 * The @early_enable callback is optional.
-	 */
-	void (*early_enable)(struct drm_bridge *bridge);
 
 	/**
 	 * @pre_enable:
@@ -317,7 +285,7 @@ struct drm_bridge_funcs {
 	void (*enable)(struct drm_bridge *bridge);
 
 	/**
-	 * @early_enable:
+	 * @atomic_early_enable:
 	 *
 	 * This callback should enable the bridge. It is called right before
 	 * the preceding element in the display pipe is enabled. If the
@@ -331,7 +299,7 @@ struct drm_bridge_funcs {
 	 * enable the display link feeding the next bridge in the chain (if
 	 * there is one) when this callback is called.
 	 *
-	 * The @early_enable callback is optional.
+	 * The @atomic_early_enable callback is optional.
 	 */
 	void (*atomic_early_enable)(struct drm_bridge *bridge,
 				    struct drm_bridge_state *old_bridge_state);
@@ -350,12 +318,6 @@ struct drm_bridge_funcs {
 	 * will not yet be running when this callback is called. The bridge must
 	 * not enable the display link feeding the next bridge in the chain (if
 	 * there is one) when this callback is called.
-	 *
-	 * Note that this function will only be invoked in the context of an
-	 * atomic commit. It will not be invoked from
-	 * &drm_bridge_chain_pre_enable. It would be prudent to also provide an
-	 * implementation of @pre_enable if you are expecting driver calls into
-	 * &drm_bridge_chain_pre_enable.
 	 *
 	 * The @atomic_pre_enable callback is optional.
 	 */
@@ -377,11 +339,6 @@ struct drm_bridge_funcs {
 	 * callback must enable the display link feeding the next bridge in the
 	 * chain if there is one.
 	 *
-	 * Note that this function will only be invoked in the context of an
-	 * atomic commit. It will not be invoked from &drm_bridge_chain_enable.
-	 * It would be prudent to also provide an implementation of @enable if
-	 * you are expecting driver calls into &drm_bridge_chain_enable.
-	 *
 	 * The @atomic_enable callback is optional.
 	 */
 	void (*atomic_enable)(struct drm_bridge *bridge,
@@ -398,12 +355,6 @@ struct drm_bridge_funcs {
 	 *
 	 * The bridge can assume that the display pipe (i.e. clocks and timing
 	 * signals) feeding it is still running when this callback is called.
-	 *
-	 * Note that this function will only be invoked in the context of an
-	 * atomic commit. It will not be invoked from
-	 * &drm_bridge_chain_disable. It would be prudent to also provide an
-	 * implementation of @disable if you are expecting driver calls into
-	 * &drm_bridge_chain_disable.
 	 *
 	 * The @atomic_disable callback is optional.
 	 */
@@ -424,29 +375,22 @@ struct drm_bridge_funcs {
 	 * signals) feeding it is no longer running when this callback is
 	 * called.
 	 *
-	 * Note that this function will only be invoked in the context of an
-	 * atomic commit. It will not be invoked from
-	 * &drm_bridge_chain_post_disable.
-	 * It would be prudent to also provide an implementation of
-	 * @post_disable if you are expecting driver calls into
-	 * &drm_bridge_chain_post_disable.
-	 *
 	 * The @atomic_post_disable callback is optional.
 	 */
 	void (*atomic_post_disable)(struct drm_bridge *bridge,
 				    struct drm_bridge_state *old_bridge_state);
 
 	/**
-	 * @late_disable:
+	 * @atomic_late_disable:
 	 *
 	 * This callback should disable the bridge. It is called right after the
 	 * preceding element in the display pipe is disabled. If the preceding
 	 * element is a bridge this means it's called after that bridge's
-	 * @atomic_post_disable. If the preceding element is a &drm_crtc it's
+	 * @atomic_late_disable. If the preceding element is a &drm_crtc it's
 	 * called right after the crtc's &drm_crtc_helper_funcs.atomic_disable
 	 * hook.
 	 *
-	 * The @elate_disable callback is optional.
+	 * The @atomic_late_disable callback is optional.
 	 */
 	void (*atomic_late_disable)(struct drm_bridge *bridge,
 				    struct drm_bridge_state *old_bridge_state);
@@ -646,6 +590,37 @@ struct drm_bridge_funcs {
 	 */
 	int (*get_modes)(struct drm_bridge *bridge,
 			 struct drm_connector *connector);
+
+	/**
+	 * @edid_read:
+	 *
+	 * Read the EDID data of the connected display.
+	 *
+	 * The @edid_read callback is the preferred way of reporting mode
+	 * information for a display connected to the bridge output. Bridges
+	 * that support reading EDID shall implement this callback and leave
+	 * the @get_modes callback unimplemented.
+	 *
+	 * The caller of this operation shall first verify the output
+	 * connection status and refrain from reading EDID from a disconnected
+	 * output.
+	 *
+	 * This callback is optional. Bridges that implement it shall set the
+	 * DRM_BRIDGE_OP_EDID flag in their &drm_bridge->ops.
+	 *
+	 * The connector parameter shall be used for the sole purpose of EDID
+	 * retrieval, and shall not be stored internally by bridge drivers for
+	 * future usage.
+	 *
+	 * RETURNS:
+	 *
+	 * An edid structure newly allocated with drm_edid_alloc() or returned
+	 * from drm_edid_read() family of functions on success, or NULL
+	 * otherwise. The caller is responsible for freeing the returned edid
+	 * structure with drm_edid_free().
+	 */
+	const struct drm_edid *(*edid_read)(struct drm_bridge *bridge,
+					    struct drm_connector *connector);
 
 	/**
 	 * @get_edid:
@@ -953,13 +928,9 @@ enum drm_mode_status
 drm_bridge_chain_mode_valid(struct drm_bridge *bridge,
 			    const struct drm_display_info *info,
 			    const struct drm_display_mode *mode);
-void drm_bridge_chain_disable(struct drm_bridge *bridge);
-void drm_bridge_chain_post_disable(struct drm_bridge *bridge);
 void drm_bridge_chain_mode_set(struct drm_bridge *bridge,
 			       const struct drm_display_mode *mode,
 			       const struct drm_display_mode *adjusted_mode);
-void drm_bridge_chain_pre_enable(struct drm_bridge *bridge);
-void drm_bridge_chain_enable(struct drm_bridge *bridge);
 
 int drm_atomic_bridge_chain_check(struct drm_bridge *bridge,
 				  struct drm_crtc_state *crtc_state,
@@ -988,6 +959,8 @@ drm_atomic_helper_bridge_propagate_bus_fmt(struct drm_bridge *bridge,
 enum drm_connector_status drm_bridge_detect(struct drm_bridge *bridge);
 int drm_bridge_get_modes(struct drm_bridge *bridge,
 			 struct drm_connector *connector);
+const struct drm_edid *drm_bridge_edid_read(struct drm_bridge *bridge,
+					    struct drm_connector *connector);
 struct edid *drm_bridge_get_edid(struct drm_bridge *bridge,
 				 struct drm_connector *connector);
 void drm_bridge_hpd_enable(struct drm_bridge *bridge,
@@ -1049,5 +1022,7 @@ static inline struct drm_bridge *drmm_of_get_bridge(struct drm_device *drm,
 	return ERR_PTR(-ENODEV);
 }
 #endif
+
+void drm_bridge_debugfs_init(struct drm_minor *minor);
 
 #endif

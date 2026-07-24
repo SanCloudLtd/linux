@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * DT Overlay for enabling EQEP on AM62P-SK
+ * DT Overlay for enabling EQEP on AM62P5-SK
  *
  * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
  */
@@ -34,8 +34,14 @@
 	};
 };
 
+&main_uart1 {
+	/* Disable FW debug logs */
+	status = "disabled";
+};
+
 &eqep0 {
 	status = "okay";
+	/* EQEP0 A & B available on pins 40 & 38 of J4 header */
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_eqep0_pins_default>;
 };

@@ -2,7 +2,7 @@
 /*
  * LI OV5640 MIPI Camera module on MIPI CSI connector.
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;
@@ -27,49 +27,52 @@
 	};
 };
 
-&main_i2c3 {
-	status = "okay";
+&cam0_i2c {
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	i2c-switch@70 {
-		compatible = "nxp,pca9543";
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <0x70>;
+	ov5640: camera@3c {
+		compatible = "ovti,ov5640";
+		reg = <0x3c>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&csi2_exp_pins_default>;
+		powerdown-gpios = <&main_gpio0 79 GPIO_ACTIVE_LOW>;
+		clocks = <&clk_ov5640_fixed>;
+		clock-names = "xclk";
 
-		ti_cam0_i2c: i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0>;
-
-			ov5640: camera@3c {
-				compatible = "ovti,ov5640";
-				reg = <0x3c>;
-				pinctrl-names = "default";
-				pinctrl-0 = <&csi2_exp_pins_default>;
-				powerdown-gpios = <&main_gpio0 79 GPIO_ACTIVE_LOW>;
-				clocks = <&clk_ov5640_fixed>;
-				clock-names = "xclk";
-
-				port {
-					csi2_cam0: endpoint {
-						remote-endpoint = <&csi2rx0_in_sensor>;
-						clock-lanes = <0>;
-						data-lanes = <1 2>;
-					};
-				};
+		port {
+			csi2_cam0: endpoint {
+				remote-endpoint = <&csi2rx0_in_sensor>;
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
 			};
 		};
 	};
 };
 
-&csi0_port0 {
-	status = "okay";
-	csi2rx0_in_sensor: endpoint {
-		remote-endpoint = <&csi2_cam0>;
-		bus-type = <4>; /* CSI2 DPHY */
-		clock-lanes = <0>;
-		data-lanes = <1 2>;
+&cdns_csi2rx0 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		csi0_port0: port@0 {
+			reg = <0>;
+			status = "okay";
+
+			csi2rx0_in_sensor: endpoint {
+				remote-endpoint = <&csi2_cam0>;
+				bus-type = <4>; /* CSI2 DPHY */
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+			};
+		};
 	};
+};
+
+&ti_csi2rx0 {
+	status = "okay";
+};
+
+&dphy0 {
+	status = "okay";
 };

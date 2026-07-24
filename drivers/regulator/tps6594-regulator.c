@@ -9,7 +9,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/driver.h>
@@ -287,30 +287,30 @@ static struct tps6594_regulator_irq_type *tps6594_ldos_irq_types[] = {
 static const struct regulator_desc multi_regs[] = {
 	TPS6594_REGULATOR("BUCK12", "buck12", TPS6594_BUCK_1,
 			  REGULATOR_VOLTAGE, tps6594_bucks_ops, TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_VOUT_1(1),
+			  TPS6594_REG_BUCKX_VOUT_1(0),
 			  TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_CTRL(1),
+			  TPS6594_REG_BUCKX_CTRL(0),
 			  TPS6594_BIT_BUCK_EN, 0, 0, bucks_ranges,
 			  4, 4000, 0, NULL, 0, 0),
 	TPS6594_REGULATOR("BUCK34", "buck34", TPS6594_BUCK_3,
 			  REGULATOR_VOLTAGE, tps6594_bucks_ops, TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_VOUT_1(3),
+			  TPS6594_REG_BUCKX_VOUT_1(2),
 			  TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_CTRL(3),
+			  TPS6594_REG_BUCKX_CTRL(2),
 			  TPS6594_BIT_BUCK_EN, 0, 0, bucks_ranges,
 			  4, 0, 0, NULL, 0, 0),
 	TPS6594_REGULATOR("BUCK123", "buck123", TPS6594_BUCK_1,
 			  REGULATOR_VOLTAGE, tps6594_bucks_ops, TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_VOUT_1(1),
+			  TPS6594_REG_BUCKX_VOUT_1(0),
 			  TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_CTRL(1),
+			  TPS6594_REG_BUCKX_CTRL(0),
 			  TPS6594_BIT_BUCK_EN, 0, 0, bucks_ranges,
 			  4, 4000, 0, NULL, 0, 0),
 	TPS6594_REGULATOR("BUCK1234", "buck1234", TPS6594_BUCK_1,
 			  REGULATOR_VOLTAGE, tps6594_bucks_ops, TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_VOUT_1(1),
+			  TPS6594_REG_BUCKX_VOUT_1(0),
 			  TPS6594_MASK_BUCKS_VSET,
-			  TPS6594_REG_BUCKX_CTRL(1),
+			  TPS6594_REG_BUCKX_CTRL(0),
 			  TPS6594_BIT_BUCK_EN, 0, 0, bucks_ranges,
 			  4, 4000, 0, NULL, 0, 0),
 };
@@ -389,10 +389,8 @@ static int tps6594_request_reg_irqs(struct platform_device *pdev,
 		irq_data[*irq_idx].rdev = rdev;
 
 		error = devm_request_threaded_irq(tps->dev, irq, NULL,
-						  tps6594_regulator_irq_handler,
-						  IRQF_ONESHOT,
-						  irq_type->irq_name,
-						  &irq_data[*irq_idx]);
+						  tps6594_regulator_irq_handler, IRQF_ONESHOT,
+						  irq_type->irq_name, &irq_data[*irq_idx]);
 		if (error) {
 			dev_err(tps->dev, "tps6594 failed to request %s IRQ %d: %d\n",
 				irq_type->irq_name, irq, error);
@@ -415,22 +413,21 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 	struct tps6594_regulator_irq_type *irq_type;
 	u8 buck_configured[BUCK_NB] = { 0 };
 	u8 buck_multi[MULTI_PHASE_NB] = { 0 };
-	static const char *multiphases[] = {"buck12", "buck123", "buck1234", "buck34"};
+	static const char * const multiphases[] = {"buck12", "buck123", "buck1234", "buck34"};
 	static const char *npname;
 	int error, i, irq, multi, delta;
 	int irq_idx = 0;
 	int buck_idx = 0;
 	size_t ext_reg_irq_nb = 2;
 	size_t reg_irq_nb;
-
 	enum {
-	MULTI_BUCK12,
-	MULTI_BUCK123,
-	MULTI_BUCK1234,
-	MULTI_BUCK12_34,
-	MULTI_FIRST = MULTI_BUCK12,
-	MULTI_LAST = MULTI_BUCK12_34,
-	MULTI_NUM = MULTI_LAST - MULTI_FIRST + 1
+		MULTI_BUCK12,
+		MULTI_BUCK123,
+		MULTI_BUCK1234,
+		MULTI_BUCK12_34,
+		MULTI_FIRST = MULTI_BUCK12,
+		MULTI_LAST = MULTI_BUCK12_34,
+		MULTI_NUM = MULTI_LAST - MULTI_FIRST + 1
 	};
 
 	config.dev = tps->dev;
@@ -445,11 +442,11 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 	 * In case of Multiphase configuration, value should be defined for
 	 * buck_configured to avoid creating bucks for every buck in multiphase
 	 */
-	for (multi = MULTI_FIRST ; multi < MULTI_NUM ; multi++) {
+	for (multi = MULTI_FIRST; multi < MULTI_NUM; multi++) {
 		np = of_find_node_by_name(tps->dev->of_node, multiphases[multi]);
 		npname = of_node_full_name(np);
 		np_pmic_parent = of_get_parent(of_get_parent(np));
-		if (strcmp((of_node_full_name(np_pmic_parent)), tps->dev->of_node->full_name))
+		if (of_node_cmp(of_node_full_name(np_pmic_parent), tps->dev->of_node->full_name))
 			continue;
 		delta = strcmp(npname, multiphases[multi]);
 		if (!delta) {
@@ -462,9 +459,9 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 			/* multiphase buck34 is supported only with buck12 */
 			case MULTI_BUCK12_34:
 				buck_multi[0] = 1;
+				buck_multi[1] = 1;
 				buck_configured[0] = 1;
 				buck_configured[1] = 1;
-				buck_multi[1] = 1;
 				buck_configured[2] = 1;
 				buck_configured[3] = 1;
 				break;
@@ -488,9 +485,9 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 	if (tps->chip_id == LP8764) {
 		/* There is only 4 buck on LP8764 */
 		buck_configured[4] = 1;
-		reg_irq_nb = (BUCK_NB - 1) * REGS_INT_NB;
+		reg_irq_nb = size_mul(REGS_INT_NB, (BUCK_NB - 1));
 	} else {
-		reg_irq_nb = BUCK_NB * REGS_INT_NB + LDO_NB * REGS_INT_NB;
+		reg_irq_nb = size_mul(REGS_INT_NB, (size_add(BUCK_NB, LDO_NB)));
 	}
 
 	irq_data = devm_kmalloc_array(tps->dev, reg_irq_nb,
@@ -503,10 +500,11 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 			continue;
 
 		rdev = devm_regulator_register(&pdev->dev, &multi_regs[i], &config);
-		if (IS_ERR(rdev)) {
-			dev_err(&pdev->dev, "failed to register %s regulator\n", pdev->name);
-			return PTR_ERR(rdev);
-		}
+		if (IS_ERR(rdev))
+			return dev_err_probe(tps->dev, PTR_ERR(rdev),
+					     "failed to register %s regulator\n",
+					     pdev->name);
+
 		/* config multiphase buck12+buck34 */
 		if (i == 1)
 			buck_idx = 2;
@@ -514,7 +512,6 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 						 tps6594_bucks_irq_types[buck_idx], &irq_idx);
 		if (error)
 			return error;
-
 		error = tps6594_request_reg_irqs(pdev, rdev, irq_data,
 						 tps6594_bucks_irq_types[buck_idx + 1], &irq_idx);
 		if (error)
@@ -541,12 +538,13 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 			continue;
 
 		rdev = devm_regulator_register(&pdev->dev, &buck_regs[i], &config);
-		if (IS_ERR(rdev)) {
-			dev_err(tps->dev, "failed to register %s regulator\n", pdev->name);
-			return PTR_ERR(rdev);
-		}
-		error = tps6594_request_reg_irqs(pdev, rdev, irq_data, tps6594_bucks_irq_types[i],
-						 &irq_idx);
+		if (IS_ERR(rdev))
+			return dev_err_probe(tps->dev, PTR_ERR(rdev),
+					     "failed to register %s regulator\n",
+					     pdev->name);
+
+		error = tps6594_request_reg_irqs(pdev, rdev, irq_data,
+						 tps6594_bucks_irq_types[i], &irq_idx);
 		if (error)
 			return error;
 	}
@@ -555,13 +553,14 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 	if (tps->chip_id != LP8764) {
 		for (i = 0; i < ARRAY_SIZE(ldo_regs); i++) {
 			rdev = devm_regulator_register(&pdev->dev, &ldo_regs[i], &config);
-			if (IS_ERR(rdev)) {
-				dev_err(tps->dev,
-					"failed to register %s regulator\n", pdev->name);
-				return PTR_ERR(rdev);
-			}
+			if (IS_ERR(rdev))
+				return dev_err_probe(tps->dev, PTR_ERR(rdev),
+						     "failed to register %s regulator\n",
+						     pdev->name);
+
 			error = tps6594_request_reg_irqs(pdev, rdev, irq_data,
-							 tps6594_ldos_irq_types[i], &irq_idx);
+							 tps6594_ldos_irq_types[i],
+							 &irq_idx);
 			if (error)
 				return error;
 		}
@@ -570,9 +569,10 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 	if (tps->chip_id == LP8764)
 		ext_reg_irq_nb = ARRAY_SIZE(tps6594_ext_regulator_irq_types);
 
-	irq_ext_reg_data = devm_kmalloc_array(tps->dev, ext_reg_irq_nb,
-					      sizeof(struct tps6594_ext_regulator_irq_data),
-					      GFP_KERNEL);
+	irq_ext_reg_data = devm_kmalloc_array(tps->dev,
+					ext_reg_irq_nb,
+					sizeof(struct tps6594_ext_regulator_irq_data),
+					GFP_KERNEL);
 	if (!irq_ext_reg_data)
 		return -ENOMEM;
 
@@ -588,13 +588,13 @@ static int tps6594_regulator_probe(struct platform_device *pdev)
 
 		error = devm_request_threaded_irq(tps->dev, irq, NULL,
 						  tps6594_regulator_irq_handler,
-						  IRQF_ONESHOT, irq_type->irq_name,
+						  IRQF_ONESHOT,
+						  irq_type->irq_name,
 						  &irq_ext_reg_data[i]);
-		if (error) {
-			dev_err(tps->dev, "failed to request %s IRQ %d: %d\n",
-				irq_type->irq_name, irq, error);
-			return error;
-		}
+		if (error)
+			return dev_err_probe(tps->dev, error,
+					     "failed to request %s IRQ %d\n",
+					     irq_type->irq_name, irq);
 	}
 	return 0;
 }

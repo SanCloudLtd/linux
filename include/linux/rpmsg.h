@@ -68,12 +68,14 @@ struct rpmsg_device {
 };
 
 typedef int (*rpmsg_rx_cb_t)(struct rpmsg_device *, void *, int, void *, u32);
+typedef int (*rpmsg_flowcontrol_cb_t)(struct rpmsg_device *, void *, bool);
 
 /**
  * struct rpmsg_endpoint - binds a local rpmsg address to its user
  * @rpdev: rpmsg channel device
  * @refcount: when this drops to zero, the ept is deallocated
  * @cb: rx callback handler
+ * @flow_cb: remote flow control callback handler
  * @cb_lock: must be taken before accessing/changing @cb
  * @cb_lockdep_class: mutex lockdep class to be used with @cb_lock
  * @addr: local rpmsg address
@@ -97,6 +99,7 @@ struct rpmsg_endpoint {
 	struct rpmsg_device *rpdev;
 	struct kref refcount;
 	rpmsg_rx_cb_t cb;
+	rpmsg_flowcontrol_cb_t flow_cb;
 	struct mutex cb_lock;
 	int cb_lockdep_class;
 	u32 addr;
@@ -112,6 +115,7 @@ struct rpmsg_endpoint {
  * @probe: invoked when a matching rpmsg channel (i.e. device) is found
  * @remove: invoked when the rpmsg channel is removed
  * @callback: invoked when an inbound message is received on the channel
+ * @flowcontrol: invoked when remote side flow control request is received
  */
 struct rpmsg_driver {
 	struct device_driver drv;
@@ -119,6 +123,7 @@ struct rpmsg_driver {
 	int (*probe)(struct rpmsg_device *dev);
 	void (*remove)(struct rpmsg_device *dev);
 	int (*callback)(struct rpmsg_device *, void *, int, void *, u32);
+	int (*flowcontrol)(struct rpmsg_device *, void *, bool);
 };
 
 static inline u16 rpmsg16_to_cpu(struct rpmsg_device *rpdev, __rpmsg16 val)
@@ -197,6 +202,8 @@ __poll_t rpmsg_poll(struct rpmsg_endpoint *ept, struct file *filp,
 			poll_table *wait);
 
 ssize_t rpmsg_get_mtu(struct rpmsg_endpoint *ept);
+
+int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool pause, u32 dst);
 
 #else
 
@@ -315,6 +322,14 @@ static inline __poll_t rpmsg_poll(struct rpmsg_endpoint *ept,
 }
 
 static inline ssize_t rpmsg_get_mtu(struct rpmsg_endpoint *ept)
+{
+	/* This shouldn't be possible */
+	WARN_ON(1);
+
+	return -ENXIO;
+}
+
+static inline int rpmsg_set_flow_control(struct rpmsg_endpoint *ept, bool pause, u32 dst)
 {
 	/* This shouldn't be possible */
 	WARN_ON(1);

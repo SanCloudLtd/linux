@@ -7,8 +7,8 @@
 #include <linux/ethtool.h>
 #include <linux/module.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/stmmac.h>
 
 #include "dwmac4.h"
@@ -22,13 +22,13 @@ struct intel_dwmac {
 };
 
 struct intel_dwmac_data {
-	void (*fix_mac_speed)(void *priv, unsigned int speed);
+	void (*fix_mac_speed)(void *priv, unsigned int speed, unsigned int mode);
 	unsigned long ptp_ref_clk_rate;
 	unsigned long tx_clk_rate;
 	bool tx_clk_en;
 };
 
-static void kmb_eth_fix_mac_speed(void *priv, unsigned int speed)
+static void kmb_eth_fix_mac_speed(void *priv, unsigned int speed, unsigned int mode)
 {
 	struct intel_dwmac *dwmac = priv;
 	unsigned long rate;
@@ -76,7 +76,6 @@ static int intel_eth_plat_probe(struct platform_device *pdev)
 {
 	struct plat_stmmacenet_data *plat_dat;
 	struct stmmac_resources stmmac_res;
-	const struct of_device_id *match;
 	struct intel_dwmac *dwmac;
 	unsigned long rate;
 	int ret;
@@ -100,10 +99,8 @@ static int intel_eth_plat_probe(struct platform_device *pdev)
 	dwmac->dev = &pdev->dev;
 	dwmac->tx_clk = NULL;
 
-	match = of_match_device(intel_eth_plat_match, &pdev->dev);
-	if (match && match->data) {
-		dwmac->data = (const struct intel_dwmac_data *)match->data;
-
+	dwmac->data = device_get_match_data(&pdev->dev);
+	if (dwmac->data) {
 		if (dwmac->data->fix_mac_speed)
 			plat_dat->fix_mac_speed = dwmac->data->fix_mac_speed;
 
@@ -169,20 +166,17 @@ err_remove_config_dt:
 	return ret;
 }
 
-static int intel_eth_plat_remove(struct platform_device *pdev)
+static void intel_eth_plat_remove(struct platform_device *pdev)
 {
 	struct intel_dwmac *dwmac = get_stmmac_bsp_priv(&pdev->dev);
-	int ret;
 
-	ret = stmmac_pltfr_remove(pdev);
+	stmmac_pltfr_remove(pdev);
 	clk_disable_unprepare(dwmac->tx_clk);
-
-	return ret;
 }
 
 static struct platform_driver intel_eth_plat_driver = {
 	.probe  = intel_eth_plat_probe,
-	.remove = intel_eth_plat_remove,
+	.remove_new = intel_eth_plat_remove,
 	.driver = {
 		.name		= "intel-eth-plat",
 		.pm		= &stmmac_pltfr_pm_ops,

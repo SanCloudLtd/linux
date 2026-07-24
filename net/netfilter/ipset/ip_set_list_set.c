@@ -548,7 +548,7 @@ list_set_cancel_gc(struct ip_set *set)
 	struct list_set *map = set->data;
 
 	if (SET_WITH_TIMEOUT(set))
-		del_timer_sync(&map->gc);
+		timer_shutdown_sync(&map->gc);
 }
 
 static const struct ip_set_type_variant set_variant = {

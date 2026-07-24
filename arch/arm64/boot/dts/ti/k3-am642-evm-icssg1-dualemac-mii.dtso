@@ -1,8 +1,8 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
 /**
- * DT overlay for 2nd ICSSG1 port enabling on AM642 EVM
+ * DT overlay for enabling both ICSSG1 port on AM642 EVM in MII mode
  *
- * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2020-2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;
@@ -12,8 +12,7 @@
 
 &{/} {
 	aliases {
-		ethernet1 = "/icssg1-eth/ethernet-ports/port@0";
-		ethernet2 = "/icssg1-eth/ethernet-ports/port@1";
+		ethernet1 = "/icssg1-eth/ethernet-ports/port@1";
 	};
 
 	mdio-mux-2 {
@@ -36,7 +35,7 @@
 };
 
 &main_pmx0 {
-	icssg1_mii1_pins_default: icssg1-mii1-pins-default {
+	icssg1_mii1_pins_default: icssg1-mii1-default-pins {
 		pinctrl-single,pins = <
 			AM64X_IOPAD(0x00f8, PIN_INPUT, 1) /* (V9) PRG1_PRU0_GPO16.PR1_MII_MT0_CLK */
 			AM64X_IOPAD(0x00f4, PIN_OUTPUT, 0) /* (Y9) PRG1_PRU0_GPO15.PR1_MII0_TXEN */
@@ -55,7 +54,7 @@
 		>;
 	};
 
-	icssg1_mii2_pins_default: icssg1-mii-pins-default {
+	icssg1_mii2_pins_default: icssg1-mii2-default-pins {
 		pinctrl-single,pins = <
 			AM64X_IOPAD(0x0148, PIN_INPUT, 1) /* (Y10) PRG1_PRU1_GPO16.PR1_MII_MT1_CLK */
 			AM64X_IOPAD(0x0144, PIN_OUTPUT, 0) /* (Y11) PRG1_PRU1_GPO15.PR1_MII1_TXEN */

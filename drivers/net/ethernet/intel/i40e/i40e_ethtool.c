@@ -3,9 +3,10 @@
 
 /* ethtool support for i40e */
 
-#include "i40e.h"
+#include "i40e_devids.h"
 #include "i40e_diag.h"
 #include "i40e_txrx_common.h"
+#include "i40e_virtchnl_pf.h"
 
 /* ethtool statistics helpers */
 
@@ -1287,8 +1288,10 @@ static int i40e_set_link_ksettings(struct net_device *netdev,
 	 * trying to set something that we do not support.
 	 */
 	if (memcmp(&copy_ks.base, &safe_ks.base,
-		   sizeof(struct ethtool_link_settings)))
+		   sizeof(struct ethtool_link_settings))) {
+		netdev_err(netdev, "Only speed and autoneg are supported.\n");
 		return -EOPNOTSUPP;
+	}
 
 	while (test_and_set_bit(__I40E_CONFIG_BUSY, pf->state)) {
 		timeout--;
@@ -5400,6 +5403,13 @@ flags_complete:
 		return -EOPNOTSUPP;
 	}
 
+	if ((changed_flags & I40E_FLAG_LEGACY_RX) &&
+	    I40E_2K_TOO_SMALL_WITH_PADDING) {
+		dev_warn(&pf->pdev->dev,
+			 "2k Rx buffer is too small to fit standard MTU and skb_shared_info\n");
+		return -EOPNOTSUPP;
+	}
+
 	if ((changed_flags & new_flags &
 	     I40E_FLAG_LINK_DOWN_ON_CLOSE_ENABLED) &&
 	    (new_flags & I40E_FLAG_MFP_ENABLED))
@@ -5692,6 +5702,7 @@ static int i40e_set_eee(struct net_device *netdev, struct ethtool_eee *edata)
 	struct i40e_hw *hw = &pf->hw;
 	int status = I40E_SUCCESS;
 	__le16 eee_capability;
+	int status = 0;
 
 	/* Deny parameters we don't support */
 	if (i40e_is_eee_param_supported(netdev, edata))

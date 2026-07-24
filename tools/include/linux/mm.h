@@ -27,7 +27,7 @@ static inline void *phys_to_virt(unsigned long address)
 	return __va(address);
 }
 
-void reserve_bootmem_region(phys_addr_t start, phys_addr_t end);
+void reserve_bootmem_region(phys_addr_t start, phys_addr_t end, int nid);
 
 static inline void totalram_pages_inc(void)
 {
@@ -35,6 +35,11 @@ static inline void totalram_pages_inc(void)
 
 static inline void totalram_pages_add(long count)
 {
+}
+
+static inline int early_pfn_to_nid(unsigned long pfn)
+{
+	return 0;
 }
 
 #endif

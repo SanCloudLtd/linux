@@ -3,7 +3,7 @@
  * DT Overlay for Arducam V3Link UC-A09 board
  * https://www.arducam.com/fpd-link-3-cameras/
  *
- * Copyright (C) 2024 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2023 Texas Instruments Incorporated - http://www.ti.com/
  */
 
 /dts-v1/;
@@ -69,13 +69,29 @@
 	};
 };
 
-&csi0_port0 {
-	status = "okay";
+&cdns_csi2rx0 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	csi2_phy0: endpoint {
-		remote-endpoint = <&ds90ub960_0_csi_out>;
-		data-lanes = <1 2 3 4>;
-		clock-lanes = <0>;
-		link-frequencies = /bits/ 64 <800000000>;
+		csi0_port0: port@0 {
+			reg = <0>;
+			status = "okay";
+
+			csi2_phy0: endpoint {
+				remote-endpoint = <&ds90ub960_0_csi_out>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+				link-frequencies = /bits/ 64 <800000000>;
+			};
+		};
 	};
+};
+
+&ti_csi2rx0 {
+	status = "okay";
+};
+
+&dphy0 {
+	status = "okay";
 };

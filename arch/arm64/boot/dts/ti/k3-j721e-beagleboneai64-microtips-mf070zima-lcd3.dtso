@@ -4,7 +4,6 @@
  * J721E based BeagleBone AI-64 (BBAI-64) platform.
  *
  * BBAI-64: https://www.beagleboard.org/boards/beaglebone-ai-64
- * Panel: https://simplespec.microtipsusa.com/uploads/spec/datasheetFile/3004/13-070ZIMACAA0-S_V1.1_20231120.pdf
  *
  * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  */
@@ -48,7 +47,6 @@
 		reset-gpios = <&main_gpio0 98 GPIO_ACTIVE_LOW>;
 		interrupt-parent = <&main_gpio0>;
 		interrupts = <108 IRQ_TYPE_EDGE_FALLING>;
-		//interrupts = <108 IRQ_TYPE_LEVEL_LOW>;
 	};
 };
 

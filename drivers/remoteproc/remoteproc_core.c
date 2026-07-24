@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/dma-map-ops.h>
 #include <linux/panic_notifier.h>
 #include <linux/slab.h>
 #include <linux/mutex.h>
@@ -45,6 +46,7 @@
 
 static DEFINE_MUTEX(rproc_list_mutex);
 static LIST_HEAD(rproc_list);
+static DEFINE_MUTEX(dmabuf_list_mutex);
 static struct notifier_block rproc_panic_nb;
 
 typedef int (*rproc_handle_resource_t)(struct rproc *rproc,
@@ -643,7 +645,8 @@ static int rproc_handle_devmem(struct rproc *rproc, void *ptr,
 	if (!mapping)
 		return -ENOMEM;
 
-	ret = iommu_map(rproc->domain, rsc->da, rsc->pa, rsc->len, rsc->flags);
+	ret = iommu_map(rproc->domain, rsc->da, rsc->pa, rsc->len, rsc->flags,
+			GFP_KERNEL);
 	if (ret) {
 		dev_err(dev, "failed to map devmem: %d\n", ret);
 		goto out;
@@ -737,7 +740,7 @@ static int rproc_alloc_carveout(struct rproc *rproc,
 		}
 
 		ret = iommu_map(rproc->domain, mem->da, dma, mem->len,
-				mem->flags);
+				mem->flags, GFP_KERNEL);
 		if (ret) {
 			dev_err(dev, "iommu_map failed: %d\n", ret);
 			goto free_mapping;
@@ -892,6 +895,133 @@ void rproc_add_carveout(struct rproc *rproc, struct rproc_mem_entry *mem)
 	list_add_tail(&mem->node, &rproc->carveouts);
 }
 EXPORT_SYMBOL(rproc_add_carveout);
+
+static struct rproc_dmabuf_entry *rproc_find_entry_for_dmabuf(struct rproc *rproc,
+							      struct dma_buf *dmabuf)
+{
+	struct rproc_dmabuf_entry *dmabuf_entry;
+
+	mutex_lock(&dmabuf_list_mutex);
+	list_for_each_entry(dmabuf_entry, &rproc->dmabufs, node) {
+		if (dmabuf_entry->dmabuf == dmabuf) {
+			mutex_unlock(&dmabuf_list_mutex);
+			return dmabuf_entry;
+		}
+	}
+	mutex_unlock(&dmabuf_list_mutex);
+
+	return NULL;
+}
+
+/* TODO: Should we map here? */
+int rproc_dmabuf_get_da(struct rproc *rproc, struct dma_buf *dmabuf, dma_addr_t *dma)
+{
+	struct rproc_dmabuf_entry *dmabuf_entry;
+
+	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
+	if (!dmabuf_entry)
+		return -EINVAL;
+
+	/* TODO: Should this be ->da? */
+	*dma = dmabuf_entry->dma;
+
+	return 0;
+}
+
+/**
+ * rproc_attach_dmabuf() - attach a DMA-BUF to rproc device
+ * @rproc: rproc handle
+ * @dmabuf: dmabuf entry to register
+ *
+ * This function attaches and maps specified DMUBUF to this rproc.
+ */
+int rproc_attach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
+{
+	struct rproc_dmabuf_entry *dmabuf_entry;
+	struct device *dev = &rproc->dev;
+	struct dma_buf_attachment *attachment;
+	struct sg_table *sgt;
+	int ret;
+
+	/* Check if already in list */
+	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
+	if (dmabuf_entry) {
+		dmabuf_entry->refcount++;
+		return 0;
+	}
+
+	attachment = dma_buf_attach(dmabuf, dev);
+	if (IS_ERR(attachment)) {
+		ret = PTR_ERR(attachment);
+		goto out;
+	}
+
+	/* TODO: Move mapping to get_da()? */
+	sgt = dma_buf_map_attachment(attachment, DMA_BIDIRECTIONAL);
+	if (IS_ERR(sgt)) {
+		ret = PTR_ERR(sgt);
+		goto fail_detach;
+	}
+
+	/* FIXME: Only physically contiguous buffers currently supported */
+	if (sgt->orig_nents != 1) {
+		dev_err(dev, "DMA-BUF not contiguous\n");
+		ret =  -EINVAL;
+		goto fail_unmap;
+	}
+
+	dmabuf_entry = kzalloc(sizeof(*dmabuf_entry), GFP_KERNEL);
+	dmabuf_entry->len = sg_dma_len(sgt->sgl);
+	dmabuf_entry->dma = sg_dma_address(sgt->sgl);
+	/* TODO: Check this */
+//	rproc_pa_to_da(rproc, dmabuf_entry->dma, &dmabuf_entry->da);
+	dmabuf_entry->dmabuf = dmabuf;
+	dmabuf_entry->attachment = attachment;
+	dmabuf_entry->sgt = sgt;
+	dmabuf_entry->refcount = 1;
+
+	mutex_lock(&dmabuf_list_mutex);
+	list_add_tail(&dmabuf_entry->node, &rproc->dmabufs);
+	mutex_unlock(&dmabuf_list_mutex);
+
+	return 0;
+
+fail_unmap:
+	dma_buf_unmap_attachment(attachment, sgt, DMA_BIDIRECTIONAL);
+fail_detach:
+	dma_buf_detach(dmabuf, attachment);
+out:
+	return ret;
+}
+EXPORT_SYMBOL(rproc_attach_dmabuf);
+
+static void rproc_release_dmabuf(struct rproc *rproc, struct rproc_dmabuf_entry *dmabuf_entry)
+{
+	if (dmabuf_entry->attachment && dmabuf_entry->sgt)
+		dma_buf_unmap_attachment(dmabuf_entry->attachment, dmabuf_entry->sgt, DMA_BIDIRECTIONAL);
+	if (dmabuf_entry->dmabuf && dmabuf_entry->attachment)
+		dma_buf_detach(dmabuf_entry->dmabuf, dmabuf_entry->attachment);
+	mutex_lock(&dmabuf_list_mutex);
+	list_del(&dmabuf_entry->node);
+	mutex_unlock(&dmabuf_list_mutex);
+	kfree(dmabuf_entry);
+}
+
+int rproc_detach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf)
+{
+	struct rproc_dmabuf_entry *dmabuf_entry;
+
+	dmabuf_entry = rproc_find_entry_for_dmabuf(rproc, dmabuf);
+	if (!dmabuf_entry)
+		return -EINVAL;
+
+	dmabuf_entry->refcount--;
+	if (dmabuf_entry->refcount < 1)
+		rproc_release_dmabuf(rproc, dmabuf_entry);
+
+	return 0;
+}
+EXPORT_SYMBOL(rproc_detach_dmabuf);
 
 /**
  * rproc_mem_entry_init() - allocate and initialize rproc_mem_entry struct
@@ -1219,6 +1349,7 @@ static int rproc_alloc_registered_carveouts(struct rproc *rproc)
 void rproc_resource_cleanup(struct rproc *rproc)
 {
 	struct rproc_mem_entry *entry, *tmp;
+	struct rproc_dmabuf_entry *dmabuf, *dtmp;
 	struct rproc_debug_trace *trace, *ttmp;
 	struct rproc_vdev *rvdev, *rvtmp;
 	struct device *dev = &rproc->dev;
@@ -1253,6 +1384,10 @@ void rproc_resource_cleanup(struct rproc *rproc)
 		list_del(&entry->node);
 		kfree(entry);
 	}
+
+	/* clean up dmabufs */
+	list_for_each_entry_safe(dmabuf, dtmp, &rproc->dmabufs, node)
+		rproc_release_dmabuf(rproc, dmabuf);
 
 	/* clean up remote vdev entries */
 	list_for_each_entry_safe(rvdev, rvtmp, &rproc->rvdevs, node)
@@ -2119,7 +2254,7 @@ struct rproc *rproc_get_by_phandle(phandle phandle)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(r, &rproc_list, node) {
-		if (r->dev.parent && r->dev.parent->of_node == np) {
+		if (r->dev.parent && device_match_of_node(r->dev.parent, np)) {
 			/* prevent underlying implementation from being removed */
 			if (!try_module_get(r->dev.parent->driver->owner)) {
 				dev_err(&r->dev, "can't get owner\n");
@@ -2464,6 +2599,18 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	rproc->dev.driver_data = rproc;
 	idr_init(&rproc->notifyids);
 
+	/* Make device dma capable by inheriting from parent's capabilities */
+	set_dma_ops(&rproc->dev, get_dma_ops(rproc->dev.parent));
+	if (dma_coerce_mask_and_coherent(&rproc->dev, dma_get_mask(rproc->dev.parent)))
+		dev_warn(&rproc->dev, "Failed to set DMA mask. Trying to continue...\n");
+	rproc->dev.dma_parms = &rproc->dma_parms;
+	/*
+	 * We could use dma_get_max_seg_size(rproc->dev.parent) here but the
+	 * parent is not usually setup correctly either, use full 32bit mask
+	 * for now.
+	 */
+	dma_set_max_seg_size(&rproc->dev, DMA_BIT_MASK(32));
+
 	rproc->name = kstrdup_const(name, GFP_KERNEL);
 	if (!rproc->name)
 		goto put_device;
@@ -2488,6 +2635,7 @@ struct rproc *rproc_alloc(struct device *dev, const char *name,
 	mutex_init(&rproc->lock);
 
 	INIT_LIST_HEAD(&rproc->carveouts);
+	INIT_LIST_HEAD(&rproc->dmabufs);
 	INIT_LIST_HEAD(&rproc->mappings);
 	INIT_LIST_HEAD(&rproc->traces);
 	INIT_LIST_HEAD(&rproc->rvdevs);
@@ -2765,5 +2913,4 @@ static void __exit remoteproc_exit(void)
 }
 module_exit(remoteproc_exit);
 
-MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Generic Remote Processor Framework");

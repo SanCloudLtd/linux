@@ -40,6 +40,7 @@ struct task_struct;
 DECLARE_PER_CPU(struct task_struct *, __entry_task);
 
 #include <asm/types.h>
+#include <asm/traps.h>
 
 struct cpu_context_save {
 	__u32	r4;
@@ -62,12 +63,10 @@ struct cpu_context_save {
 struct thread_info {
 	unsigned long		flags;		/* low level flags */
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
-	int			preempt_lazy_count; /* 0 => preemptable, <0 => bug */
 	__u32			cpu;		/* cpu */
 	__u32			cpu_domain;	/* cpu domain */
 	struct cpu_context_save	cpu_context;	/* cpu context */
 	__u32			abi_syscall;	/* ABI type and syscall nr */
-	__u8			used_cp[16];	/* thread used copro */
 	unsigned long		tp_value[2];	/* TLS registers */
 	union fp_state		fpstate __attribute__((aligned(8)));
 	union vfp_state		vfpstate;
@@ -106,6 +105,21 @@ extern void iwmmxt_task_restore(struct thread_info *, void *);
 extern void iwmmxt_task_release(struct thread_info *);
 extern void iwmmxt_task_switch(struct thread_info *);
 
+extern int iwmmxt_undef_handler(struct pt_regs *, u32);
+
+static inline void register_iwmmxt_undef_handler(void)
+{
+	static struct undef_hook iwmmxt_undef_hook = {
+		.instr_mask	= 0x0c000e00,
+		.instr_val	= 0x0c000000,
+		.cpsr_mask	= MODE_MASK | PSR_T_BIT,
+		.cpsr_val	= USR_MODE,
+		.fn		= iwmmxt_undef_handler,
+	};
+
+	register_undef_hook(&iwmmxt_undef_hook);
+}
+
 extern void vfp_sync_hwstate(struct thread_info *);
 extern void vfp_flush_hwstate(struct thread_info *);
 
@@ -130,7 +144,6 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define TIF_NOTIFY_RESUME	2	/* callback before returning to user */
 #define TIF_UPROBE		3	/* breakpointed or singlestepping */
 #define TIF_NOTIFY_SIGNAL	4	/* signal notifications exist */
-#define TIF_NEED_RESCHED_LAZY	5
 
 #define TIF_USING_IWMMXT	17
 #define TIF_MEMDIE		18	/* is terminating due to OOM killer */
@@ -150,7 +163,6 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define _TIF_SYSCALL_TRACEPOINT	(1 << TIF_SYSCALL_TRACEPOINT)
 #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
 #define _TIF_NOTIFY_SIGNAL	(1 << TIF_NOTIFY_SIGNAL)
-#define _TIF_NEED_RESCHED_LAZY	(1 << TIF_NEED_RESCHED_LAZY)
 #define _TIF_USING_IWMMXT	(1 << TIF_USING_IWMMXT)
 
 /* Checks for any syscall work in entry-common.S */
@@ -160,8 +172,7 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 /*
  * Change these and you break ASM code in entry-common.S
  */
-#define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_NEED_RESCHED_LAZY | \
-				 _TIF_SIGPENDING | \
+#define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | \
 				 _TIF_NOTIFY_RESUME | _TIF_UPROBE | \
 				 _TIF_NOTIFY_SIGNAL)
 

@@ -20,25 +20,7 @@
 		ethernet6 = "/icssg1-eth/ethernet-ports/port@1";
 	};
 
-	transceiver1: can-phy0 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mcan0_gpio_pins_default>;
-		standby-gpios = <&main_gpio1 47 GPIO_ACTIVE_LOW>;
-	};
-
-        transceiver2: can-phy1 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mcan1_gpio_pins_default>;
-		standby-gpios = <&main_gpio1 67 GPIO_ACTIVE_LOW>;
-	};
-
-	/* Dual Ethernet application node on PRU-ICSSG0 */
+	/* Ethernet node on PRU-ICSSG0 */
 	icssg0_eth: icssg0-eth {
 		compatible = "ti,am654-icssg-prueth";
 		pinctrl-names = "default";
@@ -62,7 +44,7 @@
 		ti,mii-g-rt = <&icssg0_mii_g_rt>;
 		ti,mii-rt = <&icssg0_mii_rt>;
 		ti,pa-stats = <&icssg0_pa_stats>;
-		iep = <&icssg0_iep0>,  <&icssg0_iep1>;
+		ti,iep = <&icssg0_iep0>,  <&icssg0_iep1>;
 
 		interrupt-parent = <&icssg0_intc>;
 		interrupts = <24 0 2>, <25 1 3>;
@@ -107,7 +89,7 @@
 		};
 	};
 
-	/* Dual Ethernet application node on PRU-ICSSG1 */
+	/* Ethernet node on PRU-ICSSG1 */
 	icssg1_eth: icssg1-eth {
 		compatible = "ti,am654-icssg-prueth";
 		pinctrl-names = "default";
@@ -131,11 +113,10 @@
 		ti,mii-g-rt = <&icssg1_mii_g_rt>;
 		ti,mii-rt = <&icssg1_mii_rt>;
 		ti,pa-stats = <&icssg1_pa_stats>;
-		iep = <&icssg1_iep0>,  <&icssg1_iep1>;
+		ti,iep = <&icssg1_iep0>,  <&icssg1_iep1>;
 
 		interrupt-parent = <&icssg1_intc>;
 		interrupts = <24 0 2>, <25 1 3>;
-
 		interrupt-names = "tx_ts0", "tx_ts1";
 
 		dmas = <&main_udmap 0xc200>, /* egress slice 0 */
@@ -176,29 +157,36 @@
 			};
 		};
 	};
+
+	transceiver1: can-phy0 {
+		compatible = "ti,tcan1042";
+		#phy-cells = <0>;
+		max-bitrate = <5000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&mcan0_gpio_pins_default>;
+		standby-gpios = <&main_gpio1 47 GPIO_ACTIVE_LOW>;
+	};
+
+	transceiver2: can-phy1 {
+		compatible = "ti,tcan1042";
+		#phy-cells = <0>;
+		max-bitrate = <5000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&mcan1_gpio_pins_default>;
+		standby-gpios = <&main_gpio1 67 GPIO_ACTIVE_LOW>;
+	};
 };
 
 &main_pmx0 {
-	mcan0_gpio_pins_default: mcan0-gpio-pins-default {
-		pinctrl-single,pins = <
-			AM65X_IOPAD(0x023c, PIN_INPUT, 7) /* (V25) PRG0_PRU0_GPIO18:GPIO1_47 */
-		>;
-	};
 
-	mcan1_gpio_pins_default: mcan1-gpio-pins-default {
-		pinctrl-single,pins = <
-			AM65X_IOPAD(0x028c, PIN_INPUT, 7) /* (Y26) PRG0_PRU1_GPIO18.GPIO1_67 */
-		>;
-	};
-
-	icssg0_mdio_pins_default: icssg0-mdio-pins-default {
+	icssg0_mdio_pins_default: icssg0-mdio-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x0294, PIN_INPUT, 0) /* (AE26) PRG0_MDIO0_MDIO */
 			AM65X_IOPAD(0x0298, PIN_OUTPUT, 0) /* (AE28) PRG0_MDIO0_MDC */
 		>;
 	};
 
-	icssg0_rgmii_pins_default: icssg0-rgmii-pins-default {
+	icssg0_rgmii_pins_default: icssg0-rgmii-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x0244, PIN_INPUT, 2) /* (AB28) PRG0_PRU1_GPO0.PRG0_RGMII2_RD0 */
 			AM65X_IOPAD(0x0248, PIN_INPUT, 2) /* (AC28) PRG0_PRU1_GPO1.PRG0_RGMII2_RD1 */
@@ -228,20 +216,20 @@
 		>;
 	};
 
-	icssg0_iep0_pins_default: icssg0-iep0-pins-default {
+	icssg0_iep0_pins_default: icssg0-iep0-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x0240, PIN_INPUT, 2) /* (U24) PRG0_PRU0_GPO19.PRG0_IEP0_EDC_SYNC_OUT0 */
 		>;
 	};
 
-	icssg1_mdio_pins_default: icssg1-mdio-pins-default {
+	icssg1_mdio_pins_default: icssg1-mdio-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x0180, PIN_INPUT, 0) /* (AD18) PRG1_MDIO0_MDIO */
 			AM65X_IOPAD(0x0184, PIN_OUTPUT, 0) /* (AH18) PRG1_MDIO0_MDC */
 		>;
 	};
 
-	icssg1_rgmii_pins_default: icssg1-rgmii-pins-default {
+	icssg1_rgmii_pins_default: icssg1-rgmii-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x0130, PIN_INPUT, 2) /* (AH24) PRG1_PRU1_GPO0.PRG1_RGMII2_RD0 */
 			AM65X_IOPAD(0x0134, PIN_INPUT, 2) /* (AH23) PRG1_PRU1_GPO1.PRG1_RGMII2_RD1 */
@@ -271,9 +259,21 @@
 		>;
 	};
 
-	icssg1_iep0_pins_default: icssg1-iep0-pins-default {
+	icssg1_iep0_pins_default: icssg1-iep0-default-pins {
 		pinctrl-single,pins = <
 			AM65X_IOPAD(0x012c, PIN_INPUT, 2) /* (AG26) PRG1_PRU0_GPO19.PRG1_IEP0_EDC_SYNC_OUT0 */
+		>;
+	};
+
+	mcan0_gpio_pins_default: mcan0-gpio-pins-default {
+		pinctrl-single,pins = <
+			AM65X_IOPAD(0x023c, PIN_INPUT, 7) /* (V25) PRG0_PRU0_GPIO18:GPIO1_47 */
+		>;
+	};
+
+	mcan1_gpio_pins_default: mcan1-gpio-pins-default {
+		pinctrl-single,pins = <
+			AM65X_IOPAD(0x028c, PIN_INPUT, 7) /* (Y26) PRG0_PRU1_GPIO18.GPIO1_67 */
 		>;
 	};
 };
@@ -292,20 +292,6 @@
 			AM65X_WKUP_IOPAD(0x00c0, PIN_OUTPUT_PULLUP, 1) /* (AC3) WKUP_GPIO0_4.MCU_MCAN1_TX */
 		>;
 	};
-};
-
-&m_can0 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_mcan0_pins_default>;
-	phys = <&transceiver1>;
-};
-
-&m_can1 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_mcan1_pins_default>;
-	phys = <&transceiver2>;
 };
 
 &icssg0_mdio {
@@ -356,4 +342,18 @@
 &icssg1_iep0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&icssg1_iep0_pins_default>;
+};
+
+&m_can0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcu_mcan0_pins_default>;
+	phys = <&transceiver1>;
+};
+
+&m_can1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcu_mcan1_pins_default>;
+	phys = <&transceiver2>;
 };

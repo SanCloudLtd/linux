@@ -3,7 +3,7 @@
  * DT Overlay for Fusion (FPD-Link III) board on J721S2 and J784S4 EVM
  * https://svtronics.com/portfolio/evm577pfusion-v1-0-fusion/
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - http://www.ti.com/
  */
 
 /dts-v1/;
@@ -84,24 +84,58 @@
 	};
 };
 
-&csi0_port0 {
-	status = "okay";
+&cdns_csi2rx0 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	csi2_phy0: endpoint {
-		remote-endpoint = <&ds90ub960_0_csi_out>;
-		clock-lanes = <0>;
-		data-lanes = <1 2 3 4>;
-		link-frequencies = /bits/ 64 <800000000>;
+		csi0_port0: port@0 {
+			reg = <0>;
+			status = "okay";
+
+			csi2_phy0: endpoint {
+				remote-endpoint = <&ds90ub960_0_csi_out>;
+				clock-lanes = <0>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <800000000>;
+
+			};
+		};
 	};
 };
 
-&csi1_port0 {
-	status = "okay";
+&cdns_csi2rx1 {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
 
-	csi2_phy1: endpoint {
-		remote-endpoint = <&ds90ub960_1_csi_out>;
-		clock-lanes = <0>;
-		data-lanes = <1 2 3 4>;
-		link-frequencies = /bits/ 64 <800000000>;
+		csi1_port0: port@0 {
+			reg = <0>;
+			status = "okay";
+
+			csi2_phy1: endpoint {
+				remote-endpoint = <&ds90ub960_1_csi_out>;
+				bus-type = <4>; /* CSI2 DPHY */
+				clock-lanes = <0>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <800000000>;
+			};
+		};
 	};
+};
+
+&ti_csi2rx0 {
+	status = "okay";
+};
+
+&dphy0 {
+	status = "okay";
+};
+
+&ti_csi2rx1 {
+	status = "okay";
+};
+
+&dphy1 {
+	status = "okay";
 };

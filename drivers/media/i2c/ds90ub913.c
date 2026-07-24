@@ -21,6 +21,8 @@
 #include <linux/regmap.h>
 
 #include <media/i2c/ds90ub9xx.h>
+#include <media/v4l2-fwnode.h>
+#include <media/v4l2-mediabus.h>
 #include <media/v4l2-subdev.h>
 
 #define UB913_PAD_SINK			0
@@ -83,7 +85,7 @@ struct ub913_data {
 
 	struct ds90ub9xx_platform_data *plat_data;
 
-	u32			pclk_polarity;
+	bool			pclk_polarity_rising;
 };
 
 static inline struct ub913_data *sd_to_ub913(struct v4l2_subdev *sd)
@@ -469,7 +471,7 @@ static int ub913_log_status(struct v4l2_subdev *sd)
 {
 	struct ub913_data *priv = sd_to_ub913(sd);
 	struct device *dev = &priv->client->dev;
-	u8 v, v1, v2;
+	u8 v = 0, v1 = 0, v2 = 0;
 
 	ub913_read(priv, UB913_REG_MODE_SEL, &v);
 	dev_info(dev, "MODE_SEL %#02x\n", v);
@@ -518,7 +520,7 @@ static const struct media_entity_operations ub913_entity_ops = {
 
 static int ub913_notify_bound(struct v4l2_async_notifier *notifier,
 			      struct v4l2_subdev *source_subdev,
-			      struct v4l2_async_subdev *asd)
+			      struct v4l2_async_connection *asd)
 {
 	struct ub913_data *priv = sd_to_ub913(notifier->sd);
 	struct device *dev = &priv->client->dev;
@@ -557,7 +559,7 @@ static const struct v4l2_async_notifier_operations ub913_notify_ops = {
 static int ub913_v4l2_notifier_register(struct ub913_data *priv)
 {
 	struct device *dev = &priv->client->dev;
-	struct v4l2_async_subdev *asd;
+	struct v4l2_async_connection *asd;
 	struct fwnode_handle *ep_fwnode;
 	int ret;
 
@@ -568,10 +570,10 @@ static int ub913_v4l2_notifier_register(struct ub913_data *priv)
 		return -ENODEV;
 	}
 
-	v4l2_async_nf_init(&priv->notifier);
+	v4l2_async_subdev_nf_init(&priv->notifier, &priv->sd);
 
 	asd = v4l2_async_nf_add_fwnode_remote(&priv->notifier, ep_fwnode,
-					      struct v4l2_async_subdev);
+					      struct v4l2_async_connection);
 
 	fwnode_handle_put(ep_fwnode);
 
@@ -583,7 +585,7 @@ static int ub913_v4l2_notifier_register(struct ub913_data *priv)
 
 	priv->notifier.ops = &ub913_notify_ops;
 
-	ret = v4l2_async_subdev_nf_register(&priv->sd, &priv->notifier);
+	ret = v4l2_async_nf_register(&priv->notifier);
 	if (ret) {
 		dev_err(dev, "Failed to register subdev_notifier");
 		v4l2_async_nf_cleanup(&priv->notifier);
@@ -675,25 +677,32 @@ static int ub913_add_i2c_adapter(struct ub913_data *priv)
 static int ub913_parse_dt(struct ub913_data *priv)
 {
 	struct device *dev = &priv->client->dev;
+	struct v4l2_fwnode_endpoint vep = {
+		.bus_type = V4L2_MBUS_PARALLEL,
+	};
 	struct fwnode_handle *ep_fwnode;
 	int ret;
 
 	ep_fwnode = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev),
 						    UB913_PAD_SINK, 0, 0);
-	if (!ep_fwnode) {
-		dev_err_probe(dev, -ENOENT, "No sink endpoint\n");
-		return -ENOENT;
-	}
+	if (!ep_fwnode)
+		return dev_err_probe(dev, -ENOENT, "No sink endpoint\n");
 
-	ret = fwnode_property_read_u32(ep_fwnode, "pclk-sample",
-				       &priv->pclk_polarity);
+	ret = v4l2_fwnode_endpoint_parse(ep_fwnode, &vep);
 
 	fwnode_handle_put(ep_fwnode);
 
-	if (ret) {
-		dev_err_probe(dev, ret, "failed to parse 'pclk-sample'\n");
-		return ret;
-	}
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "failed to parse sink endpoint data\n");
+
+	if (vep.bus.parallel.flags & V4L2_MBUS_PCLK_SAMPLE_RISING)
+		priv->pclk_polarity_rising = true;
+	else if (vep.bus.parallel.flags & V4L2_MBUS_PCLK_SAMPLE_FALLING)
+		priv->pclk_polarity_rising = false;
+	else
+		return dev_err_probe(dev, -EINVAL,
+				     "bad value for 'pclk-sample'\n");
 
 	return 0;
 }
@@ -726,7 +735,7 @@ static int ub913_hw_init(struct ub913_data *priv)
 
 	ub913_read(priv, UB913_REG_GENERAL_CFG, &v);
 	v &= ~UB913_REG_GENERAL_CFG_PCLK_RISING;
-	v |= priv->pclk_polarity ? UB913_REG_GENERAL_CFG_PCLK_RISING : 0;
+	v |= priv->pclk_polarity_rising ? UB913_REG_GENERAL_CFG_PCLK_RISING : 0;
 	ub913_write(priv, UB913_REG_GENERAL_CFG, v);
 
 	return 0;
@@ -749,19 +758,9 @@ static int ub913_subdev_init(struct ub913_data *priv)
 	if (ret)
 		return dev_err_probe(dev, ret, "Failed to init pads\n");
 
-	priv->sd.fwnode = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev),
-							  UB913_PAD_SOURCE, 0,
-							  0);
-
-	if (!priv->sd.fwnode) {
-		ret = -ENODEV;
-		dev_err_probe(dev, ret, "Missing TX endpoint\n");
-		goto err_entity_cleanup;
-	}
-
 	ret = v4l2_subdev_init_finalize(&priv->sd);
 	if (ret)
-		goto err_fwnode_put;
+		goto err_entity_cleanup;
 
 	ret = ub913_v4l2_notifier_register(priv);
 	if (ret) {
@@ -782,8 +781,6 @@ err_unreg_notif:
 	ub913_v4l2_nf_unregister(priv);
 err_subdev_cleanup:
 	v4l2_subdev_cleanup(&priv->sd);
-err_fwnode_put:
-	fwnode_handle_put(priv->sd.fwnode);
 err_entity_cleanup:
 	media_entity_cleanup(&priv->sd.entity);
 
@@ -889,7 +886,7 @@ static const struct of_device_id ub913_dt_ids[] = {
 MODULE_DEVICE_TABLE(of, ub913_dt_ids);
 
 static struct i2c_driver ds90ub913_driver = {
-	.probe_new	= ub913_probe,
+	.probe		= ub913_probe,
 	.remove		= ub913_remove,
 	.id_table	= ub913_id,
 	.driver = {

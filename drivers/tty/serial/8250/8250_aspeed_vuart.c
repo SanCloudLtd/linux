@@ -275,6 +275,9 @@ static void __aspeed_vuart_set_throttle(struct uart_8250_port *up,
 {
 	unsigned char irqs = UART_IER_RLSI | UART_IER_RDI;
 
+	/* Port locked to synchronize UART_IER access against the console. */
+	lockdep_assert_held_once(&up->port.lock);
+
 	up->ier &= ~irqs;
 	if (!throttle)
 		up->ier |= irqs;
@@ -285,9 +288,9 @@ static void aspeed_vuart_set_throttle(struct uart_port *port, bool throttle)
 	struct uart_8250_port *up = up_to_u8250p(port);
 	unsigned long flags;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 	__aspeed_vuart_set_throttle(up, throttle);
-	spin_unlock_irqrestore(&port->lock, flags);
+	uart_port_unlock_irqrestore(port, flags);
 }
 
 static void aspeed_vuart_throttle(struct uart_port *port)
@@ -337,7 +340,7 @@ static int aspeed_vuart_handle_irq(struct uart_port *port)
 	if (iir & UART_IIR_NO_INT)
 		return 0;
 
-	spin_lock_irqsave(&port->lock, flags);
+	uart_port_lock_irqsave(port, &flags);
 
 	lsr = serial_port_in(port, UART_LSR);
 

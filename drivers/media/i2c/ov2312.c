@@ -443,7 +443,7 @@ static int ov2312_power_on(struct ov2312 *ov2312)
 
 	if (ov2312->reset_gpio) {
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 0);
-		msleep(10);
+		usleep_range(100, 1000);
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 1);
 		msleep(30);
 	}
@@ -454,7 +454,7 @@ static int ov2312_power_off(struct ov2312 *ov2312)
 {
 	if (ov2312->reset_gpio) {
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 0);
-		msleep(10);
+		usleep_range(1, 10);
 	}
 
 	clk_disable_unprepare(ov2312->clk);
@@ -769,7 +769,7 @@ static struct i2c_driver ov2312_i2c_driver = {
 		.pm	= &ov2312_pm_ops,
 		.of_match_table = of_match_ptr(ov2312_of_match),
 	},
-	.probe_new	= ov2312_probe,
+	.probe		= ov2312_probe,
 	.remove		= ov2312_remove,
 	.id_table	= ov2312_id,
 };

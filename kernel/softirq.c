@@ -247,6 +247,19 @@ out:
 }
 EXPORT_SYMBOL(__local_bh_enable_ip);
 
+void softirq_preempt(void)
+{
+	if (WARN_ON_ONCE(!preemptible()))
+		return;
+
+	if (WARN_ON_ONCE(__this_cpu_read(softirq_ctrl.cnt) != SOFTIRQ_OFFSET))
+		return;
+
+	__local_bh_enable(SOFTIRQ_OFFSET, true);
+	/* preemption point */
+	__local_bh_disable_ip(_RET_IP_, SOFTIRQ_OFFSET);
+}
+
 /*
  * Invoked from ksoftirqd_run() outside of the interrupt disabled section
  * to acquire the per CPU local lock for reentrancy protection.
@@ -612,7 +625,7 @@ static inline void tick_irq_exit(void)
 	int cpu = smp_processor_id();
 
 	/* Make sure that timer wheel updates are propagated */
-	if ((idle_cpu(cpu) && !need_resched()) || tick_nohz_full_cpu(cpu)) {
+	if ((sched_core_idle_cpu(cpu) && !need_resched()) || tick_nohz_full_cpu(cpu)) {
 		if (!in_hardirq())
 			tick_nohz_irq_exit();
 	}
@@ -797,10 +810,15 @@ static void tasklet_action_common(struct softirq_action *a,
 		if (tasklet_trylock(t)) {
 			if (!atomic_read(&t->count)) {
 				if (tasklet_clear_sched(t)) {
-					if (t->use_callback)
+					if (t->use_callback) {
+						trace_tasklet_entry(t, t->callback);
 						t->callback(t);
-					else
+						trace_tasklet_exit(t, t->callback);
+					} else {
+						trace_tasklet_entry(t, t->func);
 						t->func(t->data);
+						trace_tasklet_exit(t, t->func);
+					}
 				}
 				tasklet_unlock(t);
 				continue;

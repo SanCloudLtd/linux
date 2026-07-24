@@ -40,6 +40,8 @@
 #define TI_SCI_MSG_PREPARE_SLEEP       0x0300
 #define TI_SCI_MSG_LPM_WAKE_REASON	0x0306
 #define TI_SCI_MSG_SET_IO_ISOLATION	0x0307
+#define TI_SCI_MSG_LPM_SET_DEVICE_CONSTRAINT	0x0309
+#define TI_SCI_MSG_LPM_SET_LATENCY_CONSTRAINT	0x030A
 
 /* Resource Management Requests */
 #define TI_SCI_MSG_GET_RESOURCE_RANGE	0x1500
@@ -130,14 +132,12 @@ struct ti_sci_msg_resp_version {
 /**
  * struct ti_sci_msg_req_reboot - Reboot the SoC
  * @hdr:	Generic Header
- * @domain:	Domain to be reset, 0 for full SoC reboot
  *
  * Request type is TI_SCI_MSG_SYS_RESET, responded with a generic
  * ACK/NACK message.
  */
 struct ti_sci_msg_req_reboot {
 	struct ti_sci_msg_hdr hdr;
-	u8 domain;
 } __packed;
 
 /**
@@ -161,31 +161,7 @@ struct ti_sci_msg_resp_query_fw_caps {
 #define MSG_FLAG_CAPS_LPM_MCU_ONLY	TI_SCI_MSG_FLAG(2)
 #define MSG_FLAG_CAPS_LPM_STANDBY	TI_SCI_MSG_FLAG(3)
 #define MSG_FLAG_CAPS_LPM_PARTIAL_IO	TI_SCI_MSG_FLAG(4)
-#define MSG_MASK_CAPS_LPM		GENMASK_ULL(4, 1)
-	u64 fw_caps;
-} __packed;
-
-/**
- * struct ti_sci_msg_resp_query_fw_caps - Response for query firmware caps
- * @hdr:	Generic header
- * @fw_caps:	Each bit in fw_caps indicating one FW/SOC capability
- *		MSG_FLAG_CAPS_GENERIC: Generic capability (LPM not supported)
- *		MSG_FLAG_CAPS_LPM_DEEP_SLEEP: Deep Sleep LPM
- *		MSG_FLAG_CAPS_LPM_MCU_ONLY: MCU only LPM
- *		MSG_FLAG_CAPS_LPM_STANDBY: Standby LPM
- *		MSG_FLAG_CAPS_LPM_PARTIAL_IO: Partial IO in LPM
- *
- * Response to a generic message with message type TI_SCI_MSG_QUERY_FW_CAPS
- * providing currently available SOC/firmware capabilities. SoC that don't
- * support low power modes return only MSG_FLAG_CAPS_GENERIC capability.
- */
-struct ti_sci_msg_resp_query_fw_caps {
-	struct ti_sci_msg_hdr hdr;
-#define MSG_FLAG_CAPS_GENERIC		TI_SCI_MSG_FLAG(0)
-#define MSG_FLAG_CAPS_LPM_DEEP_SLEEP	TI_SCI_MSG_FLAG(1)
-#define MSG_FLAG_CAPS_LPM_MCU_ONLY	TI_SCI_MSG_FLAG(2)
-#define MSG_FLAG_CAPS_LPM_STANDBY	TI_SCI_MSG_FLAG(3)
-#define MSG_FLAG_CAPS_LPM_PARTIAL_IO	TI_SCI_MSG_FLAG(4)
+#define MSG_FLAG_CAPS_LPM_DM_MANAGED	TI_SCI_MSG_FLAG(5)
 #define MSG_MASK_CAPS_LPM		GENMASK_ULL(4, 1)
 	u64 fw_caps;
 } __packed;
@@ -607,6 +583,7 @@ struct ti_sci_msg_resp_get_clock_freq {
 #define TISCI_MSG_VALUE_SLEEP_MODE_MCU_ONLY				0x1
 #define TISCI_MSG_VALUE_SLEEP_MODE_STANDBY				0x2
 #define TISCI_MSG_VALUE_SLEEP_MODE_PARTIAL_IO				0x3
+#define TISCI_MSG_VALUE_SLEEP_MODE_DM_MANAGED				0xfd
 
 /**
  * struct tisci_msg_prepare_sleep_req - Request for TISCI_MSG_PREPARE_SLEEP.
@@ -659,6 +636,57 @@ struct ti_sci_msg_resp_lpm_wake_reason {
 struct ti_sci_msg_req_set_io_isolation {
 	struct ti_sci_msg_hdr hdr;
 	u8 state;
+} __packed;
+
+/**
+ * struct ti_sci_msg_req_lpm_set_device_constraint - Request for
+ * TISCI_MSG_LPM_SET_DEVICE_CONSTRAINT.
+ *
+ * @hdr:	TISCI header to provide ACK/NAK flags to the host.
+ * @id:	Device ID of device whose constraint has to be modified.
+ * @state:	The desired state of device constraint: set or clear.
+ * @rsvd:	Reserved for future use.
+ *
+ * This message is used by host to set constraint on the device. This can be
+ * sent anytime after boot before prepare sleep message. Any device can set a
+ * constraint on the low power mode that the SoC can enter. It allows
+ * configurable information to be easily shared from the application, as this
+ * is a non-secure message and therefore can be sent by anyone. By setting a
+ * constraint, the device ensures that it will not be powered off or reset in
+ * the selected mode. Note: Access Restriction: Exclusivity flag of Device will
+ * be honored. If some other host already has constraint on this device ID,
+ * NACK will be returned.
+ */
+struct ti_sci_msg_req_lpm_set_device_constraint {
+	struct ti_sci_msg_hdr hdr;
+	u32 id;
+	u8 state;
+	u32 rsvd[2];
+} __packed;
+
+/**
+ * struct ti_sci_msg_req_lpm_set_latency_constraint - Request for
+ * TISCI_MSG_LPM_SET_LATENCY_CONSTRAINT.
+ *
+ * @hdr:	TISCI header to provide ACK/NAK flags to the host.
+ * @wkup_latency:	The maximum acceptable latency to wake up from low power mode
+ *			in milliseconds. The deeper the state, the higher the latency.
+ * @state:	The desired state of wakeup latency constraint: set or clear.
+ * @rsvd:	Reserved for future use.
+ *
+ * This message is used by host to set wakeup latency from low power mode. This can
+ * be sent anytime after boot before prepare sleep message, and can be sent after
+ * current low power mode is exited. Any device can set a constraint on the low power
+ * mode that the SoC can enter. It allows configurable information to be easily shared
+ * from the application, as this is a non-secure message and therefore can be sent by
+ * anyone. By setting a wakeup latency constraint, the host ensures that the resume time
+ * from selected low power mode will be less than the constraint value.
+ */
+struct ti_sci_msg_req_lpm_set_latency_constraint {
+	struct ti_sci_msg_hdr hdr;
+	u16 latency;
+	u8 state;
+	u32 rsvd;
 } __packed;
 
 #define TI_SCI_IRQ_SECONDARY_HOST_INVALID	0xff

@@ -829,16 +829,16 @@ static int ti_eqep_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	priv = counter_priv(counter);
 
-	clk = devm_clk_get(dev, "fck");
+	clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(clk)) {
 		if (PTR_ERR(clk) != -EPROBE_DEFER)
-			dev_err(dev, "failed to get fck clock");
+			dev_err(dev, "failed to get clock");
 		return PTR_ERR(clk);
 	}
 
 	priv->clock_rate = clk_get_rate(clk);
 	if (priv->clock_rate == 0) {
-		dev_err(dev, "failed to get fck clock rate");
+		dev_err(dev, "failed to get clock rate");
 		return -EINVAL;
 	}
 
@@ -917,6 +917,7 @@ static int ti_eqep_remove(struct platform_device *pdev)
 
 static const struct of_device_id ti_eqep_of_match[] = {
 	{ .compatible = "ti,am3352-eqep", },
+	{ .compatible = "ti,am62-eqep", },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, ti_eqep_of_match);

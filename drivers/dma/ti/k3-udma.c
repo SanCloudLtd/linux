@@ -20,7 +20,6 @@
 #include <linux/sys_soc.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
-#include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
@@ -3499,6 +3498,7 @@ udma_prep_dma_cyclic_tr(struct udma_chan *uc, dma_addr_t buf_addr,
 	u16 tr0_cnt0, tr0_cnt1, tr1_cnt0;
 	unsigned int i;
 	int num_tr;
+	u32 period_csf = 0;
 
 	num_tr = udma_get_tr_counters(period_len, __ffs(buf_addr), &tr0_cnt0,
 				      &tr0_cnt1, &tr1_cnt0);
@@ -3520,6 +3520,20 @@ udma_prep_dma_cyclic_tr(struct udma_chan *uc, dma_addr_t buf_addr,
 	else
 		period_addr = buf_addr |
 			((u64)uc->config.asel << K3_ADDRESS_ASEL_SHIFT);
+
+	/*
+	 * For BCDMA <-> PDMA transfers, the EOP flag needs to be set on the
+	 * last TR of a descriptor, to mark the packet as complete.
+	 * This is required for getting the teardown completion message in case
+	 * of TX, and to avoid short-packet error in case of RX.
+	 *
+	 * As we are in cyclic mode, we do not know which period might be the
+	 * last one, so set the flag for each period.
+	 */
+	if (uc->config.ep_type == PSIL_EP_PDMA_XY &&
+	    uc->ud->match_data->type == DMA_TYPE_BCDMA) {
+		period_csf = CPPI5_TR_CSF_EOP;
+	}
 
 	for (i = 0; i < periods; i++) {
 		int tr_idx = i * num_tr;
@@ -3548,12 +3562,11 @@ udma_prep_dma_cyclic_tr(struct udma_chan *uc, dma_addr_t buf_addr,
 		}
 
 		if (!(flags & DMA_PREP_INTERRUPT))
-			cppi5_tr_csf_set(&tr_req[tr_idx].flags,
-					 CPPI5_TR_CSF_SUPR_EVT |
-						 CPPI5_TR_CSF_EOP);
-		else
-			cppi5_tr_csf_set(&tr_req[tr_idx].flags,
-					 CPPI5_TR_CSF_EOP);
+			period_csf |= CPPI5_TR_CSF_SUPR_EVT;
+
+		if (period_csf)
+			cppi5_tr_csf_set(&tr_req[tr_idx].flags, period_csf);
+
 		period_addr += period_len;
 	}
 
@@ -4333,17 +4346,17 @@ static struct udma_match_data j721e_mcu_data = {
 	},
 };
 
-static struct udma_soc_data j721s2_bcdma_soc_data = {
+static struct udma_soc_data am62a_dmss_csi_soc_data = {
 	.oes = {
-		.bcdma_tchan_data = 0x800,
-		.bcdma_tchan_ring = 0xa00,
 		.bcdma_rchan_data = 0xe00,
 		.bcdma_rchan_ring = 0x1000,
 	},
 };
 
-static struct udma_soc_data am62a_dmss_csi_soc_data = {
+static struct udma_soc_data j721s2_bcdma_csi_soc_data = {
 	.oes = {
+		.bcdma_tchan_data = 0x800,
+		.bcdma_tchan_ring = 0xa00,
 		.bcdma_rchan_data = 0xe00,
 		.bcdma_rchan_ring = 0x1000,
 	},
@@ -4362,19 +4375,6 @@ static struct udma_match_data am62a_bcdma_csirx_data = {
 	.order_id = 8,
 };
 
-static struct udma_match_data j721s2_bcdma_data = {
-	.type = DMA_TYPE_BCDMA,
-	.psil_base = 0x2000,
-	.enable_memcpy_support = false,
-	.burst_size = {
-		TI_SCI_RM_UDMAP_CHAN_BURST_SIZE_64_BYTES, /* Normal Channels */
-		0, /* No H Channels */
-		0, /* No UH Channels */
-	},
-	.soc_data = &j721s2_bcdma_soc_data,
-	.order_id = 15,
-};
-
 static struct udma_match_data j722s_bcdma_data = {
 	.type = DMA_TYPE_BCDMA,
 	.psil_base = UDMA_J722S_BCDMA_PSIL_BASE,
@@ -4384,7 +4384,7 @@ static struct udma_match_data j722s_bcdma_data = {
 		0, /* No H Channels */
 		0, /* No UH Channels */
 	},
-	.soc_data = &j721s2_bcdma_soc_data,
+	.soc_data = &j721s2_bcdma_csi_soc_data,
 	.order_id = 15,
 };
 
@@ -4412,6 +4412,19 @@ static struct udma_match_data am64_pktdma_data = {
 		0, /* No H Channels */
 		0, /* No UH Channels */
 	},
+};
+
+static struct udma_match_data j721s2_bcdma_csi_data = {
+	.type = DMA_TYPE_BCDMA,
+	.psil_base = 0x2000,
+	.enable_memcpy_support = false,
+	.burst_size = {
+		TI_SCI_RM_UDMAP_CHAN_BURST_SIZE_64_BYTES, /* Normal Channels */
+		0, /* No H Channels */
+		0, /* No UH Channels */
+	},
+	.soc_data = &j721s2_bcdma_csi_soc_data,
+	.order_id = 15,
 };
 
 static const struct of_device_id udma_of_match[] = {
@@ -4443,7 +4456,7 @@ static const struct of_device_id udma_of_match[] = {
 	},
 	{
 		.compatible = "ti,j721s2-dmss-bcdma-csi",
-		.data = &j721s2_bcdma_data,
+		.data = &j721s2_bcdma_csi_data,
 	},
 	{
 		.compatible = "ti,j722s-dmss-bcdma-csi",
@@ -5606,7 +5619,7 @@ static int udma_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int udma_pm_suspend(struct device *dev)
+static int __maybe_unused udma_pm_suspend(struct device *dev)
 {
 	struct udma_dev *ud = dev_get_drvdata(dev);
 	struct dma_device *dma_dev = &ud->ddev;
@@ -5628,7 +5641,7 @@ static int udma_pm_suspend(struct device *dev)
 	return 0;
 }
 
-static int udma_pm_resume(struct device *dev)
+static int __maybe_unused udma_pm_resume(struct device *dev)
 {
 	struct udma_dev *ud = dev_get_drvdata(dev);
 	struct dma_device *dma_dev = &ud->ddev;

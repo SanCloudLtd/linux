@@ -3,7 +3,7 @@
  * DT Overlay for Fusion (FPD-Link III) board on J721E EVM
  * https://svtronics.com/portfolio/evm577pfusion-v1-0-fusion/
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - http://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - http://www.ti.com/
  */
 
 /dts-v1/;

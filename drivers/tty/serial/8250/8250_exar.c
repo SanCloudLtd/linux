@@ -189,8 +189,6 @@ static void xr17v35x_set_divisor(struct uart_port *p, unsigned int baud,
 
 static int xr17v35x_startup(struct uart_port *port)
 {
-	struct uart_8250_port *up = up_to_u8250p(port);
-
 	/*
 	 * First enable access to IER [7:5], ISR [5:4], FCR [5:4],
 	 * MCR [7:5] and MSR [7:0]
@@ -200,8 +198,12 @@ static int xr17v35x_startup(struct uart_port *port)
 	/*
 	 * Make sure all interrups are masked until initialization is
 	 * complete and the FIFOs are cleared
+	 *
+	 * Synchronize UART_IER access against the console.
 	 */
-	serial8250_set_IER(up, 0);
+	uart_port_lock_irq(port);
+	serial_port_out(port, UART_IER, 0);
+	uart_port_unlock_irq(port);
 
 	return serial8250_do_startup(port);
 }

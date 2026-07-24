@@ -28,12 +28,12 @@ void tidss_irq_enable_vblank(struct drm_crtc *crtc)
 	struct drm_device *ddev = crtc->dev;
 	struct tidss_device *tidss = to_tidss(ddev);
 	struct tidss_crtc *tcrtc = to_tidss_crtc(crtc);
-	u32 vp_idx = tcrtc->vp_idx;
+	u32 hw_videoport = tcrtc->hw_videoport;
 	unsigned long flags;
 
 	spin_lock_irqsave(&tidss->wait_lock, flags);
-	tidss->irq_mask |= DSS_IRQ_VP_VSYNC_EVEN(vp_idx) |
-			   DSS_IRQ_VP_VSYNC_ODD(vp_idx);
+	tidss->irq_mask |= DSS_IRQ_VP_VSYNC_EVEN(hw_videoport) |
+			   DSS_IRQ_VP_VSYNC_ODD(hw_videoport);
 	tidss_irq_update(tidss);
 	spin_unlock_irqrestore(&tidss->wait_lock, flags);
 }
@@ -43,12 +43,12 @@ void tidss_irq_disable_vblank(struct drm_crtc *crtc)
 	struct drm_device *ddev = crtc->dev;
 	struct tidss_device *tidss = to_tidss(ddev);
 	struct tidss_crtc *tcrtc = to_tidss_crtc(crtc);
-	u32 vp_idx = tcrtc->vp_idx;
+	u32 hw_videoport = tcrtc->hw_videoport;
 	unsigned long flags;
 
 	spin_lock_irqsave(&tidss->wait_lock, flags);
-	tidss->irq_mask &= ~(DSS_IRQ_VP_VSYNC_EVEN(vp_idx) |
-			     DSS_IRQ_VP_VSYNC_ODD(vp_idx));
+	tidss->irq_mask &= ~(DSS_IRQ_VP_VSYNC_EVEN(hw_videoport) |
+			     DSS_IRQ_VP_VSYNC_ODD(hw_videoport));
 	tidss_irq_update(tidss);
 	spin_unlock_irqrestore(&tidss->wait_lock, flags);
 }
@@ -65,16 +65,16 @@ static irqreturn_t tidss_irq_handler(int irq, void *arg)
 	for (id = 0; id < tidss->num_crtcs; id++) {
 		struct drm_crtc *crtc = tidss->crtcs[id];
 		struct tidss_crtc *tcrtc = to_tidss_crtc(crtc);
-		u32 vp_idx = tcrtc->vp_idx;
+		u32 hw_videoport = tcrtc->hw_videoport;
 
-		if (irqstatus & (DSS_IRQ_VP_VSYNC_EVEN(vp_idx) |
-				 DSS_IRQ_VP_VSYNC_ODD(vp_idx)))
+		if (irqstatus & (DSS_IRQ_VP_VSYNC_EVEN(hw_videoport) |
+				 DSS_IRQ_VP_VSYNC_ODD(hw_videoport)))
 			tidss_crtc_vblank_irq(crtc);
 
-		if (irqstatus & (DSS_IRQ_VP_FRAME_DONE(vp_idx)))
+		if (irqstatus & (DSS_IRQ_VP_FRAME_DONE(hw_videoport)))
 			tidss_crtc_framedone_irq(crtc);
 
-		if (irqstatus & DSS_IRQ_VP_SYNC_LOST(vp_idx))
+		if (irqstatus & DSS_IRQ_VP_SYNC_LOST(hw_videoport))
 			tidss_crtc_error_irq(crtc, irqstatus);
 	}
 
@@ -110,9 +110,9 @@ int tidss_irq_install(struct drm_device *ddev, unsigned int irq)
 	for (unsigned int i = 0; i < tidss->num_crtcs; ++i) {
 		struct tidss_crtc *tcrtc = to_tidss_crtc(tidss->crtcs[i]);
 
-		tidss->irq_mask |= DSS_IRQ_VP_SYNC_LOST(tcrtc->vp_idx);
+		tidss->irq_mask |= DSS_IRQ_VP_SYNC_LOST(tcrtc->hw_videoport);
 
-		tidss->irq_mask |= DSS_IRQ_VP_FRAME_DONE(tcrtc->vp_idx);
+		tidss->irq_mask |= DSS_IRQ_VP_FRAME_DONE(tcrtc->hw_videoport);
 	}
 
 	return 0;

@@ -2,7 +2,7 @@
 /*
  * LI OV5640 MIPI Camera module on MIPI CSI (CSI2-EXP-AUX) connector.
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;

@@ -2,7 +2,7 @@
 /*
  * Device Tree Source for J721S2 SoC Family
  *
- * TRM (SPRUJ28 – NOVEMBER 2021) : http://www.ti.com/lit/pdf/spruj28
+ * TRM (SPRUJ28 NOVEMBER 2021): https://www.ti.com/lit/pdf/spruj28
  *
  * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
  *
@@ -51,9 +51,6 @@
 			d-cache-line-size = <64>;
 			d-cache-sets = <256>;
 			next-level-cache = <&L2_0>;
-			clocks = <&k3_clks 202 0>;
-			clock-names = "cpu";
-			operating-points-v2 = <&cpu0_opp_table>;
 		};
 
 		cpu1: cpu@1 {
@@ -68,31 +65,7 @@
 			d-cache-line-size = <64>;
 			d-cache-sets = <256>;
 			next-level-cache = <&L2_0>;
-			clocks = <&k3_clks 203 0>;
-			clock-names = "cpu";
-			operating-points-v2 = <&cpu0_opp_table>;
 		};
-	};
-
-	cpu0_opp_table: opp-table {
-		compatible = "operating-points-v2";
-
-		opp4-2000000000 {
-			opp-hz = /bits/ 64 <2000000000>;
-		};
-
-		opp3-1000000000 {
-			opp-hz = /bits/ 64 <1000000000>;
-		};
-
-		opp2-500000000 {
-			opp-hz = /bits/ 64 <500000000>;
-		};
-
-		opp1-250000000 {
-			opp-hz = /bits/ 64 <250000000>;
-		};
-
 	};
 
 	L2_0: l2-cache0 {
@@ -108,6 +81,7 @@
 	msmc_l3: l3-cache0 {
 		compatible = "cache";
 		cache-level = <3>;
+		cache-unified;
 	};
 
 	firmware {
@@ -144,6 +118,7 @@
 		ranges = <0x00 0x00100000 0x00 0x00100000 0x00 0x00020000>, /* ctrl mmr */
 			 <0x00 0x00600000 0x00 0x00600000 0x00 0x00031100>, /* GPIO */
 			 <0x00 0x00a40000 0x00 0x00a40000 0x00 0x00000800>, /* Time Sync Router */
+			 <0x00 0x00700000 0x00 0x00700000 0x00 0x00001000>, /* ESM */
 			 <0x00 0x01000000 0x00 0x01000000 0x00 0x0d000000>, /* Most peripherals */
 			 <0x00 0x0d800000 0x00 0x0d800000 0x00 0x00800000>, /* PCIe Core*/
 			 <0x00 0x18000000 0x00 0x18000000 0x00 0x08000000>, /* PCIe1 DAT0 */

@@ -17,42 +17,36 @@
 	};
 };
 
-&pca9543 {
+&cam1_i2c {
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	i2c@1 {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		reg = <1>;
+	deser@3d {
+		compatible = "ti,ds90ub960-q1";
+		reg = <0x3d>;
+		clocks = <&clk_fusion1_25M_fixed>;
+		clock-names = "refclk";
+		i2c-alias-pool = <0x6a 0x6b 0x6c 0x6d 0x6e 0x6f>;
 
-		deser@3d {
-			compatible = "ti,ds90ub960-q1";
-			reg = <0x3d>;
-			clocks = <&clk_fusion1_25M_fixed>;
-			clock-names = "refclk";
-			i2c-alias-pool = <0x6a 0x6b 0x6c 0x6d 0x6e 0x6f>;
+		ds90ub960_2_ports: ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-			ds90ub960_2_ports: ports {
-				#address-cells = <1>;
-				#size-cells = <0>;
-
-				/* CSI-2 TX*/
-				port@4 {
-					reg = <4>;
-					ds90ub960_2_csi_out: endpoint {
-						clock-lanes = <0>;
-						data-lanes = <1 2 3 4>;
-						link-frequencies = /bits/ 64 <800000000>;
-						remote-endpoint = <&csi2_phy2>;
-					};
+			/* CSI-2 TX*/
+			port@4 {
+				reg = <4>;
+				ds90ub960_2_csi_out: endpoint {
+					clock-lanes = <0>;
+					data-lanes = <1 2 3 4>;
+					link-frequencies = /bits/ 64 <800000000>;
+					remote-endpoint = <&csi2_phy2>;
 				};
 			};
+		};
 
-			ds90ub960_2_links: links {
-				#address-cells = <1>;
-				#size-cells = <0>;
-			};
+		ds90ub960_2_links: links {
+			#address-cells = <1>;
+			#size-cells = <0>;
 		};
 	};
 };

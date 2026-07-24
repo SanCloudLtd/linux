@@ -269,7 +269,7 @@ static struct dma_buf *carveout_dma_heap_allocate(struct dma_heap *heap,
 
 	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
-		return ERR_PTR(ret);
+		return ERR_PTR(-ENOMEM);
 	buffer->pool = carveout_dma_heap->pool;
 	buffer->cached = carveout_dma_heap->cached;
 	INIT_LIST_HEAD(&buffer->attachments);
@@ -360,8 +360,8 @@ free_carveout_dma_heap:
 #include <linux/of_reserved_mem.h>
 
 #define MAX_HEAP_AREAS 7
-struct reserved_mem heap_areas[MAX_HEAP_AREAS];
-size_t heap_area_count;
+static struct reserved_mem heap_areas[MAX_HEAP_AREAS];
+static size_t heap_area_count;
 
 static int __init carveout_dma_heap_init_areas(void)
 {

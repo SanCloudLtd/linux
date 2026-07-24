@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- *  Copyright (C) 2022 Texas Instruments Incorporated - https://www.ti.com
+ *  Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com
  */
 
 #include <linux/kernel.h>
@@ -144,6 +144,38 @@ static struct psil_ep am62p_src_ep_map[] = {
 	PSIL_CSI2RX(0x501d),
 	PSIL_CSI2RX(0x501e),
 	PSIL_CSI2RX(0x501f),
+	PSIL_CSI2RX(0x5000),
+	PSIL_CSI2RX(0x5001),
+	PSIL_CSI2RX(0x5002),
+	PSIL_CSI2RX(0x5003),
+	PSIL_CSI2RX(0x5004),
+	PSIL_CSI2RX(0x5005),
+	PSIL_CSI2RX(0x5006),
+	PSIL_CSI2RX(0x5007),
+	PSIL_CSI2RX(0x5008),
+	PSIL_CSI2RX(0x5009),
+	PSIL_CSI2RX(0x500a),
+	PSIL_CSI2RX(0x500b),
+	PSIL_CSI2RX(0x500c),
+	PSIL_CSI2RX(0x500d),
+	PSIL_CSI2RX(0x500e),
+	PSIL_CSI2RX(0x500f),
+	PSIL_CSI2RX(0x5010),
+	PSIL_CSI2RX(0x5011),
+	PSIL_CSI2RX(0x5012),
+	PSIL_CSI2RX(0x5013),
+	PSIL_CSI2RX(0x5014),
+	PSIL_CSI2RX(0x5015),
+	PSIL_CSI2RX(0x5016),
+	PSIL_CSI2RX(0x5017),
+	PSIL_CSI2RX(0x5018),
+	PSIL_CSI2RX(0x5019),
+	PSIL_CSI2RX(0x501a),
+	PSIL_CSI2RX(0x501b),
+	PSIL_CSI2RX(0x501c),
+	PSIL_CSI2RX(0x501d),
+	PSIL_CSI2RX(0x501e),
+	PSIL_CSI2RX(0x501f),
 	/* CSIRX 1-3 (only for J722S) */
 	PSIL_CSI2RX(0x5100),
 	PSIL_CSI2RX(0x5101),
@@ -241,7 +273,6 @@ static struct psil_ep am62p_src_ep_map[] = {
 	PSIL_CSI2RX(0x531d),
 	PSIL_CSI2RX(0x531e),
 	PSIL_CSI2RX(0x531f),
-
 };
 
 /* PSI-L destination thread IDs, used for TX (DMA_MEM_TO_DEV) */

@@ -2,6 +2,10 @@
 /**
  * Audio playback via HDMI for AM625-SK and AM62-LP SK.
  *
+ * Links:
+ * AM625 SK: https://www.ti.com/tool/SK-AM62
+ * AM62-LP SK: https://www.ti.com/tool/SK-AM62-LP
+ *
  * Copyright (C) 2023 Texas Instruments Incorporated - http://www.ti.com/
  */
 
@@ -15,10 +19,12 @@
 		simple-audio-card,format = "i2s";
 		simple-audio-card,bitclock-master = <&hdmi_dailink_master>;
 		simple-audio-card,frame-master = <&hdmi_dailink_master>;
+
 		hdmi_dailink_master: simple-audio-card,cpu {
 			sound-dai = <&mcasp1>;
 			system-clock-direction-out;
 		};
+
 		simple-audio-card,codec {
 			sound-dai = <&sii9022>;
 		};

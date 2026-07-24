@@ -2,7 +2,7 @@
 /*
  * MCSPI internal master-slave loopback example overlay for J7200.
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  *
  * J7200 has MCSPI4 connected as master to MCU_MCSPI2 by default and not
  * pinned out to external pads, This overlay enables spidev on these

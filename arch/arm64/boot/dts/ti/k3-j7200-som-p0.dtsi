@@ -12,9 +12,10 @@
 / {
 	memory@80000000 {
 		device_type = "memory";
+		bootph-all;
 		/* 4G RAM */
-		reg = <0x00 0x80000000 0x00 0x80000000>,
-		      <0x08 0x80000000 0x00 0x80000000>;
+		reg = <0x00000000 0x80000000 0x00000000 0x80000000>,
+		      <0x00000008 0x80000000 0x00000000 0x80000000>;
 	};
 
 	reserved_memory: reserved-memory {
@@ -83,13 +84,13 @@
 		};
 	};
 
-	mux0: mux-controller {
+	mux0: mux-controller-0 {
 		compatible = "gpio-mux";
 		#mux-state-cells = <1>;
 		mux-gpios = <&exp_som 1 GPIO_ACTIVE_HIGH>;
 	};
 
-	mux1: mux-controller {
+	mux1: mux-controller-1 {
 		compatible = "gpio-mux";
 		#mux-state-cells = <1>;
 		mux-gpios = <&exp_som 2 GPIO_ACTIVE_HIGH>;
@@ -104,7 +105,7 @@
 };
 
 &wkup_pmx0 {
-	mcu_fss0_hpb0_pins_default: mcu-fss0-hpb0-pins-default {
+	mcu_fss0_hpb0_pins_default: mcu-fss0-hpb0-default-pins {
 		pinctrl-single,pins = <
 			J721E_WKUP_IOPAD(0x0, PIN_OUTPUT, 1) /* (B6) MCU_OSPI0_CLK.MCU_HYPERBUS0_CK */
 			J721E_WKUP_IOPAD(0x4, PIN_OUTPUT, 1) /* (C8) MCU_OSPI0_LBCLKO.MCU_HYPERBUS0_CKn */
@@ -122,7 +123,7 @@
 		>;
 	};
 
-	mcu_fss0_ospi0_pins_default: mcu-fss0-ospi0-pins-default {
+	mcu_fss0_ospi0_pins_default: mcu-fss0-ospi0-default-pins {
 		pinctrl-single,pins = <
 			J721E_WKUP_IOPAD(0x0000, PIN_OUTPUT, 0) /* MCU_OSPI0_CLK */
 			J721E_WKUP_IOPAD(0x002c, PIN_OUTPUT, 0) /* MCU_OSPI0_CSn0 */
@@ -140,9 +141,8 @@
 };
 
 &wkup_pmx2 {
-	/* wkup_pmx2 starts at 0x68 */
-	wkup_i2c0_pins_default: wkup-i2c0-pins-default {
-		pinctrl-single,pins = <
+	wkup_i2c0_pins_default: wkup-i2c0-default-pins {
+			pinctrl-single,pins = <
 			J721E_WKUP_IOPAD(0x98, PIN_INPUT_PULLUP, 0) /* (F20) WKUP_I2C0_SCL */
 			J721E_WKUP_IOPAD(0x9c, PIN_INPUT_PULLUP, 0) /* (H21) WKUP_I2C0_SDA */
 		>;
@@ -150,16 +150,15 @@
 };
 
 &wkup_pmx3 {
-	/* wkup_pmx3 starts at 0x174 */
-	pmic_irq_pins_default: pmic-irq-pins-default {
+	pmic_irq_pins_default: pmic-irq-default-pins {
 		pinctrl-single,pins = <
-			J721E_WKUP_IOPAD(0x1c, PIN_INPUT, 7) /* (E18) WKUP_GPIO0_84 */
+			J721E_WKUP_IOPAD(0x01c, PIN_INPUT, 7) /* (E18) WKUP_GPIO0_84 */
 		>;
 	};
 };
 
 &main_pmx0 {
-	main_i2c0_pins_default: main-i2c0-pins-default {
+	main_i2c0_pins_default: main-i2c0-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0xd4, PIN_INPUT_PULLUP, 0) /* (V3) I2C0_SCL */
 			J721E_IOPAD(0xd8, PIN_INPUT_PULLUP, 0) /* (W2) I2C0_SDA */
@@ -292,85 +291,28 @@
 	};
 };
 
-&ospi0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_fss0_ospi0_pins_default>;
-
-	flash@0 {
-		compatible = "jedec,spi-nor";
-		reg = <0x0>;
-		spi-tx-bus-width = <8>;
-		spi-rx-bus-width = <8>;
-		spi-max-frequency = <25000000>;
-		cdns,tshsl-ns = <60>;
-		cdns,tsd2d-ns = <60>;
-		cdns,tchsh-ns = <60>;
-		cdns,tslch-ns = <60>;
-		cdns,read-delay = <4>;
-
-		partitions {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-
-			partition@0 {
-				label = "ospi.tiboot3";
-				reg = <0x0 0x100000>;
-			};
-
-			partition@100000 {
-				label = "ospi.tispl";
-				reg = <0x100000 0x200000>;
-			};
-
-			partition@300000 {
-				label = "ospi.u-boot";
-				reg = <0x300000 0x400000>;
-			};
-
-			partition@700000 {
-				label = "ospi.env";
-				reg = <0x700000 0x40000>;
-			};
-
-			partition@740000 {
-				label = "ospi.env.backup";
-				reg = <0x740000 0x40000>;
-			};
-
-			partition@800000 {
-				label = "ospi.rootfs";
-				reg = <0x800000 0x37c0000>;
-			};
-
-			partition@3fc0000 {
-				label = "ospi.phypattern";
-				reg = <0x3fc0000 0x40000>;
-			};
-		};
-	};
-};
-
 &wkup_i2c0 {
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&wkup_i2c0_pins_default>;
 	clock-frequency = <400000>;
 
+	eeprom@50 {
+		compatible = "atmel,24c256";
+		reg = <0x50>;
+	};
+
 	tps659414: pmic@48 {
 		compatible = "ti,tps6594-q1";
 		reg = <0x48>;
-		ti,primary-pmic;
 		system-power-controller;
-
 		pinctrl-names = "default";
 		pinctrl-0 = <&pmic_irq_pins_default>;
 		interrupt-parent = <&wkup_gpio0>;
 		interrupts = <84 IRQ_TYPE_EDGE_FALLING>;
-
 		gpio-controller;
 		#gpio-cells = <2>;
-
+		ti,primary-pmic;
 		buck1-supply = <&vsys_3v3>;
 		buck2-supply = <&vsys_3v3>;
 		buck3-supply = <&vsys_3v3>;
@@ -462,10 +404,8 @@
 		system-power-controller;
 		interrupt-parent = <&wkup_gpio0>;
 		interrupts = <84 IRQ_TYPE_EDGE_FALLING>;
-
 		gpio-controller;
 		#gpio-cells = <2>;
-
 		buck1-supply = <&vsys_3v3>;
 		buck2-supply = <&vsys_3v3>;
 		buck3-supply = <&vsys_3v3>;
@@ -478,6 +418,7 @@
 				regulator-max-microvolt = <900000>;
 				regulator-always-on;
 				regulator-boot-on;
+				bootph-pre-ram;
 			};
 
 			buckb2: buck2 {
@@ -502,6 +443,66 @@
 				regulator-max-microvolt = <1800000>;
 				regulator-boot-on;
 				regulator-always-on;
+			};
+		};
+	};
+};
+
+&ospi0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcu_fss0_ospi0_pins_default>;
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0x0>;
+		spi-tx-bus-width = <8>;
+		spi-rx-bus-width = <8>;
+		spi-max-frequency = <25000000>;
+		cdns,tshsl-ns = <60>;
+		cdns,tsd2d-ns = <60>;
+		cdns,tchsh-ns = <60>;
+		cdns,tslch-ns = <60>;
+		cdns,read-delay = <4>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "ospi.tiboot3";
+				reg = <0x0 0x100000>;
+			};
+
+			partition@100000 {
+				label = "ospi.tispl";
+				reg = <0x100000 0x200000>;
+			};
+
+			partition@300000 {
+				label = "ospi.u-boot";
+				reg = <0x300000 0x400000>;
+			};
+
+			partition@700000 {
+				label = "ospi.env";
+				reg = <0x700000 0x40000>;
+			};
+
+			partition@740000 {
+				label = "ospi.env.backup";
+				reg = <0x740000 0x40000>;
+			};
+
+			partition@800000 {
+				label = "ospi.rootfs";
+				reg = <0x800000 0x37c0000>;
+			};
+
+			partition@3fc0000 {
+				label = "ospi.phypattern";
+				reg = <0x3fc0000 0x40000>;
 			};
 		};
 	};

@@ -22,14 +22,14 @@
 };
 
 &main_pmx0 {
-	main_cpsw_mdio_pins_default: main-cpsw-mdio-pins-default {
+	main_cpsw_mdio_default_pins: main-cpsw-mdio-default-pins {
 		pinctrl-single,pins = <
 			J721S2_IOPAD(0x0c0, PIN_OUTPUT, 6) /* (T28) MCASP1_AXR0.MDIO0_MDC */
 			J721S2_IOPAD(0x0bc, PIN_INPUT, 6) /* (V28) MCASP1_AFSX.MDIO0_MDIO */
 		>;
 	};
 
-	rgmii1_pins_default: rgmii1-pins-default {
+	rgmii1_default_pins: rgmii1-default-pins {
 		pinctrl-single,pins = <
 			J721S2_IOPAD(0x0b8, PIN_INPUT, 6) /* (AA24) MCASP1_ACLKX.RGMII1_RD0 */
 			J721S2_IOPAD(0x0a0, PIN_INPUT, 6) /* (AB25) MCASP0_AXR12.RGMII1_RD1 */
@@ -60,13 +60,13 @@
 &main_cpsw {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&rgmii1_pins_default>;
+	pinctrl-0 = <&rgmii1_default_pins>;
 };
 
 &main_cpsw_mdio {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&main_cpsw_mdio_pins_default>;
+	pinctrl-0 = <&main_cpsw_mdio_default_pins>;
 	#address-cells = <1>;
 	#size-cells = <0>;
 

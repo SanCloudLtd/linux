@@ -959,26 +959,6 @@ static int twl6030_gpadc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = twl_i2c_write_u8(TWL_MODULE_USB, VBUS_MEAS, USB_VBUS_CTRL_SET);
-	if (ret < 0) {
-		dev_err(dev, "failed to wire up inputs\n");
-		return ret;
-	}
-
-	ret = twl_i2c_write_u8(TWL_MODULE_USB, ID_MEAS, USB_ID_CTRL_SET);
-	if (ret < 0) {
-		dev_err(dev, "failed to wire up inputs\n");
-		return ret;
-	}
-
-	ret = twl_i2c_write_u8(TWL6030_MODULE_ID0,
-				VBAT_MEAS | BB_MEAS | VAC_MEAS,
-				TWL6030_MISC1);
-	if (ret < 0) {
-		dev_err(dev, "failed to wire up inputs\n");
-		return ret;
-	}
-
 	indio_dev->name = DRIVER_NAME;
 	indio_dev->info = &twl6030_gpadc_iio_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;

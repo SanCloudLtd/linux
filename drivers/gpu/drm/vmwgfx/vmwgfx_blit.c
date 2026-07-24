@@ -375,12 +375,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 		copy_size = min_t(u32, copy_size, PAGE_SIZE - src_page_offset);
 
 		if (unmap_src) {
-			kunmap_local(d->src_addr);
+			kunmap_atomic(d->src_addr);
 			d->src_addr = NULL;
 		}
 
 		if (unmap_dst) {
-			kunmap_local(d->dst_addr);
+			kunmap_atomic(d->dst_addr);
 			d->dst_addr = NULL;
 		}
 
@@ -388,8 +388,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 			if (WARN_ON_ONCE(dst_page >= d->dst_num_pages))
 				return -EINVAL;
 
-			d->dst_addr = kmap_local_page_prot(d->dst_pages[dst_page],
-							   d->dst_prot);
+			d->dst_addr =
+				kmap_atomic_prot(d->dst_pages[dst_page],
+						 d->dst_prot);
+			if (!d->dst_addr)
+				return -ENOMEM;
+
 			d->mapped_dst = dst_page;
 		}
 
@@ -397,8 +401,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 			if (WARN_ON_ONCE(src_page >= d->src_num_pages))
 				return -EINVAL;
 
-			d->src_addr = kmap_local_page_prot(d->src_pages[src_page],
-							   d->src_prot);
+			d->src_addr =
+				kmap_atomic_prot(d->src_pages[src_page],
+						 d->src_prot);
+			if (!d->src_addr)
+				return -ENOMEM;
+
 			d->mapped_src = src_page;
 		}
 		diff->do_cpy(diff, d->dst_addr + dst_page_offset,
@@ -429,10 +437,8 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
  *
  * Performs a CPU blit from one buffer object to another avoiding a full
  * bo vmap which may exhaust- or fragment vmalloc space.
- *
- * On supported architectures (x86), we're using kmap_local_prot() which
- * avoids cross-processor TLB- and cache flushes. kmap_local_prot() will
- * either map a highmem page with the proper pgprot on HIGHMEM=y systems or
+ * On supported architectures (x86), we're using kmap_atomic which avoids
+ * cross-processor TLB- and cache flushes and may, on non-HIGHMEM systems
  * reference already set-up mappings.
  *
  * Neither of the buffer objects may be placed in PCI memory
@@ -450,8 +456,10 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 		.no_wait_gpu = false
 	};
 	u32 j, initial_line = dst_offset / dst_stride;
-	struct vmw_bo_blit_line_data d;
+	struct vmw_bo_blit_line_data d = {0};
 	int ret = 0;
+	struct page **dst_pages = NULL;
+	struct page **src_pages = NULL;
 
 	/* Buffer objects need to be either pinned or reserved: */
 	if (!(dst->pin_count))
@@ -471,14 +479,37 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 			return ret;
 	}
 
+	if (!src->ttm->pages && src->ttm->sg) {
+		src_pages = kvmalloc_array(src->ttm->num_pages,
+					   sizeof(struct page *), GFP_KERNEL);
+		if (!src_pages)
+			return -ENOMEM;
+		ret = drm_prime_sg_to_page_array(src->ttm->sg, src_pages,
+						 src->ttm->num_pages);
+		if (ret)
+			goto out;
+	}
+	if (!dst->ttm->pages && dst->ttm->sg) {
+		dst_pages = kvmalloc_array(dst->ttm->num_pages,
+					   sizeof(struct page *), GFP_KERNEL);
+		if (!dst_pages) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		ret = drm_prime_sg_to_page_array(dst->ttm->sg, dst_pages,
+						 dst->ttm->num_pages);
+		if (ret)
+			goto out;
+	}
+
 	d.mapped_dst = 0;
 	d.mapped_src = 0;
 	d.dst_addr = NULL;
 	d.src_addr = NULL;
-	d.dst_pages = dst->ttm->pages;
-	d.src_pages = src->ttm->pages;
-	d.dst_num_pages = dst->resource->num_pages;
-	d.src_num_pages = src->resource->num_pages;
+	d.dst_pages = dst->ttm->pages ? dst->ttm->pages : dst_pages;
+	d.src_pages = src->ttm->pages ? src->ttm->pages : src_pages;
+	d.dst_num_pages = PFN_UP(dst->resource->size);
+	d.src_num_pages = PFN_UP(src->resource->size);
 	d.dst_prot = ttm_io_prot(dst, dst->resource, PAGE_KERNEL);
 	d.src_prot = ttm_io_prot(src, src->resource, PAGE_KERNEL);
 	d.diff = diff;
@@ -495,9 +526,13 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 	}
 out:
 	if (d.src_addr)
-		kunmap_local(d.src_addr);
+		kunmap_atomic(d.src_addr);
 	if (d.dst_addr)
-		kunmap_local(d.dst_addr);
+		kunmap_atomic(d.dst_addr);
+	if (src_pages)
+		kvfree(src_pages);
+	if (dst_pages)
+		kvfree(dst_pages);
 
 	return ret;
 }

@@ -28,10 +28,10 @@
 &cpsw0 {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&rgmii1_pins_default
-		     &rgmii2_pins_default
-		     &rgmii3_pins_default
-		     &rgmii4_pins_default>;
+	pinctrl-0 = <&rgmii1_default_pins
+		     &rgmii2_default_pins
+		     &rgmii3_default_pins
+		     &rgmii4_default_pins>;
 };
 
 &cpsw0_port1 {
@@ -69,7 +69,7 @@
 &cpsw9g_mdio {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&mdio0_pins_default>;
+	pinctrl-0 = <&mdio0_default_pins>;
 	bus_freq = <1000000>;
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -119,14 +119,14 @@
 };
 
 &main_pmx0 {
-	mdio0_pins_default: mdio0-pins-default {
+	mdio0_default_pins: mdio0-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0x1bc, PIN_OUTPUT, 0) /* (V24) MDIO0_MDC */
 			J721E_IOPAD(0x1b8, PIN_INPUT, 0) /* (V26) MDIO0_MDIO */
 		>;
 	};
 
-	rgmii1_pins_default: rgmii1-pins-default {
+	rgmii1_default_pins: rgmii1-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0x4, PIN_INPUT, 4) /* (AC23) PRG1_PRU0_GPO0.RGMII1_RD0 */
 			J721E_IOPAD(0x8, PIN_INPUT, 4) /* (AG22) PRG1_PRU0_GPO1.RGMII1_RD1 */
@@ -143,7 +143,7 @@
 		>;
 	};
 
-	rgmii2_pins_default: rgmii2-pins-default {
+	rgmii2_default_pins: rgmii2-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0x58, PIN_INPUT, 4) /* (AE22) PRG1_PRU1_GPO0.RGMII2_RD0 */
 			J721E_IOPAD(0x5c, PIN_INPUT, 4) /* (AG23) PRG1_PRU1_GPO1.RGMII2_RD1 */
@@ -160,7 +160,7 @@
 		>;
 	};
 
-	rgmii3_pins_default: rgmii3-pins-default {
+	rgmii3_default_pins: rgmii3-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0xb0, PIN_INPUT, 4) /* (AF28) PRG0_PRU0_GPO0.RGMII3_RD0 */
 			J721E_IOPAD(0xb4, PIN_INPUT, 4) /* (AE28) PRG0_PRU0_GPO1.RGMII3_RD1 */
@@ -177,7 +177,7 @@
 		>;
 	};
 
-	rgmii4_pins_default: rgmii4-pins-default {
+	rgmii4_default_pins: rgmii4-default-pins {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0x100, PIN_INPUT, 4) /* (AE29) PRG0_PRU1_GPO0.RGMII4_RD0 */
 			J721E_IOPAD(0x104, PIN_INPUT, 4) /* (AD28) PRG0_PRU1_GPO1.RGMII4_RD1 */

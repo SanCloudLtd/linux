@@ -5,18 +5,16 @@
  */
 
 #include <linux/console.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/module.h>
 #include <linux/pm_runtime.h>
 #include <linux/pm_domain.h>
 
-#include <drm/drm_aperture.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_crtc_helper.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_fb_helper.h>
+#include <drm/drm_fbdev_dma.h>
 #include <drm/drm_gem_dma_helper.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_module.h>
@@ -26,6 +24,7 @@
 #include "tidss_drv.h"
 #include "tidss_kms.h"
 #include "tidss_irq.h"
+#include "tidss_oldi.h"
 
 /* Power management */
 
@@ -253,29 +252,32 @@ static int tidss_probe(struct platform_device *pdev)
 
 	spin_lock_init(&tidss->wait_lock);
 
-	check_for_simplefb_device(tidss);
 	tidss->shared_mode = device_property_read_bool(dev, "ti,dss-shared-mode");
+	check_for_simplefb_device(tidss);
 
-	/* powering up associated OLDI domains */
 	if (!tidss->shared_mode) {
+		/* powering up associated OLDI domains */
 		ret = tidss_attach_pm_domains(tidss);
-		if (ret < 0) {
-			dev_err(dev, "failed to attach power domains %d\n", ret);
-			return ret;
-		}
+		if (ret < 0)
+			return dev_err_probe(dev, ret, "failed to attach power domains\n");
 	}
 
 	ret = dispc_init(tidss);
 	if (ret) {
 		dev_err(dev, "failed to initialize dispc: %d\n", ret);
-		return ret;
+		goto err_detach_pm_domains;
+	}
+
+	ret = tidss_oldi_init(tidss);
+	if (ret) {
+		dev_err(dev, "failed to init OLDI: %d\n", ret);
+		goto err_detach_pm_domains;
 	}
 
 	if (!tidss->shared_mode) {
 		pm_runtime_enable(dev);
 		pm_runtime_set_autosuspend_delay(dev, 1000);
 		pm_runtime_use_autosuspend(dev);
-
 #ifndef CONFIG_PM
 		/* If we don't have PM, we need to call resume manually */
 		dispc_runtime_resume(tidss->dispc);
@@ -312,19 +314,11 @@ static int tidss_probe(struct platform_device *pdev)
 		goto err_irq_uninstall;
 	}
 
-	/* Remove possible early fb before setting up the fbdev */
-	ret = drm_aperture_remove_framebuffers(&tidss_driver);
-	if (ret)
-		goto err_drm_dev_unreg;
-
-	drm_fbdev_generic_setup(ddev, 32);
+	drm_fbdev_dma_setup(ddev, 32);
 
 	dev_dbg(dev, "%s done\n", __func__);
 
 	return 0;
-
-err_drm_dev_unreg:
-	drm_dev_unregister(ddev);
 
 err_irq_uninstall:
 	tidss_irq_uninstall(ddev);
@@ -337,12 +331,15 @@ err_runtime_suspend:
 #endif
 	pm_runtime_dont_use_autosuspend(dev);
 	pm_runtime_disable(dev);
+	tidss_oldi_deinit(tidss);
+
+err_detach_pm_domains:
 	tidss_detach_pm_domains(tidss);
 
 	return ret;
 }
 
-static int tidss_remove(struct platform_device *pdev)
+static void tidss_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct tidss_device *tidss = platform_get_drvdata(pdev);
@@ -363,15 +360,15 @@ static int tidss_remove(struct platform_device *pdev)
 #endif
 		pm_runtime_dont_use_autosuspend(dev);
 		pm_runtime_disable(dev);
-		tidss_detach_pm_domains(tidss);
 	}
 
 	/* devm allocated dispc goes away with the dev so mark it NULL */
 	dispc_remove(tidss);
 
-	dev_dbg(dev, "%s done\n", __func__);
+	tidss_detach_pm_domains(tidss);
+	tidss_oldi_deinit(tidss);
 
-	return 0;
+	dev_dbg(dev, "%s done\n", __func__);
 }
 
 static void tidss_shutdown(struct platform_device *pdev)
@@ -387,7 +384,6 @@ static const struct of_device_id tidss_of_table[] = {
 	{ .compatible = "ti,am62p52-dss", .data = &dispc_am62p52_feats, },
 	{ .compatible = "ti,am65x-dss", .data = &dispc_am65x_feats, },
 	{ .compatible = "ti,j721e-dss", .data = &dispc_j721e_feats, },
-	{ .compatible = "ti,am625-dss", .data = &dispc_am625_feats, },
 	{ }
 };
 
@@ -395,7 +391,7 @@ MODULE_DEVICE_TABLE(of, tidss_of_table);
 
 static struct platform_driver tidss_platform_driver = {
 	.probe		= tidss_probe,
-	.remove		= tidss_remove,
+	.remove_new	= tidss_remove,
 	.shutdown	= tidss_shutdown,
 	.driver		= {
 		.name	= "tidss",

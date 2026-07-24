@@ -38,6 +38,7 @@ struct v4l2_subdev;
 struct v4l2_subdev_fh;
 struct tuner_setup;
 struct v4l2_mbus_frame_desc;
+struct led_classdev;
 
 /**
  * struct v4l2_decode_vbi_line - used to decode_vbi_line
@@ -176,7 +177,10 @@ struct v4l2_subdev_io_pin_config {
  * @s_register: callback for VIDIOC_DBG_S_REGISTER() ioctl handler code.
  *
  * @s_power: puts subdevice in power saving mode (on == 0) or normal operation
- *	mode (on == 1).
+ *	mode (on == 1). DEPRECATED. See
+ *	Documentation/driver-api/media/camera-sensor.rst . pre_streamon and
+ *	post_streamoff callbacks can be used for e.g. setting the bus to LP-11
+ *	mode before s_stream is called.
  *
  * @interrupt_service_routine: Called by the bridge chip's interrupt service
  *	handler, when an interrupt status has be raised due to this subdev,
@@ -439,8 +443,10 @@ enum v4l2_subdev_pre_streamon_flags {
  * @g_input_status: get input status. Same as the status field in the
  *	&struct v4l2_input
  *
- * @s_stream: used to notify the driver that a video stream will start or has
- *	stopped.
+ * @s_stream: start (enabled == 1) or stop (enabled == 0) streaming on the
+ *	sub-device. Failure on stop will remove any resources acquired in
+ *	streaming start, while the error code is still returned by the driver.
+ *	Also see call_s_stream wrapper in v4l2-subdev.c.
  *
  * @g_pixelaspect: callback to return the pixelaspect ratio.
  *
@@ -1014,16 +1020,19 @@ struct v4l2_subdev_platform_data {
  * @dev: pointer to the physical device, if any
  * @fwnode: The fwnode_handle of the subdev, usually the same as
  *	    either dev->of_node->fwnode or dev->fwnode (whichever is non-NULL).
- * @async_list: Links this subdev to a global subdev_list or @notifier->done
- *	list.
- * @asd: Pointer to respective &struct v4l2_async_subdev.
- * @notifier: Pointer to the managing notifier.
+ * @async_list: Links this subdev to a global subdev_list or
+ *		@notifier->done_list list.
+ * @async_subdev_endpoint_list: List entry in async_subdev_endpoint_entry of
+ *				&struct v4l2_async_subdev_endpoint.
  * @subdev_notifier: A sub-device notifier implicitly registered for the sub-
  *		     device using v4l2_async_register_subdev_sensor().
+ * @asc_list: Async connection list, of &struct
+ *	      v4l2_async_connection.subdev_entry.
  * @pdata: common part of subdevice platform data
  * @state_lock: A pointer to a lock used for all the subdev's states, set by the
  *		driver. This is	optional. If NULL, each state instance will get
  *		a lock of its own.
+ * @privacy_led: Optional pointer to a LED classdev for the privacy LED for sensors.
  * @active_state: Active state for the subdev (NULL for subdevs tracking the
  *		  state internally). Initialized by calling
  *		  v4l2_subdev_init_finalize().
@@ -1058,9 +1067,9 @@ struct v4l2_subdev {
 	struct device *dev;
 	struct fwnode_handle *fwnode;
 	struct list_head async_list;
-	struct v4l2_async_subdev *asd;
-	struct v4l2_async_notifier *notifier;
+	struct list_head async_subdev_endpoint_list;
 	struct v4l2_async_notifier *subdev_notifier;
+	struct list_head asc_list;
 	struct v4l2_subdev_platform_data *pdata;
 	struct mutex *state_lock;
 
@@ -1068,6 +1077,8 @@ struct v4l2_subdev {
 	 * The fields below are private, and should only be accessed via
 	 * appropriate functions.
 	 */
+
+	struct led_classdev *privacy_led;
 
 	/*
 	 * TODO: active_state should most likely be changed from a pointer to an
@@ -1110,12 +1121,14 @@ struct v4l2_subdev {
  * @vfh: pointer to &struct v4l2_fh
  * @state: pointer to &struct v4l2_subdev_state
  * @owner: module pointer to the owner of this file handle
+ * @client_caps: bitmask of ``V4L2_SUBDEV_CLIENT_CAP_*``
  */
 struct v4l2_subdev_fh {
 	struct v4l2_fh vfh;
 	struct module *owner;
 #if defined(CONFIG_VIDEO_V4L2_SUBDEV_API)
 	struct v4l2_subdev_state *state;
+	u64 client_caps;
 #endif
 };
 
@@ -1372,8 +1385,9 @@ int __v4l2_subdev_init_finalize(struct v4l2_subdev *sd, const char *name,
  * v4l2_subdev_cleanup() - Releases the resources allocated by the subdevice
  * @sd: The subdevice
  *
- * This function will release the resources allocated in
- * v4l2_subdev_init_finalize.
+ * Clean up a V4L2 async sub-device. Must be called for a sub-device as part of
+ * its release if resources have been associated with it using
+ * v4l2_async_subdev_endpoint_add() or v4l2_subdev_init_finalize().
  */
 void v4l2_subdev_cleanup(struct v4l2_subdev *sd);
 
@@ -1521,7 +1535,7 @@ __v4l2_subdev_next_active_route(const struct v4l2_subdev_krouting *routing,
  */
 int v4l2_subdev_set_routing_with_fmt(struct v4l2_subdev *sd,
 				     struct v4l2_subdev_state *state,
-				     struct v4l2_subdev_krouting *routing,
+				     const struct v4l2_subdev_krouting *routing,
 				     const struct v4l2_mbus_framefmt *fmt);
 
 /**

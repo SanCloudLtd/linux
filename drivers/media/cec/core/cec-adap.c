@@ -1052,6 +1052,7 @@ void cec_received_msg_ts(struct cec_adapter *adap,
 	u8 cmd = msg->msg[1];
 	bool is_reply = false;
 	bool valid_la = true;
+	bool monitor_valid_la = true;
 	u8 min_len = 0;
 
 	if (WARN_ON(!msg->len || msg->len > CEC_MAX_MSG_SIZE))
@@ -1094,8 +1095,10 @@ void cec_received_msg_ts(struct cec_adapter *adap,
 		adap->last_initiator = 0xff;
 
 	/* Check if this message was for us (directed or broadcast). */
-	if (!cec_msg_is_broadcast(msg))
+	if (!cec_msg_is_broadcast(msg)) {
 		valid_la = cec_has_log_addr(adap, msg_dest);
+		monitor_valid_la = valid_la;
+	}
 
 	/*
 	 * Check if the length is not too short or if the message is a
@@ -1121,20 +1124,6 @@ void cec_received_msg_ts(struct cec_adapter *adap,
 	if (valid_la && min_len) {
 		/* These messages have special length requirements */
 		switch (cmd) {
-		case CEC_MSG_TIMER_STATUS:
-			if (msg->msg[2] & 0x10) {
-				switch (msg->msg[2] & 0xf) {
-				case CEC_OP_PROG_INFO_NOT_ENOUGH_SPACE:
-				case CEC_OP_PROG_INFO_MIGHT_NOT_BE_ENOUGH_SPACE:
-					if (msg->len < 5)
-						valid_la = false;
-					break;
-				}
-			} else if ((msg->msg[2] & 0xf) == CEC_OP_PROG_ERROR_DUPLICATE) {
-				if (msg->len < 5)
-					valid_la = false;
-			}
-			break;
 		case CEC_MSG_RECORD_ON:
 			switch (msg->msg[2]) {
 			case CEC_OP_RECORD_SRC_OWN:
@@ -1228,7 +1217,7 @@ void cec_received_msg_ts(struct cec_adapter *adap,
 	mutex_unlock(&adap->lock);
 
 	/* Pass the message on to any monitoring filehandles */
-	cec_queue_msg_monitor(adap, msg, valid_la);
+	cec_queue_msg_monitor(adap, msg, monitor_valid_la);
 
 	/* We're done if it is not for us or a poll message */
 	if (!valid_la || msg->len <= 1)

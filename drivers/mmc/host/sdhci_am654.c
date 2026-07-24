@@ -141,7 +141,6 @@ static const struct timing_data td[] = {
 
 struct sdhci_am654_data {
 	struct regmap *base;
-	bool legacy_otapdly;
 	u32 otap_del_sel[ARRAY_SIZE(td)];
 	u32 itap_del_sel[ARRAY_SIZE(td)];
 	u32 itap_del_ena[ARRAY_SIZE(td)];
@@ -281,10 +280,7 @@ static void sdhci_am654_set_clock(struct sdhci_host *host, unsigned int clock)
 	sdhci_set_clock(host, clock);
 
 	/* Setup Output TAP delay */
-	if (sdhci_am654->legacy_otapdly)
-		otap_del_sel = sdhci_am654->otap_del_sel[0];
-	else
-		otap_del_sel = sdhci_am654->otap_del_sel[timing];
+	otap_del_sel = sdhci_am654->otap_del_sel[timing];
 
 	mask = OTAPDLYENA_MASK | OTAPDLYSEL_MASK;
 	val = (0x1 << OTAPDLYENA_SHIFT) |
@@ -334,19 +330,17 @@ static void sdhci_j721e_4bit_set_clock(struct sdhci_host *host,
 	u32 mask, val;
 
 	/* Setup Output TAP delay */
-	if (sdhci_am654->legacy_otapdly)
-		otap_del_sel = sdhci_am654->otap_del_sel[0];
-	else
-		otap_del_sel = sdhci_am654->otap_del_sel[timing];
+	otap_del_sel = sdhci_am654->otap_del_sel[timing];
 
 	mask = OTAPDLYENA_MASK | OTAPDLYSEL_MASK;
 	val = (0x1 << OTAPDLYENA_SHIFT) |
 	      (otap_del_sel << OTAPDLYSEL_SHIFT);
 
+	/* Setup Input TAP delay */
 	itap_del_ena = sdhci_am654->itap_del_ena[timing];
 	itap_del_sel = sdhci_am654->itap_del_sel[timing];
 
-	mask |= ITAPDLYSEL_MASK | ITAPDLYENA_MASK;
+	mask |= ITAPDLYENA_MASK | ITAPDLYSEL_MASK;
 	val |= (itap_del_ena << ITAPDLYENA_SHIFT) |
 	       (itap_del_sel << ITAPDLYSEL_SHIFT);
 
@@ -354,7 +348,6 @@ static void sdhci_j721e_4bit_set_clock(struct sdhci_host *host,
 			   1 << ITAPCHGWIN_SHIFT);
 	regmap_update_bits(sdhci_am654->base, PHY_CTRL4, mask, val);
 	regmap_update_bits(sdhci_am654->base, PHY_CTRL4, ITAPCHGWIN_MASK, 0);
-
 	regmap_update_bits(sdhci_am654->base, PHY_CTRL5, CLKBUFSEL_MASK,
 			   sdhci_am654->clkbuf_sel);
 
@@ -421,18 +414,8 @@ static void sdhci_am654_reset(struct sdhci_host *host, u8 mask)
 static int sdhci_am654_execute_tuning(struct mmc_host *mmc, u32 opcode)
 {
 	struct sdhci_host *host = mmc_priv(mmc);
-	int err;
-	bool dcrc_was_enabled = false;
+	int err = sdhci_execute_tuning(mmc, opcode);
 
-	if (host->ier & SDHCI_INT_DATA_CRC) {
-		host->ier &= ~SDHCI_INT_DATA_CRC | ~SDHCI_INT_DATA_END_BIT |
-			     ~SDHCI_INT_DATA_TIMEOUT;
-		dcrc_was_enabled = true;
-		sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
-		sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
-	}
-
-	err = sdhci_execute_tuning(mmc, opcode);
 	if (err)
 		return err;
 	/*
@@ -440,13 +423,6 @@ static int sdhci_am654_execute_tuning(struct mmc_host *mmc, u32 opcode)
 	 * Do a command and data reset to get rid of it
 	 */
 	sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
-
-	/* Reenable forbidden interrupt */
-	if (dcrc_was_enabled) {
-		host->ier |= SDHCI_INT_DATA_CRC | SDHCI_INT_DATA_END_BIT | SDHCI_INT_DATA_TIMEOUT;
-		sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
-		sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
-	}
 
 	return 0;
 }
@@ -690,32 +666,15 @@ static int sdhci_am654_get_otap_delay(struct sdhci_host *host,
 	int i;
 	int ret;
 
-	ret = device_property_read_u32(dev, td[MMC_TIMING_LEGACY].otap_binding,
-				 &sdhci_am654->otap_del_sel[MMC_TIMING_LEGACY]);
-	if (ret) {
-		/*
-		 * ti,otap-del-sel-legacy is mandatory, look for old binding
-		 * if not found.
-		 */
-		ret = device_property_read_u32(dev, "ti,otap-del-sel",
-					       &sdhci_am654->otap_del_sel[0]);
-		if (ret) {
-			dev_err(dev, "Couldn't find otap-del-sel\n");
-
-			return ret;
-		}
-
-		dev_info(dev, "Using legacy binding ti,otap-del-sel\n");
-		sdhci_am654->legacy_otapdly = true;
-
-		return 0;
-	}
-
 	for (i = MMC_TIMING_LEGACY; i <= MMC_TIMING_MMC_HS400; i++) {
 
 		ret = device_property_read_u32(dev, td[i].otap_binding,
 					       &sdhci_am654->otap_del_sel[i]);
 		if (ret) {
+			if (i == MMC_TIMING_LEGACY) {
+				dev_err(dev, "Couldn't find mandatory ti,otap-del-sel-legacy\n");
+				return ret;
+			}
 			dev_dbg(dev, "Couldn't find %s\n",
 				td[i].otap_binding);
 			/*
@@ -982,22 +941,22 @@ err_pltfm_free:
 	return ret;
 }
 
-static int sdhci_am654_remove(struct platform_device *pdev)
+static void sdhci_am654_remove(struct platform_device *pdev)
 {
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct device *dev = &pdev->dev;
 	int ret;
 
-	ret = pm_runtime_resume_and_get(&pdev->dev);
+	ret = pm_runtime_get_sync(dev);
 	if (ret < 0)
-		return ret;
+		dev_err(dev, "pm_runtime_get_sync() Failed\n");
 
 	sdhci_remove_host(host, true);
 	clk_disable_unprepare(pltfm_host->clk);
-	pm_runtime_disable(&pdev->dev);
-	pm_runtime_put_noidle(&pdev->dev);
+	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
 	sdhci_pltfm_free(pdev);
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1109,7 +1068,7 @@ static struct platform_driver sdhci_am654_driver = {
 		.of_match_table = sdhci_am654_of_match,
 	},
 	.probe = sdhci_am654_probe,
-	.remove = sdhci_am654_remove,
+	.remove_new = sdhci_am654_remove,
 };
 
 module_platform_driver(sdhci_am654_driver);

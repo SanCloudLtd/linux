@@ -13,17 +13,19 @@
 #include "k3-am62a7.dtsi"
 
 / {
-	compatible =  "ti,am62a7-sk", "ti,am62a7";
+	compatible = "ti,am62a7-sk", "ti,am62a7";
 	model = "Texas Instruments AM62A7 SK";
 
 	aliases {
-		serial0 = &mcu_uart0;
-		serial1 = &wkup_uart0;
+		serial0 = &wkup_uart0;
 		serial2 = &main_uart0;
+		serial3 = &main_uart1;
 		mmc0 = &sdhci0;
 		mmc1 = &sdhci1;
 		ethernet0 = &cpsw_port1;
 		spi0 = &ospi0;
+		rtc0 = &wkup_rtc0;
+		rtc1 = &tps659312;
 	};
 
 	chosen {
@@ -35,10 +37,6 @@
 		/* 4G RAM */
 		reg = <0x00000000 0x80000000 0x00000000 0x80000000>,
 		      <0x00000008 0x80000000 0x00000000 0x80000000>;
-	};
-
-	dma_buf_phys {
-		compatible = "ti,dma-buf-phys";
 	};
 
 	reserved-memory {
@@ -78,7 +76,6 @@
 			reg = <0x00 0x9c900000 0x00 0x01e00000>;
 			no-map;
 		};
-
 		mcu_r5fss0_core0_dma_memory_region: r5f-dma-memory@9b800000 {
 			compatible = "shared-dma-pool";
 			reg = <0x00 0x9b800000 0x00 0x100000>;
@@ -99,7 +96,7 @@
 
 		c7x_0_memory_region: c7x-memory@99900000 {
 			compatible = "shared-dma-pool";
-			reg = <0x00 0x99900000 0x00 0x01efffff>;
+			reg = <0x00 0x99900000 0x00 0x01f00000>;
 			no-map;
 		};
 
@@ -123,6 +120,15 @@
 			compatible = "shared-dma-pool";
 			reg = <0x00 0xae000000 0x00 0x12000000>;
 			no-map;
+		};
+	};
+
+	opp-table {
+		/* Add 1.4GHz OPP for am62p5-sk board. Requires VDD_CORE at 0v85 */
+		opp-1400000000 {
+			opp-hz = /bits/ 64 <1400000000>;
+			opp-supported-hw = <0x01 0x0004>;
+			clock-latency-ns = <6000000>;
 		};
 	};
 
@@ -214,6 +220,18 @@
 		clock-frequency = <12288000>;
 	};
 
+	hdmi0: connector-hdmi {
+		compatible = "hdmi-connector";
+		label = "hdmi";
+		type = "a";
+
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&sii9022_out>;
+			};
+		};
+	};
+
 	codec_audio: sound {
 		compatible = "simple-audio-card";
 		simple-audio-card,name = "AM62Ax-SKEVM";
@@ -242,113 +260,28 @@
 			clocks = <&tlv320_mclk>;
 		};
 	};
+};
 
-	hdmi0: connector {
-		compatible = "hdmi-connector";
-		label = "hdmi";
-		type = "a";
-		port {
-			hdmi_connector_in: endpoint {
-				remote-endpoint = <&sii9022_out>;
-			};
-		};
+&mcu_pmx0 {
+	wkup_uart0_pins_default: wkup-uart0-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_MCU_IOPAD(0x0024, PIN_INPUT, 0) /* (C9) WKUP_UART0_RXD */
+			AM62AX_MCU_IOPAD(0x0028, PIN_OUTPUT, 0) /* (E9) WKUP_UART0_TXD */
+			AM62AX_MCU_IOPAD(0x002c, PIN_INPUT, 0) /* (C10) WKUP_UART0_CTSn */
+			AM62AX_MCU_IOPAD(0x0030, PIN_OUTPUT, 0) /* (C8) WKUP_UART0_RTSn */
+		>;
 	};
 };
 
+/* WKUP UART0 is used for DM firmware logs */
+&wkup_uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&wkup_uart0_pins_default>;
+	status = "reserved";
+};
+
 &main_pmx0 {
-	main_uart0_pins_default: main-uart0-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x1c8, PIN_INPUT, 0) /* (D14) UART0_RXD */
-			AM62AX_IOPAD(0x1cc, PIN_OUTPUT, 0) /* (E14) UART0_TXD */
-		>;
-	};
-
-	main_i2c0_pins_default: main-i2c0-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x1e0, PIN_INPUT_PULLUP, 0) /* (B16) I2C0_SCL */
-			AM62AX_IOPAD(0x1e4, PIN_INPUT_PULLUP, 0) /* (A16) I2C0_SDA */
-		>;
-	};
-
-	main_i2c1_pins_default: main-i2c1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x1e8, PIN_INPUT_PULLUP, 0) /* (B17) I2C1_SCL */
-			AM62AX_IOPAD(0x1ec, PIN_INPUT_PULLUP, 0) /* (A17) I2C1_SDA */
-		>;
-	};
-
-	main_i2c2_pins_default: main-i2c2-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x0b0, PIN_INPUT_PULLUP, 1) /* (K22) GPMC0_CSn2.I2C2_SCL */
-			AM62AX_IOPAD(0x0b4, PIN_INPUT_PULLUP, 1) /* (K24) GPMC0_CSn3.I2C2_SDA */
-		>;
-	};
-
-	main_mmc1_pins_default: main-mmc1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x23c, PIN_INPUT, 0) /* (A21) MMC1_CMD */
-			AM62AX_IOPAD(0x234, PIN_INPUT, 0) /* (B22) MMC1_CLK */
-			AM62AX_IOPAD(0x230, PIN_INPUT, 0) /* (A22) MMC1_DAT0 */
-			AM62AX_IOPAD(0x22c, PIN_INPUT, 0) /* (B21) MMC1_DAT1 */
-			AM62AX_IOPAD(0x228, PIN_INPUT, 0) /* (C21) MMC1_DAT2 */
-			AM62AX_IOPAD(0x224, PIN_INPUT, 0) /* (D22) MMC1_DAT3 */
-			AM62AX_IOPAD(0x240, PIN_INPUT, 0) /* (D17) MMC1_SDCD */
-		>;
-	};
-
-	usr_led_pins_default: usr-led-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x244, PIN_OUTPUT, 7) /* (D18) MMC1_SDWP.GPIO1_49 */
-		>;
-	};
-
-	main_usb1_pins_default: main-usb1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x0258, PIN_OUTPUT, 0) /* (F18) USB1_DRVVBUS */
-		>;
-	};
-
-	main_mdio1_pins_default: main-mdio1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x160, PIN_OUTPUT, 0) /* (V12) MDIO0_MDC */
-			AM62AX_IOPAD(0x15c, PIN_INPUT, 0) /* (V13) MDIO0_MDIO */
-		>;
-	};
-
-	main_rgmii1_pins_default: main-rgmii1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x14c, PIN_INPUT, 0) /* (AB16) RGMII1_RD0 */
-			AM62AX_IOPAD(0x150, PIN_INPUT, 0) /* (V15) RGMII1_RD1 */
-			AM62AX_IOPAD(0x154, PIN_INPUT, 0) /* (W15) RGMII1_RD2 */
-			AM62AX_IOPAD(0x158, PIN_INPUT, 0) /* (V14) RGMII1_RD3 */
-			AM62AX_IOPAD(0x148, PIN_INPUT, 0) /* (AA16) RGMII1_RXC */
-			AM62AX_IOPAD(0x144, PIN_INPUT, 0) /* (AA15) RGMII1_RX_CTL */
-			AM62AX_IOPAD(0x134, PIN_INPUT, 0) /* (Y17) RGMII1_TD0 */
-			AM62AX_IOPAD(0x138, PIN_INPUT, 0) /* (V16) RGMII1_TD1 */
-			AM62AX_IOPAD(0x13c, PIN_INPUT, 0) /* (Y16) RGMII1_TD2 */
-			AM62AX_IOPAD(0x140, PIN_INPUT, 0) /* (AA17) RGMII1_TD3 */
-			AM62AX_IOPAD(0x130, PIN_INPUT, 0) /* (AB17) RGMII1_TXC */
-			AM62AX_IOPAD(0x12c, PIN_INPUT, 0) /* (W16) RGMII1_TX_CTL */
-		>;
-	};
-
-	main_mcasp1_pins_default: main-mcasp1-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x090, PIN_INPUT, 2) /* (L19) GPMC0_BE0n_CLE.MCASP1_ACLKX */
-			AM62AX_IOPAD(0x098, PIN_INPUT, 2) /* (R18) GPMC0_WAIT0.MCASP1_AFSX */
-			AM62AX_IOPAD(0x08c, PIN_OUTPUT, 2) /* (K19) GPMC0_WEn.MCASP1_AXR0 */
-			AM62AX_IOPAD(0x084, PIN_INPUT, 2) /* (L18) GPMC0_ADVn_ALE.MCASP1_AXR2 */
-		>;
-	};
-
-	main_gpio1_ioexp_intr_pins_default: main-gpio1-ioexp-intr-pins-default {
-		pinctrl-single,pins = <
-			AM62AX_IOPAD(0x01d4, PIN_INPUT, 7) /* (C15) UART0_RTSn.GPIO1_23 */
-
-		>;
-	};
-
-	main_dss0_pins_default: main-dss0-pins-default {
+	main_dss0_pins_default: main-dss0-default-pins {
 		pinctrl-single,pins = <
 			AM62AX_IOPAD(0x100, PIN_OUTPUT, 0) /* (V17) VOUT0_VSYNC */
 			AM62AX_IOPAD(0x0f8, PIN_OUTPUT, 0) /* (T18) VOUT0_HSYNC */
@@ -381,7 +314,44 @@
 		>;
 	};
 
-	main_mmc0_pins_default: main-mmc0-pins-default {
+	main_uart0_pins_default: main-uart0-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x1c8, PIN_INPUT, 0) /* (E14) UART0_RXD */
+			AM62AX_IOPAD(0x1cc, PIN_OUTPUT, 0) /* (D15) UART0_TXD */
+		>;
+	};
+
+	main_uart1_pins_default: main-uart1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x01e8, PIN_INPUT, 1) /* (C17) I2C1_SCL.UART1_RXD */
+			AM62AX_IOPAD(0x01ec, PIN_OUTPUT, 1) /* (E17) I2C1_SDA.UART1_TXD */
+			AM62AX_IOPAD(0x0194, PIN_INPUT, 2) /* (C19) MCASP0_AXR3.UART1_CTSn */
+			AM62AX_IOPAD(0x0198, PIN_OUTPUT, 2) /* (B19) MCASP0_AXR2.UART1_RTSn */
+		>;
+	};
+
+	main_i2c0_pins_default: main-i2c0-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x1e0, PIN_INPUT_PULLUP, 0) /* (B16) I2C0_SCL */
+			AM62AX_IOPAD(0x1e4, PIN_INPUT_PULLUP, 0) /* (A16) I2C0_SDA */
+		>;
+	};
+
+	main_i2c1_pins_default: main-i2c1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x1e8, PIN_INPUT_PULLUP, 0) /* (B17) I2C1_SCL */
+			AM62AX_IOPAD(0x1ec, PIN_INPUT_PULLUP, 0) /* (A17) I2C1_SDA */
+		>;
+	};
+
+	main_i2c2_pins_default: main-i2c2-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x0b0, PIN_INPUT_PULLUP, 1) /* (K22) GPMC0_CSn2.I2C2_SCL */
+			AM62AX_IOPAD(0x0b4, PIN_INPUT_PULLUP, 1) /* (K24) GPMC0_CSn3.I2C2_SDA */
+		>;
+	};
+
+	main_mmc0_pins_default: main-mmc0-default-pins {
 		pinctrl-single,pins = <
 			AM62AX_IOPAD(0x220, PIN_INPUT, 0) /* (Y3) MMC0_CMD */
 			AM62AX_IOPAD(0x218, PIN_INPUT, 0) /* (AB1) MMC0_CLKLB */
@@ -397,13 +367,76 @@
 		>;
 	};
 
-	vddshv_sdio_pins_default: vddshv-sdio-pins-default {
+	main_mmc1_pins_default: main-mmc1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x23c, PIN_INPUT, 0) /* (A21) MMC1_CMD */
+			AM62AX_IOPAD(0x234, PIN_INPUT, 0) /* (B22) MMC1_CLK */
+			AM62AX_IOPAD(0x230, PIN_INPUT, 0) /* (A22) MMC1_DAT0 */
+			AM62AX_IOPAD(0x22c, PIN_INPUT, 0) /* (B21) MMC1_DAT1 */
+			AM62AX_IOPAD(0x228, PIN_INPUT, 0) /* (C21) MMC1_DAT2 */
+			AM62AX_IOPAD(0x224, PIN_INPUT, 0) /* (D22) MMC1_DAT3 */
+			AM62AX_IOPAD(0x240, PIN_INPUT, 0) /* (D17) MMC1_SDCD */
+		>;
+	};
+
+	usr_led_pins_default: usr-led-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x244, PIN_OUTPUT, 7) /* (D18) MMC1_SDWP.GPIO1_49 */
+		>;
+	};
+
+	main_usb1_pins_default: main-usb1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x0258, PIN_OUTPUT, 0) /* (F18) USB1_DRVVBUS */
+		>;
+	};
+
+	main_mdio1_pins_default: main-mdio1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x160, PIN_OUTPUT, 0) /* (V12) MDIO0_MDC */
+			AM62AX_IOPAD(0x15c, PIN_INPUT, 0) /* (V13) MDIO0_MDIO */
+		>;
+	};
+
+	main_rgmii1_pins_default: main-rgmii1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x14c, PIN_INPUT, 0) /* (AB16) RGMII1_RD0 */
+			AM62AX_IOPAD(0x150, PIN_INPUT, 0) /* (V15) RGMII1_RD1 */
+			AM62AX_IOPAD(0x154, PIN_INPUT, 0) /* (W15) RGMII1_RD2 */
+			AM62AX_IOPAD(0x158, PIN_INPUT, 0) /* (V14) RGMII1_RD3 */
+			AM62AX_IOPAD(0x148, PIN_INPUT, 0) /* (AA16) RGMII1_RXC */
+			AM62AX_IOPAD(0x144, PIN_INPUT, 0) /* (AA15) RGMII1_RX_CTL */
+			AM62AX_IOPAD(0x134, PIN_INPUT, 0) /* (Y17) RGMII1_TD0 */
+			AM62AX_IOPAD(0x138, PIN_INPUT, 0) /* (V16) RGMII1_TD1 */
+			AM62AX_IOPAD(0x13c, PIN_INPUT, 0) /* (Y16) RGMII1_TD2 */
+			AM62AX_IOPAD(0x140, PIN_INPUT, 0) /* (AA17) RGMII1_TD3 */
+			AM62AX_IOPAD(0x130, PIN_INPUT, 0) /* (AB17) RGMII1_TXC */
+			AM62AX_IOPAD(0x12c, PIN_INPUT, 0) /* (W16) RGMII1_TX_CTL */
+		>;
+	};
+
+	main_mcasp1_pins_default: main-mcasp1-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x090, PIN_INPUT, 2) /* (L19) GPMC0_BE0n_CLE.MCASP1_ACLKX */
+			AM62AX_IOPAD(0x098, PIN_INPUT, 2) /* (R18) GPMC0_WAIT0.MCASP1_AFSX */
+			AM62AX_IOPAD(0x08c, PIN_OUTPUT, 2) /* (K19) GPMC0_WEn.MCASP1_AXR0 */
+			AM62AX_IOPAD(0x084, PIN_INPUT, 2) /* (L18) GPMC0_ADVn_ALE.MCASP1_AXR2 */
+		>;
+	};
+
+	main_gpio1_ioexp_intr_pins_default: main-gpio1-ioexp-intr-default-pins {
+		pinctrl-single,pins = <
+			AM62AX_IOPAD(0x01d4, PIN_INPUT, 7) /* (C15) UART0_RTSn.GPIO1_23 */
+		>;
+	};
+
+	vddshv_sdio_pins_default: vddshv-sdio-default-pins {
 		pinctrl-single,pins = <
 			AM62AX_IOPAD(0x07c, PIN_OUTPUT, 7) /* (M19) GPMC0_CLK.GPIO0_31 */
 		>;
 	};
 
-	ospi0_pins_default: ospi0-pins-default {
+	ospi0_pins_default: ospi0-default-pins {
 		pinctrl-single,pins = <
 			AM62AX_IOPAD(0x000, PIN_OUTPUT, 0) /* (H24) OSPI0_CLK */
 			AM62AX_IOPAD(0x02c, PIN_OUTPUT, 0) /* (F23) OSPI0_CSn0 */
@@ -423,7 +456,7 @@
 &mcu_pmx0 {
 	status = "okay";
 
-	pmic_irq_pins_default: pmic-irq-pins-default {
+	pmic_irq_pins_default: pmic-irq-default-pins {
 		pinctrl-single,pins = <
 			AM62AX_MCU_IOPAD(0x000, PIN_INPUT, 7) /* (E11) MCU_GPIO0_0 */
 		>;
@@ -551,11 +584,12 @@
 		reg = <0x22>;
 		gpio-controller;
 		#gpio-cells = <2>;
-
 		interrupt-parent = <&main_gpio1>;
 		interrupts = <23 IRQ_TYPE_EDGE_FALLING>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&main_gpio1_ioexp_intr_pins_default>;
 
 		gpio-line-names = "GPIO_CPSW2_RST", "GPIO_CPSW1_RST",
 				   "BT_EN_SOC", "MMC1_SD_EN",
@@ -569,9 +603,19 @@
 				   "MCASP1_FET_EN", "MCASP1_BUF_BT_EN",
 				   "MCASP1_FET_SEL", "UART1_FET_SEL",
 				   "PD_I2C_IRQ", "IO_EXP_TEST_LED";
+	};
 
-		pinctrl-names = "default";
-		pinctrl-0 = <&main_gpio1_ioexp_intr_pins_default>;
+	tlv320aic3106: audio-codec@1b {
+		#sound-dai-cells = <0>;
+		compatible = "ti,tlv320aic3106";
+		reg = <0x1b>;
+		ai3x-micbias-vg = <1>;	/* 2.0V */
+
+		/* Regulators */
+		AVDD-supply = <&vcc_3v3_sys>;
+		IOVDD-supply = <&vcc_3v3_sys>;
+		DRVDD-supply = <&vcc_3v3_sys>;
+		DVDD-supply = <&buck5>;
 	};
 
 	exp2: gpio@23 {
@@ -594,27 +638,12 @@
 				  "CSI_VLDO_SEL", "SoC_WLAN_SDIO_RST";
 	};
 
-	tlv320aic3106: audio-codec@1b {
-		#sound-dai-cells = <0>;
-		compatible = "ti,tlv320aic3106";
-		reg = <0x1b>;
-		ai3x-micbias-vg = <1>;	/* 2.0V */
-		ai3x-ocmv = <1>;	/* 1.5V */
-
-		/* Regulators */
-		AVDD-supply = <&vcc_3v3_sys>;
-		IOVDD-supply = <&vcc_3v3_sys>;
-		DRVDD-supply = <&vcc_3v3_sys>;
-	};
-
-	sii9022: sii9022@3b {
-		#sound-dai-cells = <0>;
+	sii9022: bridge-hdmi@3b {
 		compatible = "sil,sii9022";
 		reg = <0x3b>;
-
 		interrupt-parent = <&exp1>;
 		interrupts = <16 IRQ_TYPE_EDGE_FALLING>;
-
+		#sound-dai-cells = <0>;
 		sil,i2s-data-lanes = < 0 >;
 
 		ports {
@@ -638,7 +667,6 @@
 			};
 		};
 	};
-
 };
 
 &main_i2c2 {
@@ -646,6 +674,15 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c2_pins_default>;
 	clock-frequency = <400000>;
+};
+
+&sdhci0 {
+	/* eMMC */
+	status = "okay";
+	non-removable;
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_mmc0_pins_default>;
+	disable-wp;
 };
 
 &sdhci1 {
@@ -677,6 +714,18 @@
 	interrupts-extended = <&gic500 GIC_SPI 178 IRQ_TYPE_LEVEL_HIGH>,
 			<&main_pmx0 0x1c8>; /* (D14) UART0_RXD PADCONFIG114 */
 	interrupt-names = "irq", "wakeup";
+};
+
+/* Main UART1 is used for TIFS firmware logs */
+&main_uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_uart1_pins_default>;
+	status = "reserved";
+};
+
+/* Main Timer2 is used by C7x DSP */
+&main_timer2 {
+	status = "reserved";
 };
 
 &usbss0 {
@@ -758,27 +807,78 @@
 	rx-num-evt = <0>;
 };
 
-&ti_csi2rx0 {
-	status = "okay";
-};
-
-&dphy0 {
-	status = "okay";
-};
-
 &dss {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_dss0_pins_default>;
 };
 
 &dss_ports {
 	/* VP2: DPI Output */
-	hdmi0_dss: port@0 {
-		reg = <0>;
+	hdmi0_dss: port@1 {
+		reg = <1>;
 
 		dpi1_out: endpoint {
 			remote-endpoint = <&sii9022_in>;
 		};
+	};
+};
+
+&mailbox0_cluster0 {
+	ti,mbox-num-fifos = <2>;
+	mbox_r5_0: mbox-r5-0 {
+		ti,mbox-rx = <0 0 0>;
+		ti,mbox-tx = <1 0 0>;
+	};
+};
+
+&mailbox0_cluster1 {
+	ti,mbox-num-fifos = <2>;
+	mbox_c7x_0: mbox-c7x-0 {
+		ti,mbox-rx = <0 0 0>;
+		ti,mbox-tx = <1 0 0>;
+	};
+};
+
+&mailbox0_cluster2 {
+	ti,mbox-num-fifos = <2>;
+	mbox_mcu_r5_0: mbox-mcu-r5-0 {
+		ti,mbox-rx = <0 0 0>;
+		ti,mbox-tx = <1 0 0>;
+	};
+};
+
+&c7x_0 {
+	mboxes = <&mailbox0_cluster1>, <&mbox_c7x_0>;
+	memory-region = <&c7x_0_dma_memory_region>,
+			<&c7x_0_memory_region>;
+};
+
+&wkup_r5fss0_core0 {
+	mboxes = <&mailbox0_cluster0>, <&mbox_r5_0>;
+	memory-region = <&wkup_r5fss0_core0_dma_memory_region>,
+		<&wkup_r5fss0_core0_memory_region>;
+};
+
+&mcu_r5fss0_core0 {
+	mboxes = <&mailbox0_cluster2>, <&mbox_mcu_r5_0>;
+	memory-region = <&mcu_r5fss0_core0_dma_memory_region>,
+			<&mcu_r5fss0_core0_memory_region>;
+};
+
+#define K3_TS_OFFSET(pa, val)	(0x4+(pa)*4) (0x10000 | val)
+
+&timesync_router {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&cpsw_cpts>;
+
+	/* Use Time Sync Router to map GENF1 input to HW3_TS_PUSH output */
+	cpsw_cpts: cpsw-cpts {
+		pinctrl-single,pins = <
+			/* pps [cpsw cpts genf1] in17 -> out12 [cpsw cpts hw3_push] */
+			K3_TS_OFFSET(12, 17)
+			>;
 	};
 };
 
@@ -801,7 +901,6 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <2>;
-		cdns,phy-mode;
 
 		partitions {
 			compatible = "fixed-partitions";
@@ -844,69 +943,4 @@
 			};
 		};
 	};
-};
-
-&mailbox0_cluster0 {
-	ti,mbox-num-fifos = <2>;
-	mbox_r5_0: mbox-r5-0 {
-		ti,mbox-rx = <0 0 0>;
-		ti,mbox-tx = <1 0 0>;
-	};
-};
-
-&mailbox0_cluster1 {
-	ti,mbox-num-fifos = <2>;
-	mbox_c7x_0: mbox-c7x-0 {
-		ti,mbox-rx = <0 0 0>;
-		ti,mbox-tx = <1 0 0>;
-	};
-};
-
-&mailbox0_cluster2 {
-	ti,mbox-num-fifos = <2>;
-	mbox_mcu_r5_0: mbox-mcu_r5-0 {
-		ti,mbox-rx = <0 0 0>;
-		ti,mbox-tx = <1 0 0>;
-	};
-};
-
-&c7x_0 {
-	mboxes = <&mailbox0_cluster1 &mbox_c7x_0>;
-	memory-region = <&c7x_0_dma_memory_region>,
-			<&c7x_0_memory_region>;
-};
-
-&wkup_r5fss0_core0 {
-	mboxes = <&mailbox0_cluster0 &mbox_r5_0>;
-	memory-region = <&wkup_r5fss0_core0_dma_memory_region>,
-		<&wkup_r5fss0_core0_memory_region>;
-};
-
-&mcu_r5fss0_core0 {
-	mboxes = <&mailbox0_cluster2 &mbox_mcu_r5_0>;
-	memory-region = <&mcu_r5fss0_core0_dma_memory_region>,
-			<&mcu_r5fss0_core0_memory_region>;
-};
-
-#define K3_TS_OFFSET(pa, val)	(0x4+(pa)*4) (0x10000 | val)
-
-&timesync_router {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&cpsw_cpts>;
-
-	/* Use Time Sync Router to map GENF1 input to HW3_TS_PUSH output */
-	cpsw_cpts: cpsw-cpts {
-		pinctrl-single,pins = <
-			/* pps [cpsw cpts genf1] in17 -> out12 [cpsw cpts hw3_push] */
-			K3_TS_OFFSET(12, 17)
-			>;
-	};
-};
-
-&sdhci0 {
-	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mmc0_pins_default>;
-	disable-wp;
 };

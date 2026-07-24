@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/**
+/*
  * Host side test driver to test endpoint functionality
  *
  * Copyright (C) 2017 Texas Instruments
@@ -73,6 +73,7 @@
 #define PCI_DEVICE_ID_TI_AM64			0xb010
 #define PCI_DEVICE_ID_TI_J721S2		0xb013
 #define PCI_DEVICE_ID_LS1088A			0x80c0
+#define PCI_DEVICE_ID_IMX8			0x0808
 
 #define is_am654_pci_dev(pdev)		\
 		((pdev)->device == PCI_DEVICE_ID_TI_AM654)
@@ -82,9 +83,6 @@
 #define PCI_DEVICE_ID_RENESAS_R8A774C0		0x002d
 #define PCI_DEVICE_ID_RENESAS_R8A774E1		0x0025
 #define PCI_DEVICE_ID_RENESAS_R8A779F0		0x0031
-
-#define is_j721e_pci_dev(pdev)         \
-		((pdev)->device == PCI_DEVICE_ID_TI_J721E)
 
 static DEFINE_IDA(pci_endpoint_test_ida);
 
@@ -163,10 +161,7 @@ static irqreturn_t pci_endpoint_test_irqhandler(int irq, void *dev_id)
 	if (reg & STATUS_IRQ_RAISED) {
 		test->last_irq = irq;
 		complete(&test->irq_raised);
-		reg &= ~STATUS_IRQ_RAISED;
 	}
-	pci_endpoint_test_writel(test, PCI_ENDPOINT_TEST_STATUS,
-				 reg);
 
 	return IRQ_HANDLED;
 }
@@ -268,6 +263,15 @@ fail:
 	return false;
 }
 
+static const u32 bar_test_pattern[] = {
+	0xA0A0A0A0,
+	0xA1A1A1A1,
+	0xA2A2A2A2,
+	0xA3A3A3A3,
+	0xA4A4A4A4,
+	0xA5A5A5A5,
+};
+
 static bool pci_endpoint_test_bar(struct pci_endpoint_test *test,
 				  enum pci_barno barno)
 {
@@ -285,11 +289,12 @@ static bool pci_endpoint_test_bar(struct pci_endpoint_test *test,
 		size = 0x4;
 
 	for (j = 0; j < size; j += 4)
-		pci_endpoint_test_bar_writel(test, barno, j, 0xA0A0A0A0);
+		pci_endpoint_test_bar_writel(test, barno, j,
+					     bar_test_pattern[barno]);
 
 	for (j = 0; j < size; j += 4) {
 		val = pci_endpoint_test_bar_readl(test, barno, j);
-		if (val != 0xA0A0A0A0)
+		if (val != bar_test_pattern[barno])
 			return false;
 	}
 
@@ -320,21 +325,17 @@ static bool pci_endpoint_test_msi_irq(struct pci_endpoint_test *test,
 	struct pci_dev *pdev = test->pdev;
 
 	pci_endpoint_test_writel(test, PCI_ENDPOINT_TEST_IRQ_TYPE,
-				 msix == false ? IRQ_TYPE_MSI :
-				 IRQ_TYPE_MSIX);
+				 msix ? IRQ_TYPE_MSIX : IRQ_TYPE_MSI);
 	pci_endpoint_test_writel(test, PCI_ENDPOINT_TEST_IRQ_NUMBER, msi_num);
 	pci_endpoint_test_writel(test, PCI_ENDPOINT_TEST_COMMAND,
-				 msix == false ? COMMAND_RAISE_MSI_IRQ :
-				 COMMAND_RAISE_MSIX_IRQ);
+				 msix ? COMMAND_RAISE_MSIX_IRQ :
+				 COMMAND_RAISE_MSI_IRQ);
 	val = wait_for_completion_timeout(&test->irq_raised,
 					  msecs_to_jiffies(1000));
 	if (!val)
 		return false;
 
-	if (pci_irq_vector(pdev, msi_num - 1) == test->last_irq)
-		return true;
-
-	return false;
+	return pci_irq_vector(pdev, msi_num - 1) == test->last_irq;
 }
 
 static int pci_endpoint_test_validate_xfer_params(struct device *dev,
@@ -843,11 +844,9 @@ static int pci_endpoint_test_probe(struct pci_dev *pdev,
 
 	pci_set_master(pdev);
 
-	if (!(is_am654_pci_dev(pdev) || is_j721e_pci_dev(pdev))) {
-		if (!pci_endpoint_test_alloc_irq_vectors(test, irq_type)) {
-			err = -EINVAL;
-			goto err_disable_irq;
-		}
+	if (!pci_endpoint_test_alloc_irq_vectors(test, irq_type)) {
+		err = -EINVAL;
+		goto err_disable_irq;
 	}
 
 	for (bar = 0; bar < PCI_STD_NUM_BARS; bar++) {
@@ -885,11 +884,9 @@ static int pci_endpoint_test_probe(struct pci_dev *pdev,
 		goto err_ida_remove;
 	}
 
-	if (!(is_am654_pci_dev(pdev) || is_j721e_pci_dev(pdev))) {
-		if (!pci_endpoint_test_request_irq(test)) {
-			err = -EINVAL;
-			goto err_kfree_test_name;
-		}
+	if (!pci_endpoint_test_request_irq(test)) {
+		err = -EINVAL;
+		goto err_kfree_test_name;
 	}
 
 	misc_device = &test->miscdev;
@@ -993,6 +990,7 @@ static const struct pci_device_id pci_endpoint_test_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, 0x81c0),
 	  .driver_data = (kernel_ulong_t)&default_data,
 	},
+	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_IMX8),},
 	{ PCI_DEVICE(PCI_VENDOR_ID_FREESCALE, PCI_DEVICE_ID_LS1088A),
 	  .driver_data = (kernel_ulong_t)&default_data,
 	},

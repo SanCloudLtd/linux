@@ -213,7 +213,8 @@ static int imx390_set_fmt(struct v4l2_subdev *sd,
 	v4l2_subdev_lock_state(state);
 
 	/* Update the stored format and return it. */
-	format = v4l2_subdev_state_get_stream_format(state, fmt->pad, fmt->stream);
+	format = v4l2_subdev_state_get_stream_format(state, fmt->pad,
+						     fmt->stream);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && imx390->streaming) {
 		ret = -EBUSY;
@@ -720,10 +721,11 @@ static int imx390_probe(struct i2c_client *client)
 	imx390->ctrl.v_flip = v4l2_ctrl_new_std(ctrl_hdr, &imx390_ctrl_ops,
 						V4L2_CID_VFLIP, 0, 1, 1, 0);
 
-	imx390->ctrl.pg_mode = v4l2_ctrl_new_std_menu_items(ctrl_hdr,
-					&imx390_ctrl_ops, V4L2_CID_TEST_PATTERN,
-					ARRAY_SIZE(imx390_ctrl_pg_qmenu) - 1,
-					0, 0, imx390_ctrl_pg_qmenu);
+	imx390->ctrl.pg_mode =
+		v4l2_ctrl_new_std_menu_items(ctrl_hdr, &imx390_ctrl_ops,
+					     V4L2_CID_TEST_PATTERN,
+					     ARRAY_SIZE(imx390_ctrl_pg_qmenu) - 1,
+					     0, 0, imx390_ctrl_pg_qmenu);
 
 	imx390->subdev.ctrl_handler = ctrl_hdr;
 	if (imx390->ctrl.handler.error) {
@@ -874,7 +876,7 @@ static struct i2c_driver imx390_i2c_driver = {
 		.of_match_table = of_match_ptr(imx390_dt_id),
 		.pm = &imx390_pm_ops,
 	},
-	.probe_new = imx390_probe,
+	.probe = imx390_probe,
 	.remove = imx390_remove,
 };
 

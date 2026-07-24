@@ -42,6 +42,7 @@
 #include <linux/completion.h>
 #include <linux/idr.h>
 #include <linux/of.h>
+#include <linux/dma-buf.h>
 
 /**
  * struct resource_table - firmware resource table header
@@ -562,6 +563,7 @@ struct rproc {
 	struct list_head traces;
 	int num_traces;
 	struct list_head carveouts;
+	struct list_head dmabufs;
 	struct list_head mappings;
 	u64 bootaddr;
 	struct list_head rvdevs;
@@ -584,7 +586,7 @@ struct rproc {
 	u8 elf_class;
 	u16 elf_machine;
 	struct cdev cdev;
-	bool cdev_put_on_release;
+	struct device_dma_parameters dma_parms;
 	DECLARE_BITMAP(features, RPROC_MAX_FEATURES);
 };
 
@@ -673,6 +675,10 @@ int devm_rproc_add(struct device *dev, struct rproc *rproc);
 
 void rproc_add_carveout(struct rproc *rproc, struct rproc_mem_entry *mem);
 
+int rproc_attach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf);
+int rproc_dmabuf_get_da(struct rproc *rproc, struct dma_buf *dmabuf, dma_addr_t *dma);
+int rproc_detach_dmabuf(struct rproc *rproc, struct dma_buf *dmabuf);
+
 struct rproc_mem_entry *
 rproc_mem_entry_init(struct device *dev,
 		     void *va, dma_addr_t dma, size_t len, u32 da,
@@ -690,6 +696,10 @@ int rproc_detach(struct rproc *rproc);
 int rproc_set_firmware(struct rproc *rproc, const char *fw_name);
 void rproc_report_crash(struct rproc *rproc, enum rproc_crash_type type);
 void *rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem);
+
+/* from remoteproc_coredump.c */
+void rproc_coredump_cleanup(struct rproc *rproc);
+void rproc_coredump(struct rproc *rproc);
 void rproc_coredump_using_sections(struct rproc *rproc);
 int rproc_coredump_add_segment(struct rproc *rproc, dma_addr_t da, size_t size);
 int rproc_coredump_add_custom_segment(struct rproc *rproc,

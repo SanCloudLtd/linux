@@ -59,6 +59,16 @@ enum syscall_work_bit {
 
 #include <asm/thread_info.h>
 
+#ifdef CONFIG_PREEMPT_BUILD_AUTO
+# define TIF_NEED_RESCHED_LAZY		TIF_ARCH_RESCHED_LAZY
+# define _TIF_NEED_RESCHED_LAZY		_TIF_ARCH_RESCHED_LAZY
+# define TIF_NEED_RESCHED_LAZY_OFFSET	(TIF_NEED_RESCHED_LAZY - TIF_NEED_RESCHED)
+#else
+# define TIF_NEED_RESCHED_LAZY		TIF_NEED_RESCHED
+# define _TIF_NEED_RESCHED_LAZY		_TIF_NEED_RESCHED
+# define TIF_NEED_RESCHED_LAZY_OFFSET	0
+#endif
+
 #ifdef __KERNEL__
 
 #ifndef arch_set_restart_data
@@ -177,17 +187,37 @@ static __always_inline unsigned long read_ti_thread_flags(struct thread_info *ti
 	clear_ti_thread_flag(task_thread_info(t), TIF_##fl)
 #endif /* !CONFIG_GENERIC_ENTRY */
 
-#ifdef CONFIG_PREEMPT_LAZY
-#define tif_need_resched()	(test_thread_flag(TIF_NEED_RESCHED) || \
-				 test_thread_flag(TIF_NEED_RESCHED_LAZY))
-#define tif_need_resched_now()	(test_thread_flag(TIF_NEED_RESCHED))
-#define tif_need_resched_lazy()	test_thread_flag(TIF_NEED_RESCHED_LAZY)
+#ifdef _ASM_GENERIC_BITOPS_INSTRUMENTED_NON_ATOMIC_H
+
+static __always_inline bool tif_need_resched(void)
+{
+	return arch_test_bit(TIF_NEED_RESCHED,
+			     (unsigned long *)(&current_thread_info()->flags));
+}
+
+static __always_inline bool tif_need_resched_lazy(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_BUILD_AUTO) &&
+		arch_test_bit(TIF_NEED_RESCHED_LAZY,
+			      (unsigned long *)(&current_thread_info()->flags));
+}
 
 #else
-#define tif_need_resched()	test_thread_flag(TIF_NEED_RESCHED)
-#define tif_need_resched_now()	test_thread_flag(TIF_NEED_RESCHED)
-#define tif_need_resched_lazy()	0
-#endif
+
+static __always_inline bool tif_need_resched(void)
+{
+	return test_bit(TIF_NEED_RESCHED,
+			(unsigned long *)(&current_thread_info()->flags));
+}
+
+static __always_inline bool tif_need_resched_lazy(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_BUILD_AUTO) &&
+		test_bit(TIF_NEED_RESCHED_LAZY,
+			 (unsigned long *)(&current_thread_info()->flags));
+}
+
+#endif /* _ASM_GENERIC_BITOPS_INSTRUMENTED_NON_ATOMIC_H */
 
 #ifndef CONFIG_HAVE_ARCH_WITHIN_STACK_FRAMES
 static inline int arch_within_stack_frames(const void * const stack,
@@ -249,6 +279,11 @@ check_copy_size(const void *addr, size_t bytes, bool is_source)
 #ifndef arch_setup_new_exec
 static inline void arch_setup_new_exec(void) { }
 #endif
+
+void arch_task_cache_init(void); /* for CONFIG_SH */
+void arch_release_task_struct(struct task_struct *tsk);
+int arch_dup_task_struct(struct task_struct *dst,
+				struct task_struct *src);
 
 #endif	/* __KERNEL__ */
 

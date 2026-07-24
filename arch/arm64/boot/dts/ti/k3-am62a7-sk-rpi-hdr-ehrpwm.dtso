@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /**
- * DT Overlay for enabling RPi header with GPIOs and eHRPWMs on AM62A-SK
+ * DT Overlay for enabling RPi header with GPIOs and ePWMs on AM62A-SK
  *
  * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
  */

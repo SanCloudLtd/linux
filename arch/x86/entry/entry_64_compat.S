@@ -58,10 +58,10 @@ SYM_CODE_START(entry_SYSENTER_compat)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
 	popq	%rax
 
-	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	movq	PER_CPU_VAR(pcpu_hot + X86_top_of_stack), %rsp
 
 	/* Construct struct pt_regs on stack */
-	pushq	$__USER32_DS		/* pt_regs->ss */
+	pushq	$__USER_DS		/* pt_regs->ss */
 	pushq	$0			/* pt_regs->sp = 0 (placeholder) */
 
 	/*
@@ -92,6 +92,7 @@ SYM_INNER_LABEL(entry_SYSENTER_compat_after_hwframe, SYM_L_GLOBAL)
 
 	IBRS_ENTER
 	UNTRAIN_RET
+	CLEAR_BRANCH_HISTORY
 
 	/*
 	 * SYSENTER doesn't filter flags, so we need to clear NT and AC
@@ -128,7 +129,6 @@ SYM_INNER_LABEL(entry_SYSENTER_compat_after_hwframe, SYM_L_GLOBAL)
 	popfq
 	jmp	.Lsysenter_flags_fixed
 SYM_INNER_LABEL(__end_entry_SYSENTER_compat, SYM_L_GLOBAL)
-	ANNOTATE_NOENDBR // is_sysenter_singlestep
 SYM_CODE_END(entry_SYSENTER_compat)
 
 /*
@@ -191,13 +191,13 @@ SYM_CODE_START(entry_SYSCALL_compat)
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rsp
 
 	/* Switch to the kernel stack */
-	movq	PER_CPU_VAR(cpu_current_top_of_stack), %rsp
+	movq	PER_CPU_VAR(pcpu_hot + X86_top_of_stack), %rsp
 
 SYM_INNER_LABEL(entry_SYSCALL_compat_safe_stack, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 
 	/* Construct struct pt_regs on stack */
-	pushq	$__USER32_DS		/* pt_regs->ss */
+	pushq	$__USER_DS		/* pt_regs->ss */
 	pushq	%r8			/* pt_regs->sp */
 	pushq	%r11			/* pt_regs->flags */
 	pushq	$__USER32_CS		/* pt_regs->cs */
@@ -210,6 +210,7 @@ SYM_INNER_LABEL(entry_SYSCALL_compat_after_hwframe, SYM_L_GLOBAL)
 
 	IBRS_ENTER
 	UNTRAIN_RET
+	CLEAR_BRANCH_HISTORY
 
 	movq	%rsp, %rdi
 	call	do_fast_syscall_32
@@ -278,3 +279,17 @@ SYM_INNER_LABEL(entry_SYSRETL_compat_end, SYM_L_GLOBAL)
 	ANNOTATE_NOENDBR
 	int3
 SYM_CODE_END(entry_SYSCALL_compat)
+
+/*
+ * int 0x80 is used by 32 bit mode as a system call entry. Normally idt entries
+ * point to C routines, however since this is a system call interface the branch
+ * history needs to be scrubbed to protect against BHI attacks, and that
+ * scrubbing needs to take place in assembly code prior to entering any C
+ * routines.
+ */
+SYM_CODE_START(int80_emulation)
+	ANNOTATE_NOENDBR
+	UNWIND_HINT_FUNC
+	CLEAR_BRANCH_HISTORY
+	jmp do_int80_emulation
+SYM_CODE_END(int80_emulation)

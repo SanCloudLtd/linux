@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
 /**
  * DT Overlay for RPi 7inch touchscreen panel interfaced with DSI on
  * J721E based BeagleBone AI-64 (BBAI-64) platform.
@@ -6,7 +6,7 @@
  * BBAI-64: https://www.beagleboard.org/boards/beaglebone-ai-64
  * RPi DSI Panel: https://www.raspberrypi.com/products/raspberry-pi-touch-display/
  *
- * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2024 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 /dts-v1/;

@@ -15,10 +15,11 @@
 #include <linux/mii.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
+#include <linux/of.h>
 #include <linux/of_net.h>
 #include <linux/of_mdio.h>
-#include <linux/of_platform.h>
 #include <linux/phy.h>
+#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/types.h>
@@ -1765,12 +1766,6 @@ static int ave_resume(struct device *dev)
 	ave_ethtool_get_wol(ndev, &wol);
 	wol.wolopts = priv->wolopts;
 	__ave_ethtool_set_wol(ndev, &wol);
-
-	if (ndev->phydev) {
-		ret = phy_resume(ndev->phydev);
-		if (ret)
-			return ret;
-	}
 
 	if (netif_running(ndev)) {
 		ret = ave_open(ndev);

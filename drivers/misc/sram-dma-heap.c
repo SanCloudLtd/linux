@@ -2,7 +2,7 @@
 /*
  * SRAM DMA-Heap userspace exporter
  *
- * Copyright (C) 2019-2022 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2019-2023 Texas Instruments Incorporated - https://www.ti.com/
  *	Andrew Davis <afd@ti.com>
  */
 
@@ -168,7 +168,7 @@ static struct dma_buf *sram_dma_heap_allocate(struct dma_heap *heap,
 
 	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
 	struct dma_buf *dmabuf;
-	int ret;
+	int ret = 0;
 
 	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
@@ -224,7 +224,7 @@ int sram_add_dma_heap(struct sram_dev *sram,
 	struct sram_dma_heap *sram_dma_heap;
 	struct dma_heap_export_info exp_info;
 
-	dev_info(sram->dev, "Exporting SRAM Heap '%s'\n", block->label);
+	dev_dbg(sram->dev, "Exporting SRAM Heap '%s'\n", block->label);
 
 	sram_dma_heap = kzalloc(sizeof(*sram_dma_heap), GFP_KERNEL);
 	if (!sram_dma_heap)

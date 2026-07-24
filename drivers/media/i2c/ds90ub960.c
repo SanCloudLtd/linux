@@ -150,6 +150,7 @@
 
 #define UB960_TR_CSI_CTL			0x33
 #define UB960_TR_CSI_CTL_CSI_CAL_EN		BIT(6)
+#define UB960_TR_CSI_CTL_CSI_CONTS_CLOCK	BIT(1)
 #define UB960_TR_CSI_CTL_CSI_ENABLE		BIT(0)
 
 #define UB960_TR_CSI_CTL2			0x34
@@ -416,8 +417,8 @@ enum ub960_rxport_mode {
 	RXPORT_MODE_RAW12_HF = 1,
 	RXPORT_MODE_RAW12_LF = 2,
 	RXPORT_MODE_CSI2_SYNC = 3,
-	RXPORT_MODE_CSI2_ASYNC = 4,
-	RXPORT_MODE_LAST = RXPORT_MODE_CSI2_ASYNC,
+	RXPORT_MODE_CSI2_NONSYNC = 4,
+	RXPORT_MODE_LAST = RXPORT_MODE_CSI2_NONSYNC,
 };
 
 enum ub960_rxport_cdr {
@@ -473,11 +474,11 @@ struct ub960_rxport {
 };
 
 struct ub960_asd {
-	struct v4l2_async_subdev base;
+	struct v4l2_async_connection base;
 	struct ub960_rxport *rxport;
 };
 
-static inline struct ub960_asd *to_ub960_asd(struct v4l2_async_subdev *asd)
+static inline struct ub960_asd *to_ub960_asd(struct v4l2_async_connection *asd)
 {
 	return container_of(asd, struct ub960_asd, base);
 }
@@ -487,6 +488,7 @@ struct ub960_txport {
 	u8                      nport;	/* TX port number, and index in priv->txport[] */
 
 	u32 num_data_lanes;
+	bool non_continous_clk;
 };
 
 struct ub960_data {
@@ -579,15 +581,6 @@ static const struct ub960_format_info ub960_formats[] = {
 	{ .code = MEDIA_BUS_FMT_SGRBG12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
 	{ .code = MEDIA_BUS_FMT_SRGGB12_1X12, .bpp = 12, .datatype = MIPI_CSI2_DT_RAW12, },
 
-	{ .code	= MEDIA_BUS_FMT_SRGGI10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SGRIG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SBGGI10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SGBIG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SGIRG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SIGGR10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SGIBG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-	{ .code	= MEDIA_BUS_FMT_SIGGB10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
-
 	{ .code	= MEDIA_BUS_FMT_SRGGB8_1X8, .bpp = 8, .datatype = MIPI_CSI2_DT_RAW8, },
 	{ .code	= MEDIA_BUS_FMT_SGRBG8_1X8, .bpp = 8, .datatype = MIPI_CSI2_DT_RAW8, },
 	{ .code	= MEDIA_BUS_FMT_SGBRG8_1X8, .bpp = 8, .datatype = MIPI_CSI2_DT_RAW8, },
@@ -596,6 +589,15 @@ static const struct ub960_format_info ub960_formats[] = {
 	{ .code	= MEDIA_BUS_FMT_SGRBG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
 	{ .code	= MEDIA_BUS_FMT_SGBRG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
 	{ .code	= MEDIA_BUS_FMT_SBGGR10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+
+	{ .code	= MEDIA_BUS_FMT_SRGGI10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SGRIG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SBGGI10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SGBIG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SGIRG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SIGGR10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SGIBG10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
+	{ .code	= MEDIA_BUS_FMT_SIGGB10_1X10, .bpp = 10, .datatype = MIPI_CSI2_DT_RAW10, },
 };
 
 static const struct ub960_format_info *ub960_find_format(u32 code)
@@ -1153,6 +1155,9 @@ static int ub960_parse_dt_txport(struct ub960_data *priv,
 		goto err_free_txport;
 	}
 
+	txport->non_continous_clk = vep.bus.mipi_csi2.flags &
+				    V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK;
+
 	txport->num_data_lanes = vep.bus.mipi_csi2.num_data_lanes;
 
 	if (vep.nr_of_link_frequencies != 1) {
@@ -1624,7 +1629,7 @@ static unsigned long ub960_calc_bc_clk_rate_ub960(struct ub960_data *priv,
 		div = 1;
 		break;
 
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		mult = 2;
 		div = 5;
 		break;
@@ -1648,7 +1653,7 @@ static unsigned long ub960_calc_bc_clk_rate_ub9702(struct ub960_data *priv,
 	case RXPORT_MODE_CSI2_SYNC:
 		return 47187500;
 
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		return 9437500;
 
 	default:
@@ -1682,10 +1687,10 @@ static int ub960_rxport_add_serializer(struct ub960_data *priv, u8 nport)
 	ser_info.addr = rxport->ser.alias;
 	rxport->ser.client =
 		i2c_new_client_device(priv->client->adapter, &ser_info);
-	if (!rxport->ser.client) {
+	if (IS_ERR(rxport->ser.client)) {
 		dev_err(dev, "rx%u: cannot add %s i2c device", nport,
 			ser_info.type);
-		return -EIO;
+		return PTR_ERR(rxport->ser.client);
 	}
 
 	dev_dbg(dev, "rx%u: remote serializer at alias 0x%02x (%u-%04x)\n",
@@ -1764,6 +1769,9 @@ static void ub960_init_tx_port(struct ub960_data *priv,
 
 	csi_ctl |= (4 - txport->num_data_lanes) << 4;
 
+	if (!txport->non_continous_clk)
+		csi_ctl |= UB960_TR_CSI_CTL_CSI_CONTS_CLOCK;
+
 	ub960_txport_write(priv, nport, UB960_TR_CSI_CTL, csi_ctl);
 }
 
@@ -1783,6 +1791,7 @@ static int ub960_init_tx_ports(struct ub960_data *priv)
 		break;
 	case MHZ(1200):
 		speed_select = 1;
+		pll_div = 0x18;
 		break;
 	case MHZ(800):
 		speed_select = 2;
@@ -1852,7 +1861,7 @@ static void ub960_init_rx_port_ub960(struct ub960_data *priv,
 		bc_freq_val = 0;
 		break;
 
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		bc_freq_val = 2;
 		break;
 
@@ -1890,7 +1899,7 @@ static void ub960_init_rx_port_ub960(struct ub960_data *priv,
 		return;
 
 	case RXPORT_MODE_CSI2_SYNC:
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		/* CSI-2 Mode (DS90UB953-Q1 compatible) */
 		ub960_rxport_update_bits(priv, nport, UB960_RR_PORT_CONFIG, 0x3,
 					 0x0);
@@ -1950,7 +1959,7 @@ static void ub960_init_rx_port_ub9702_fpd3(struct ub960_data *priv,
 		fpd_func_mode = 2;
 		break;
 
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		bc_freq_val = 2;
 		fpd_func_mode = 2;
 		break;
@@ -2044,7 +2053,7 @@ static void ub960_init_rx_port_ub9702_fpd4(struct ub960_data *priv,
 		bc_freq_val = 6;
 		break;
 
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 		bc_freq_val = 2;
 		break;
 
@@ -2110,7 +2119,7 @@ static void ub960_init_rx_port_ub9702(struct ub960_data *priv,
 		return;
 
 	case RXPORT_MODE_CSI2_SYNC:
-	case RXPORT_MODE_CSI2_ASYNC:
+	case RXPORT_MODE_CSI2_NONSYNC:
 
 		break;
 	}
@@ -2303,14 +2312,15 @@ static void ub960_get_vc_maps(struct ub960_data *priv, u8 *vc_map)
 	struct device *dev = &priv->client->dev;
 	u8 nport, available_vc = 0;
 
-	for (nport = 0;
-	     nport < priv->hw_data->num_rxports && priv->rxports[nport];
-	     ++nport) {
+	for (nport = 0; nport < priv->hw_data->num_rxports; ++nport) {
 		struct v4l2_mbus_frame_desc source_fd;
 		bool used_vc[UB960_MAX_VC] = {false};
 		u8 vc, cur_vc = available_vc;
 		int j, ret;
 		u8 map;
+
+		if (!priv->rxports[nport])
+			continue;
 
 		ret = v4l2_subdev_call(priv->rxports[nport]->source.sd, pad,
 				       get_frame_desc,
@@ -2388,7 +2398,8 @@ static int ub960_enable_rx_port(struct ub960_data *priv, unsigned int nport)
 	dev_dbg(dev, "enable RX port %u\n", nport);
 
 	/* Enable forwarding */
-	return ub960_update_bits(priv, UB960_SR_FWD_CTL1, BIT(4 + nport), 0);
+	return ub960_update_bits(priv, UB960_SR_FWD_CTL1,
+				 UB960_SR_FWD_CTL1_PORT_DIS(nport), 0);
 }
 
 static void ub960_disable_rx_port(struct ub960_data *priv, unsigned int nport)
@@ -2398,8 +2409,9 @@ static void ub960_disable_rx_port(struct ub960_data *priv, unsigned int nport)
 	dev_dbg(dev, "disable RX port %u\n", nport);
 
 	/* Disable forwarding */
-	ub960_update_bits(priv, UB960_SR_FWD_CTL1, BIT(4 + nport),
-			  BIT(4 + nport));
+	ub960_update_bits(priv, UB960_SR_FWD_CTL1,
+			  UB960_SR_FWD_CTL1_PORT_DIS(nport),
+			  UB960_SR_FWD_CTL1_PORT_DIS(nport));
 }
 
 static int ub960_configure_ports_for_streaming(struct ub960_data *priv,
@@ -2442,7 +2454,7 @@ static int ub960_configure_ports_for_streaming(struct ub960_data *priv,
 
 		/* For the rest, we are only interested in parallel busses */
 		if (rxport->rx_mode == RXPORT_MODE_CSI2_SYNC ||
-		    rxport->rx_mode == RXPORT_MODE_CSI2_ASYNC)
+		    rxport->rx_mode == RXPORT_MODE_CSI2_NONSYNC)
 			continue;
 
 		if (rx_data[nport].num_streams > 2)
@@ -2475,7 +2487,11 @@ static int ub960_configure_ports_for_streaming(struct ub960_data *priv,
 
 	/* Configure RX ports */
 
-	fwd_ctl = 0;
+	/*
+	 * Keep all port forwardings disabled by default. Forwarding will be
+	 * enabled in ub960_enable_rx_port.
+	 */
+	fwd_ctl = GENMASK(7, 4);
 
 	for (nport = 0; nport < priv->hw_data->num_rxports; nport++) {
 		struct ub960_rxport *rxport = priv->rxports[nport];
@@ -2501,7 +2517,7 @@ static int ub960_configure_ports_for_streaming(struct ub960_data *priv,
 			break;
 
 		case RXPORT_MODE_CSI2_SYNC:
-		case RXPORT_MODE_CSI2_ASYNC:
+		case RXPORT_MODE_CSI2_NONSYNC:
 			if (!priv->hw_data->is_ub9702) {
 				ub960_rxport_write(priv, nport,
 						   UB960_RR_CSI_VC_MAP,
@@ -2518,10 +2534,6 @@ static int ub960_configure_ports_for_streaming(struct ub960_data *priv,
 
 			break;
 		}
-
-		/* Forwarding */
-
-		fwd_ctl |= BIT(4 + nport); /* forward disable */
 
 		if (rx_data[nport].tx_port == 1)
 			fwd_ctl |= BIT(nport); /* forward to TX1 */
@@ -3104,6 +3116,7 @@ static const struct v4l2_subdev_ops ub960_subdev_ops = {
 };
 
 static const struct media_entity_operations ub960_entity_ops = {
+	.get_fwnode_pad = v4l2_subdev_get_fwnode_pad_1_to_1,
 	.link_validate = v4l2_subdev_link_validate,
 	.has_pad_interdep = v4l2_subdev_has_pad_interdep,
 };
@@ -3243,7 +3256,6 @@ ub960_parse_dt_rxport_link_properties(struct ub960_data *priv,
 	switch (rx_mode) {
 	case RXPORT_MODE_RAW12_HF:
 	case RXPORT_MODE_RAW12_LF:
-	case RXPORT_MODE_CSI2_ASYNC:
 		dev_err(dev, "rx%u: unsupported 'ti,rx-mode' %u\n", nport,
 			rx_mode);
 		return -EINVAL;
@@ -3549,7 +3561,7 @@ err_free_rxports:
 
 static int ub960_notify_bound(struct v4l2_async_notifier *notifier,
 			      struct v4l2_subdev *subdev,
-			      struct v4l2_async_subdev *asd)
+			      struct v4l2_async_connection *asd)
 {
 	struct ub960_data *priv = sd_to_ub960(notifier->sd);
 	struct ub960_rxport *rxport = to_ub960_asd(asd)->rxport;
@@ -3592,7 +3604,7 @@ static int ub960_notify_bound(struct v4l2_async_notifier *notifier,
 
 static void ub960_notify_unbind(struct v4l2_async_notifier *notifier,
 				struct v4l2_subdev *subdev,
-				struct v4l2_async_subdev *asd)
+				struct v4l2_async_connection *asd)
 {
 	struct ub960_rxport *rxport = to_ub960_asd(asd)->rxport;
 
@@ -3610,7 +3622,7 @@ static int ub960_v4l2_notifier_register(struct ub960_data *priv)
 	unsigned int i;
 	int ret;
 
-	v4l2_async_nf_init(&priv->notifier);
+	v4l2_async_subdev_nf_init(&priv->notifier, &priv->sd);
 
 	for (i = 0; i < priv->hw_data->num_rxports; i++) {
 		struct ub960_rxport *rxport = priv->rxports[i];
@@ -3634,7 +3646,7 @@ static int ub960_v4l2_notifier_register(struct ub960_data *priv)
 
 	priv->notifier.ops = &ub960_notify_ops;
 
-	ret = v4l2_async_subdev_nf_register(&priv->sd, &priv->notifier);
+	ret = v4l2_async_nf_register(&priv->notifier);
 	if (ret) {
 		dev_err(dev, "Failed to register subdev_notifier");
 		v4l2_async_nf_cleanup(&priv->notifier);
@@ -4054,7 +4066,7 @@ static const struct of_device_id ub960_dt_ids[] = {
 MODULE_DEVICE_TABLE(of, ub960_dt_ids);
 
 static struct i2c_driver ds90ub960_driver = {
-	.probe_new	= ub960_probe,
+	.probe		= ub960_probe,
 	.remove		= ub960_remove,
 	.id_table	= ub960_id,
 	.driver = {

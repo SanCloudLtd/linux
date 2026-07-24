@@ -15,6 +15,7 @@
 #include <linux/io.h>
 #include <linux/of_platform.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include "core.h"
 
 /* USB Wrapper register offsets */
@@ -86,7 +87,7 @@ static inline void cdns_ti_writel(struct cdns_ti *data, u32 offset, u32 value)
 }
 
 static struct cdns3_platform_data cdns_ti_pdata = {
-	.quirks = CDNS3_DRD_SUSPEND_RESIDENCY_ENABLE,	/* Errata i2409 */
+	.quirks = CDNS3_DRD_SUSPEND_RESIDENCY_ENABLE,   /* Errata i2409 */
 };
 
 static const struct of_dev_auxdata cdns_ti_auxdata[] = {
@@ -212,7 +213,7 @@ static int cdns_ti_remove_core(struct device *dev, void *c)
 	return 0;
 }
 
-static int cdns_ti_remove(struct platform_device *pdev)
+static void cdns_ti_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 
@@ -221,8 +222,6 @@ static int cdns_ti_remove(struct platform_device *pdev)
 	pm_runtime_disable(dev);
 
 	platform_set_drvdata(pdev, NULL);
-
-	return 0;
 }
 
 static const struct of_device_id cdns_ti_of_match[] = {
@@ -234,7 +233,7 @@ MODULE_DEVICE_TABLE(of, cdns_ti_of_match);
 
 static struct platform_driver cdns_ti_driver = {
 	.probe		= cdns_ti_probe,
-	.remove		= cdns_ti_remove,
+	.remove_new	= cdns_ti_remove,
 	.driver		= {
 		.name	= "cdns3-ti",
 		.of_match_table	= cdns_ti_of_match,

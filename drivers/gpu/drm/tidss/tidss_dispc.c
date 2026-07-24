@@ -15,8 +15,6 @@
 #include <linux/module.h>
 #include <linux/mfd/syscon.h>
 #include <linux/of.h>
-#include <linux/of_graph.h>
-#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -61,7 +59,7 @@ const struct dispc_features dispc_k2g_feats = {
 	.min_pclk_khz = 4375,
 
 	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 150000,
+		[DISPC_VP_DPI] = 150000,
 	},
 
 	/*
@@ -88,8 +86,6 @@ const struct dispc_features dispc_k2g_feats = {
 
 	.subrev = DISPC_K2G,
 
-	.has_oldi = false,
-
 	.common = "common",
 
 	.common_regs = tidss_k2g_common_regs,
@@ -98,6 +94,7 @@ const struct dispc_features dispc_k2g_feats = {
 	.vp_name = { "vp1" },
 	.ovr_name = { "ovr1" },
 	.vpclk_name =  { "vp1" },
+	.vp_bus_type = { DISPC_VP_DPI },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -110,10 +107,6 @@ const struct dispc_features dispc_k2g_feats = {
 	.vid_name = { "vid1" },
 	.vid_lite = { false },
 	.vid_order = { 0 },
-
-	.num_outputs = 1,
-	.output_type = { DISPC_OUTPUT_DPI, },
-	.output_source_vp = { 0, },
 };
 
 static const u16 tidss_am65x_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
@@ -143,130 +136,10 @@ static const u16 tidss_am65x_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
 	[DISPC_SECURE_DISABLE_OFF] =		0xac,
 };
 
-static const u16 tidss_am62_common1_regs[DISPC_COMMON_REG_TABLE_LEN] = {
-	[DISPC_IRQ_EOI_OFF] =			0x24,
-	[DISPC_IRQSTATUS_RAW_OFF] =		0x28,
-	[DISPC_IRQSTATUS_OFF] =			0x2c,
-	[DISPC_IRQENABLE_SET_OFF] =		0x30,
-	[DISPC_IRQENABLE_CLR_OFF] =		0x40,
-	[DISPC_VID_IRQENABLE_OFF] =		0x44,
-	[DISPC_VID_IRQSTATUS_OFF] =		0x58,
-	[DISPC_VP_IRQENABLE_OFF] =		0x70,
-	[DISPC_VP_IRQSTATUS_OFF] =		0x7c,
-};
-
-const struct dispc_features dispc_am625_feats = {
-	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 165000,
-		[DISPC_OUTPUT_OLDI] = 165000,
-	},
-
-	.scaling = {
-		.in_width_max_5tap_rgb = 1280,
-		.in_width_max_3tap_rgb = 2560,
-		.in_width_max_5tap_yuv = 2560,
-		.in_width_max_3tap_yuv = 4096,
-		.upscale_limit = 16,
-		.downscale_limit_5tap = 4,
-		.downscale_limit_3tap = 2,
-		/*
-		 * The max supported pixel inc value is 255. The value
-		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
-		 * The maximum bpp of all formats supported by the HW
-		 * is 8. So the maximum supported xinc value is 32,
-		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
-		 */
-		.xinc_max = 32,
-	},
-
-	.subrev = DISPC_AM625,
-
-	.has_oldi = true,
-
-	.common = "common",
-	.common_regs = tidss_am65x_common_regs,
-
-	.num_vps = 2,
-	.vp_name = { "vp1", "vp2" },
-	.ovr_name = { "ovr1", "ovr2" },
-	.vpclk_name =  { "vp1", "vp2" },
-
-	.vp_feat = { .color = {
-			.has_ctm = true,
-			.gamma_size = 256,
-			.gamma_type = TIDSS_GAMMA_8BIT,
-		},
-	},
-
-	.num_planes = 2,
-	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
-	.vid_name = { "vid", "vidl1" },
-	.vid_lite = { false, true, },
-	.vid_order = { 1, 0 },
-
-	/* 3rd output port is not representative of a 3rd pipeline */
-	.num_outputs = 3,
-	.output_type = { DISPC_OUTPUT_OLDI, DISPC_OUTPUT_DPI, DISPC_OUTPUT_OLDI, },
-	.output_source_vp = { 0, 1, 0, },
-};
-
-const struct dispc_features dispc_am62a7_feats = {
-	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 165000,
-	},
-
-	.scaling = {
-		.in_width_max_5tap_rgb = 1280,
-		.in_width_max_3tap_rgb = 2560,
-		.in_width_max_5tap_yuv = 2560,
-		.in_width_max_3tap_yuv = 4096,
-		.upscale_limit = 16,
-		.downscale_limit_5tap = 4,
-		.downscale_limit_3tap = 2,
-		/*
-		 * The max supported pixel inc value is 255. The value
-		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
-		 * The maximum bpp of all formats supported by the HW
-		 * is 8. So the maximum supported xinc value is 32,
-		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
-		 */
-		.xinc_max = 32,
-	},
-
-	.subrev = DISPC_AM62A7,
-
-	.has_oldi = false,
-
-	.common = "common",
-	.common_regs = tidss_am65x_common_regs,
-
-	.num_vps = 2,
-	.vp_name = { "vp1", "vp2" },
-	.ovr_name = { "ovr1", "ovr2" },
-	.vpclk_name =  { "vp1", "vp2" },
-
-	.vp_feat = { .color = {
-			.has_ctm = true,
-			.gamma_size = 256,
-			.gamma_type = TIDSS_GAMMA_8BIT,
-		},
-	},
-
-	.num_planes = 2,
-	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
-	.vid_name = { "vid", "vidl1" },
-	.vid_lite = { false, true, },
-	.vid_order = { 1, 0 },
-
-	.num_outputs = 1,
-	.output_type = { DISPC_OUTPUT_DPI, },
-	.output_source_vp = { 1, },
-};
-
 const struct dispc_features dispc_am65x_feats = {
 	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 165000,
-		[DISPC_OUTPUT_OLDI] = 165000,
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_OLDI] = 165000,
 	},
 
 	.scaling = {
@@ -289,8 +162,6 @@ const struct dispc_features dispc_am65x_feats = {
 
 	.subrev = DISPC_AM65X,
 
-	.has_oldi = true,
-
 	.common = "common",
 	.common_regs = tidss_am65x_common_regs,
 
@@ -298,6 +169,7 @@ const struct dispc_features dispc_am65x_feats = {
 	.vp_name = { "vp1", "vp2" },
 	.ovr_name = { "ovr1", "ovr2" },
 	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_OLDI, DISPC_VP_DPI },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -311,10 +183,6 @@ const struct dispc_features dispc_am65x_feats = {
 	.vid_name = { "vid", "vidl1" },
 	.vid_lite = { false, true, },
 	.vid_order = { 1, 0 },
-
-	.num_outputs = 2,
-	.output_type = { DISPC_OUTPUT_OLDI, DISPC_OUTPUT_DPI, },
-	.output_source_vp = { 0, 1, },
 };
 
 static const u16 tidss_j721e_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
@@ -359,8 +227,8 @@ static const u16 tidss_j721e_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
 
 const struct dispc_features dispc_j721e_feats = {
 	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 170000,
-		[DISPC_OUTPUT_INTERNAL] = 600000,
+		[DISPC_VP_DPI] = 170000,
+		[DISPC_VP_INTERNAL] = 600000,
 	},
 
 	.scaling = {
@@ -383,8 +251,6 @@ const struct dispc_features dispc_j721e_feats = {
 
 	.subrev = DISPC_J721E,
 
-	.has_oldi = false,
-
 	.common = "common_m",
 	.common_regs = tidss_j721e_common_regs,
 
@@ -392,6 +258,9 @@ const struct dispc_features dispc_j721e_feats = {
 	.vp_name = { "vp1", "vp2", "vp3", "vp4" },
 	.ovr_name = { "ovr1", "ovr2", "ovr3", "ovr4" },
 	.vpclk_name = { "vp1", "vp2", "vp3", "vp4" },
+	/* Currently hard coded VP routing (see dispc_initial_config()) */
+	.vp_bus_type =	{ DISPC_VP_INTERNAL, DISPC_VP_DPI,
+			  DISPC_VP_INTERNAL, DISPC_VP_DPI, },
 	.vp_feat = { .color = {
 			.has_ctm = true,
 			.gamma_size = 1024,
@@ -402,18 +271,127 @@ const struct dispc_features dispc_j721e_feats = {
 	.vid_name = { "vid1", "vidl1", "vid2", "vidl2" },
 	.vid_lite = { 0, 1, 0, 1, },
 	.vid_order = { 1, 3, 0, 2 },
+};
 
-	.num_outputs = 4,
-	/* Currently hard coded VP routing (see dispc_initial_config()) */
-	.output_type = { DISPC_OUTPUT_INTERNAL, DISPC_OUTPUT_DPI,
-			 DISPC_OUTPUT_INTERNAL, DISPC_OUTPUT_DPI, },
-	.output_source_vp = { 0, 1, 2, 3, },
+static const u16 tidss_am62_common1_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+	[DISPC_IRQ_EOI_OFF] =			0x24,
+	[DISPC_IRQSTATUS_RAW_OFF] =		0x28,
+	[DISPC_IRQSTATUS_OFF] =			0x2c,
+	[DISPC_IRQENABLE_SET_OFF] =		0x30,
+	[DISPC_IRQENABLE_CLR_OFF] =		0x40,
+	[DISPC_VID_IRQENABLE_OFF] =		0x44,
+	[DISPC_VID_IRQSTATUS_OFF] =		0x58,
+	[DISPC_VP_IRQENABLE_OFF] =		0x70,
+	[DISPC_VP_IRQSTATUS_OFF] =		0x7c,
+};
+
+const struct dispc_features dispc_am625_feats = {
+	.max_pclk_khz = {
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_INTERNAL] = 170000,
+	},
+
+	.scaling = {
+		.in_width_max_5tap_rgb = 1280,
+		.in_width_max_3tap_rgb = 2560,
+		.in_width_max_5tap_yuv = 2560,
+		.in_width_max_3tap_yuv = 4096,
+		.upscale_limit = 16,
+		.downscale_limit_5tap = 4,
+		.downscale_limit_3tap = 2,
+		/*
+		 * The max supported pixel inc value is 255. The value
+		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
+		 * The maximum bpp of all formats supported by the HW
+		 * is 8. So the maximum supported xinc value is 32,
+		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
+		 */
+		.xinc_max = 32,
+	},
+
+	.subrev = DISPC_AM625,
+
+	.common = "common",
+	.common_regs = tidss_am65x_common_regs,
+
+	.num_vps = 2,
+	.vp_name = { "vp1", "vp2" },
+	.ovr_name = { "ovr1", "ovr2" },
+	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 2,
+	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+	.vid_name = { "vid", "vidl1" },
+	.vid_lite = { false, true, },
+	.vid_order = { 1, 0 },
+};
+
+const struct dispc_features dispc_am62a7_feats = {
+	/*
+	 * if the code reaches dispc_mode_valid with VP1,
+	 * it should return MODE_BAD.
+	 */
+	.max_pclk_khz = {
+		[DISPC_VP_TIED_OFF] = 0,
+		[DISPC_VP_DPI] = 165000,
+	},
+
+	.scaling = {
+		.in_width_max_5tap_rgb = 1280,
+		.in_width_max_3tap_rgb = 2560,
+		.in_width_max_5tap_yuv = 2560,
+		.in_width_max_3tap_yuv = 4096,
+		.upscale_limit = 16,
+		.downscale_limit_5tap = 4,
+		.downscale_limit_3tap = 2,
+		/*
+		 * The max supported pixel inc value is 255. The value
+		 * of pixel inc is calculated like this: 1+(xinc-1)*bpp.
+		 * The maximum bpp of all formats supported by the HW
+		 * is 8. So the maximum supported xinc value is 32,
+		 * because 1+(32-1)*8 < 255 < 1+(33-1)*4.
+		 */
+		.xinc_max = 32,
+	},
+
+	.subrev = DISPC_AM62A7,
+
+	.common = "common",
+	.common_regs = tidss_am65x_common_regs,
+
+	.num_vps = 2,
+	.vp_name = { "vp1", "vp2" },
+	.ovr_name = { "ovr1", "ovr2" },
+	.vpclk_name =  { "vp1", "vp2" },
+	/* VP1 of the DSS in AM62A7 SoC is tied off internally */
+	.vp_bus_type = { DISPC_VP_TIED_OFF, DISPC_VP_DPI },
+
+	.vp_feat = { .color = {
+			.has_ctm = true,
+			.gamma_size = 256,
+			.gamma_type = TIDSS_GAMMA_8BIT,
+		},
+	},
+
+	.num_planes = 2,
+	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+	.vid_name = { "vid", "vidl1" },
+	.vid_lite = { false, true, },
+	.vid_order = { 1, 0 },
 };
 
 const struct dispc_features dispc_am62p51_feats = {
 	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 165000,
-		[DISPC_OUTPUT_OLDI] = 300000,
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_INTERNAL] = 300000,
 	},
 
 	.scaling = {
@@ -436,8 +414,6 @@ const struct dispc_features dispc_am62p51_feats = {
 
 	.subrev = DISPC_AM62P51,
 
-	.has_oldi = true,
-
 	.common = "common",
 	.common_regs = tidss_am65x_common_regs,
 
@@ -445,6 +421,7 @@ const struct dispc_features dispc_am62p51_feats = {
 	.vp_name = { "vp1", "vp2" },
 	.ovr_name = { "ovr1", "ovr2" },
 	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_DPI },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -458,18 +435,12 @@ const struct dispc_features dispc_am62p51_feats = {
 	.vid_name = { "vid", "vidl1" },
 	.vid_lite = { false, true, },
 	.vid_order = { 1, 0 },
-
-	/* 3rd output port is not representative of a 3rd pipeline */
-	.num_outputs = 3,
-	.output_type = { DISPC_OUTPUT_OLDI, DISPC_OUTPUT_DPI, DISPC_OUTPUT_OLDI, },
-	.output_source_vp = { 0, 1, 0, },
 };
 
 const struct dispc_features dispc_am62p52_feats = {
 	.max_pclk_khz = {
-		[DISPC_OUTPUT_DPI] = 165000,
-		[DISPC_OUTPUT_OLDI] = 100000,
-		[DISPC_OUTPUT_INTERNAL] = 300000,
+		[DISPC_VP_DPI] = 165000,
+		[DISPC_VP_INTERNAL] = 300000,
 	},
 
 	.scaling = {
@@ -492,8 +463,6 @@ const struct dispc_features dispc_am62p52_feats = {
 
 	.subrev = DISPC_AM62P52,
 
-	.has_oldi = true,
-
 	.common = "common",
 	.common_regs = tidss_am65x_common_regs,
 
@@ -501,6 +470,7 @@ const struct dispc_features dispc_am62p52_feats = {
 	.vp_name = { "vp1", "vp2" },
 	.ovr_name = { "ovr1", "ovr2" },
 	.vpclk_name =  { "vp1", "vp2" },
+	.vp_bus_type = { DISPC_VP_INTERNAL, DISPC_VP_INTERNAL },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -514,10 +484,6 @@ const struct dispc_features dispc_am62p52_feats = {
 	.vid_name = { "vid", "vidl1" },
 	.vid_lite = { false, true, },
 	.vid_order = { 1, 0 },
-
-	.num_outputs = 2,
-	.output_type = { DISPC_OUTPUT_INTERNAL, DISPC_OUTPUT_INTERNAL, },
-	.output_source_vp = { 0, 1, },
 };
 
 static const u16 *dispc_common_regmap;
@@ -532,12 +498,12 @@ struct dispc_device {
 
 	void __iomem *base_common;
 	void __iomem *base_vid[TIDSS_MAX_PLANES];
-	void __iomem *base_ovr[TIDSS_MAX_VPS];
-	void __iomem *base_vp[TIDSS_MAX_VPS];
+	void __iomem *base_ovr[TIDSS_MAX_PORTS];
+	void __iomem *base_vp[TIDSS_MAX_PORTS];
 
 	struct regmap *oldi_io_ctrl;
 
-	struct clk *vp_clk[TIDSS_MAX_VPS];
+	struct clk *vp_clk[TIDSS_MAX_PORTS];
 
 	const struct dispc_features *feat;
 
@@ -545,9 +511,7 @@ struct dispc_device {
 
 	bool is_enabled;
 
-	struct dss_vp_data vp_data[TIDSS_MAX_VPS];
-
-	enum dispc_oldi_modes oldi_mode;
+	struct dss_vp_data vp_data[TIDSS_MAX_PORTS];
 
 	u32 *fourccs;
 	u32 num_fourccs;
@@ -582,34 +546,44 @@ static u32 dispc_vid_read(struct dispc_device *dispc, u32 hw_plane, u16 reg)
 	return ioread32(base + reg);
 }
 
-static void dispc_ovr_write(struct dispc_device *dispc, u32 vp_idx, u16 reg,
-			    u32 val)
+static void dispc_ovr_write(struct dispc_device *dispc, u32 hw_videoport,
+			    u16 reg, u32 val)
 {
-	void __iomem *base = dispc->base_ovr[vp_idx];
+	void __iomem *base = dispc->base_ovr[hw_videoport];
 
 	iowrite32(val, base + reg);
 }
 
-static u32 dispc_ovr_read(struct dispc_device *dispc, u32 vp_idx, u16 reg)
+static u32 dispc_ovr_read(struct dispc_device *dispc, u32 hw_videoport, u16 reg)
 {
-	void __iomem *base = dispc->base_ovr[vp_idx];
+	void __iomem *base = dispc->base_ovr[hw_videoport];
 
 	return ioread32(base + reg);
 }
 
-static void dispc_vp_write(struct dispc_device *dispc, u32 vp_idx, u16 reg,
-			   u32 val)
+static void dispc_vp_write(struct dispc_device *dispc, u32 hw_videoport,
+			   u16 reg, u32 val)
 {
-	void __iomem *base = dispc->base_vp[vp_idx];
+	void __iomem *base = dispc->base_vp[hw_videoport];
 
 	iowrite32(val, base + reg);
 }
 
-static u32 dispc_vp_read(struct dispc_device *dispc, u32 vp_idx, u16 reg)
+static u32 dispc_vp_read(struct dispc_device *dispc, u32 hw_videoport, u16 reg)
 {
-	void __iomem *base = dispc->base_vp[vp_idx];
+	void __iomem *base = dispc->base_vp[hw_videoport];
 
 	return ioread32(base + reg);
+}
+
+u32 tidss_get_status(struct tidss_device *tidss)
+{
+	return dispc_read(tidss->dispc, DSS_SYSSTATUS);
+}
+
+void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport, u32 val)
+{
+	return dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, val);
 }
 
 /*
@@ -691,45 +665,33 @@ static void OVR_REG_FLD_MOD(struct dispc_device *dispc, u32 ovr, u32 idx,
 				val, start, end));
 }
 
-enum dispc_output_type dispc_get_output_type(struct dispc_device *dispc,
-					     u32 vp_idx)
-{
-	u32 i;
-
-	for (i = 0; i < dispc->feat->num_outputs; i++)
-		if (dispc->feat->output_source_vp[i] == vp_idx)
-			return dispc->feat->output_type[i];
-
-	return DISPC_OUTPUT_DPI;
-}
-
-static dispc_irq_t dispc_vp_irq_from_raw(u32 stat, u32 vp_idx)
+static dispc_irq_t dispc_vp_irq_from_raw(u32 stat, u32 hw_videoport)
 {
 	dispc_irq_t vp_stat = 0;
 
 	if (stat & BIT(0))
-		vp_stat |= DSS_IRQ_VP_FRAME_DONE(vp_idx);
+		vp_stat |= DSS_IRQ_VP_FRAME_DONE(hw_videoport);
 	if (stat & BIT(1))
-		vp_stat |= DSS_IRQ_VP_VSYNC_EVEN(vp_idx);
+		vp_stat |= DSS_IRQ_VP_VSYNC_EVEN(hw_videoport);
 	if (stat & BIT(2))
-		vp_stat |= DSS_IRQ_VP_VSYNC_ODD(vp_idx);
+		vp_stat |= DSS_IRQ_VP_VSYNC_ODD(hw_videoport);
 	if (stat & BIT(4))
-		vp_stat |= DSS_IRQ_VP_SYNC_LOST(vp_idx);
+		vp_stat |= DSS_IRQ_VP_SYNC_LOST(hw_videoport);
 
 	return vp_stat;
 }
 
-static u32 dispc_vp_irq_to_raw(dispc_irq_t vpstat, u32 vp_idx)
+static u32 dispc_vp_irq_to_raw(dispc_irq_t vpstat, u32 hw_videoport)
 {
 	u32 stat = 0;
 
-	if (vpstat & DSS_IRQ_VP_FRAME_DONE(vp_idx))
+	if (vpstat & DSS_IRQ_VP_FRAME_DONE(hw_videoport))
 		stat |= BIT(0);
-	if (vpstat & DSS_IRQ_VP_VSYNC_EVEN(vp_idx))
+	if (vpstat & DSS_IRQ_VP_VSYNC_EVEN(hw_videoport))
 		stat |= BIT(1);
-	if (vpstat & DSS_IRQ_VP_VSYNC_ODD(vp_idx))
+	if (vpstat & DSS_IRQ_VP_VSYNC_ODD(hw_videoport))
 		stat |= BIT(2);
-	if (vpstat & DSS_IRQ_VP_SYNC_LOST(vp_idx))
+	if (vpstat & DSS_IRQ_VP_SYNC_LOST(hw_videoport))
 		stat |= BIT(4);
 
 	return stat;
@@ -756,19 +718,19 @@ static u32 dispc_vid_irq_to_raw(dispc_irq_t vidstat, u32 hw_plane)
 }
 
 static dispc_irq_t dispc_k2g_vp_read_irqstatus(struct dispc_device *dispc,
-					       u32 vp_idx)
+					       u32 hw_videoport)
 {
-	u32 stat = dispc_vp_read(dispc, vp_idx, DISPC_VP_K2G_IRQSTATUS);
+	u32 stat = dispc_vp_read(dispc, hw_videoport, DISPC_VP_K2G_IRQSTATUS);
 
-	return dispc_vp_irq_from_raw(stat, vp_idx);
+	return dispc_vp_irq_from_raw(stat, hw_videoport);
 }
 
-static void dispc_k2g_vp_write_irqstatus(struct dispc_device *dispc, u32 vp_idx,
-					 dispc_irq_t vpstat)
+static void dispc_k2g_vp_write_irqstatus(struct dispc_device *dispc,
+					 u32 hw_videoport, dispc_irq_t vpstat)
 {
-	u32 stat = dispc_vp_irq_to_raw(vpstat, vp_idx);
+	u32 stat = dispc_vp_irq_to_raw(vpstat, hw_videoport);
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_K2G_IRQSTATUS, stat);
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_K2G_IRQSTATUS, stat);
 }
 
 static dispc_irq_t dispc_k2g_vid_read_irqstatus(struct dispc_device *dispc,
@@ -788,19 +750,19 @@ static void dispc_k2g_vid_write_irqstatus(struct dispc_device *dispc,
 }
 
 static dispc_irq_t dispc_k2g_vp_read_irqenable(struct dispc_device *dispc,
-					       u32 vp_idx)
+					       u32 hw_videoport)
 {
-	u32 stat = dispc_vp_read(dispc, vp_idx, DISPC_VP_K2G_IRQENABLE);
+	u32 stat = dispc_vp_read(dispc, hw_videoport, DISPC_VP_K2G_IRQENABLE);
 
-	return dispc_vp_irq_from_raw(stat, vp_idx);
+	return dispc_vp_irq_from_raw(stat, hw_videoport);
 }
 
 static void dispc_k2g_vp_set_irqenable(struct dispc_device *dispc,
-				       u32 vp_idx, dispc_irq_t vpstat)
+				       u32 hw_videoport, dispc_irq_t vpstat)
 {
-	u32 stat = dispc_vp_irq_to_raw(vpstat, vp_idx);
+	u32 stat = dispc_vp_irq_to_raw(vpstat, hw_videoport);
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_K2G_IRQENABLE, stat);
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_K2G_IRQENABLE, stat);
 }
 
 static dispc_irq_t dispc_k2g_vid_read_irqenable(struct dispc_device *dispc,
@@ -871,19 +833,19 @@ void dispc_k2g_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
 }
 
 static dispc_irq_t dispc_k3_vp_read_irqstatus(struct dispc_device *dispc,
-					      u32 vp_idx)
+					      u32 hw_videoport)
 {
-	u32 stat = dispc_read(dispc, DISPC_VP_IRQSTATUS(vp_idx));
+	u32 stat = dispc_read(dispc, DISPC_VP_IRQSTATUS(hw_videoport));
 
-	return dispc_vp_irq_from_raw(stat, vp_idx);
+	return dispc_vp_irq_from_raw(stat, hw_videoport);
 }
 
 static void dispc_k3_vp_write_irqstatus(struct dispc_device *dispc,
-					u32 vp_idx, dispc_irq_t vpstat)
+					u32 hw_videoport, dispc_irq_t vpstat)
 {
-	u32 stat = dispc_vp_irq_to_raw(vpstat, vp_idx);
+	u32 stat = dispc_vp_irq_to_raw(vpstat, hw_videoport);
 
-	dispc_write(dispc, DISPC_VP_IRQSTATUS(vp_idx), stat);
+	dispc_write(dispc, DISPC_VP_IRQSTATUS(hw_videoport), stat);
 }
 
 static dispc_irq_t dispc_k3_vid_read_irqstatus(struct dispc_device *dispc,
@@ -903,19 +865,19 @@ static void dispc_k3_vid_write_irqstatus(struct dispc_device *dispc,
 }
 
 static dispc_irq_t dispc_k3_vp_read_irqenable(struct dispc_device *dispc,
-					      u32 vp_idx)
+					      u32 hw_videoport)
 {
-	u32 stat = dispc_read(dispc, DISPC_VP_IRQENABLE(vp_idx));
+	u32 stat = dispc_read(dispc, DISPC_VP_IRQENABLE(hw_videoport));
 
-	return dispc_vp_irq_from_raw(stat, vp_idx);
+	return dispc_vp_irq_from_raw(stat, hw_videoport);
 }
 
-static void dispc_k3_vp_set_irqenable(struct dispc_device *dispc, u32 vp_idx,
-				      dispc_irq_t vpstat)
+static void dispc_k3_vp_set_irqenable(struct dispc_device *dispc,
+				      u32 hw_videoport, dispc_irq_t vpstat)
 {
-	u32 stat = dispc_vp_irq_to_raw(vpstat, vp_idx);
+	u32 stat = dispc_vp_irq_to_raw(vpstat, hw_videoport);
 
-	dispc_write(dispc, DISPC_VP_IRQENABLE(vp_idx), stat);
+	dispc_write(dispc, DISPC_VP_IRQENABLE(hw_videoport), stat);
 }
 
 static dispc_irq_t dispc_k3_vid_read_irqenable(struct dispc_device *dispc,
@@ -1091,8 +1053,8 @@ static const struct dispc_bus_format dispc_bus_formats[] = {
 
 static const
 struct dispc_bus_format *dispc_vp_find_bus_fmt(struct dispc_device *dispc,
-					       u32 vp_idx, u32 bus_fmt,
-					       u32 bus_flags)
+					       u32 hw_videoport,
+					       u32 bus_fmt, u32 bus_flags)
 {
 	unsigned int i;
 
@@ -1104,14 +1066,13 @@ struct dispc_bus_format *dispc_vp_find_bus_fmt(struct dispc_device *dispc,
 	return NULL;
 }
 
-int dispc_vp_bus_check(struct dispc_device *dispc, u32 vp_idx,
+int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
 		       const struct drm_crtc_state *state)
 {
 	const struct tidss_crtc_state *tstate = to_tidss_crtc_state(state);
 	const struct dispc_bus_format *fmt;
-	enum dispc_output_type output_type;
 
-	fmt = dispc_vp_find_bus_fmt(dispc, vp_idx, tstate->bus_format,
+	fmt = dispc_vp_find_bus_fmt(dispc, hw_videoport, tstate->bus_format,
 				    tstate->bus_flags);
 	if (!fmt) {
 		dev_dbg(dispc->dev, "%s: Unsupported bus format: %u\n",
@@ -1119,10 +1080,10 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 vp_idx,
 		return -EINVAL;
 	}
 
-	output_type = dispc_get_output_type(dispc, vp_idx);
-	if (output_type != DISPC_OUTPUT_OLDI && fmt->is_oldi_fmt) {
+	if (dispc->feat->vp_bus_type[hw_videoport] != DISPC_VP_OLDI &&
+	    fmt->is_oldi_fmt) {
 		dev_dbg(dispc->dev, "%s: %s is not OLDI-port\n",
-			__func__, dispc->feat->vp_name[vp_idx]);
+			__func__, dispc->feat->vp_name[hw_videoport]);
 		return -EINVAL;
 	}
 
@@ -1131,102 +1092,25 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 vp_idx,
 
 static void dispc_oldi_tx_power(struct dispc_device *dispc, bool power)
 {
-	u32 val = 0;
+	u32 val = power ? 0 : OLDI_PWRDN_TX;
 
 	if (WARN_ON(!dispc->oldi_io_ctrl))
 		return;
 
-	/*
-	 * The power control bits are Active Low, and remain powered off by
-	 * default. That is, the bits are set to 1. To power on the OLDI TXes,
-	 * the bits must be cleared to 0. Since there are cases where not all
-	 * OLDI TXes are being used, the power logic selectively powers them
-	 * on.
-	 * Setting the variable 'val' to particular bit masks, makes sure that
-	 * the unrequired OLDI TXes remain powered off.
-	 */
-	switch (dispc->feat->subrev) {
-	case DISPC_AM625:
-		if (power) {
-			switch (dispc->oldi_mode) {
-			case OLDI_MODE_SINGLE_LINK:
-				/* Power down OLDI TX 1 */
-				val = AM625_OLDI1_PWRDN_TX;
-				break;
-
-			case OLDI_MODE_CLONE_SINGLE_LINK:
-			case OLDI_MODE_DUAL_LINK:
-				/* No Power down */
-				val = 0;
-				break;
-
-			default:
-				/* Power down both OLDI TXes and LVDS Bandgap */
-				val = AM625_OLDI0_PWRDN_TX | AM625_OLDI1_PWRDN_TX |
-				      AM625_OLDI_PWRDN_BG;
-				break;
-			}
-
-		} else {
-			/* Power down both OLDI TXes and LVDS Bandgap */
-			val = AM625_OLDI0_PWRDN_TX | AM625_OLDI1_PWRDN_TX |
-			      AM625_OLDI_PWRDN_BG;
-		}
-
-		regmap_update_bits(dispc->oldi_io_ctrl, AM625_OLDI_PD_CTRL,
-				   AM625_OLDI0_PWRDN_TX | AM625_OLDI1_PWRDN_TX |
-				   AM625_OLDI_PWRDN_BG, val);
-		break;
-
-	case DISPC_AM62P51:
-	case DISPC_AM62P52:
-		if (power) {
-			switch (dispc->oldi_mode) {
-			case OLDI_MODE_SINGLE_LINK:
-			case OLDI_MODE_CLONE_SINGLE_LINK:
-			case OLDI_MODE_DUAL_LINK:
-				/* No Power down because the other AM62P DSS could be using it. */
-				val = 0;
-				break;
-
-			default:
-				/* Power down both OLDI TXes and LVDS Bandgap */
-				val = AM625_OLDI0_PWRDN_TX | AM625_OLDI1_PWRDN_TX |
-				      AM625_OLDI_PWRDN_BG;
-				break;
-			}
-
-		} else {
-			/* No Power down because the other AM62P DSS could be using it. */
-			val = 0;
-		}
-
-		regmap_update_bits(dispc->oldi_io_ctrl, AM625_OLDI_PD_CTRL,
-				   AM625_OLDI0_PWRDN_TX | AM625_OLDI1_PWRDN_TX |
-				   AM625_OLDI_PWRDN_BG, val);
-		break;
-
-	case DISPC_AM65X:
-		val = power ? 0 : AM65X_OLDI_PWRDN_TX;
-
-		regmap_update_bits(dispc->oldi_io_ctrl, AM65X_OLDI_DAT0_IO_CTRL,
-				   AM65X_OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, AM65X_OLDI_DAT1_IO_CTRL,
-				   AM65X_OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, AM65X_OLDI_DAT2_IO_CTRL,
-				   AM65X_OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, AM65X_OLDI_DAT3_IO_CTRL,
-				   AM65X_OLDI_PWRDN_TX, val);
-		regmap_update_bits(dispc->oldi_io_ctrl, AM65X_OLDI_CLK_IO_CTRL,
-				   AM65X_OLDI_PWRDN_TX, val);
-		break;
-	default:
-		break;
-	}
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT0_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT1_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT2_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT3_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_CLK_IO_CTRL,
+			   OLDI_PWRDN_TX, val);
 }
 
-static void dispc_set_num_datalines(struct dispc_device *dispc, u32 vp_idx,
-				    int num_lines)
+static void dispc_set_num_datalines(struct dispc_device *dispc,
+				    u32 hw_videoport, int num_lines)
 {
 	int v;
 
@@ -1248,19 +1132,19 @@ static void dispc_set_num_datalines(struct dispc_device *dispc, u32 vp_idx,
 		v = 3;
 	}
 
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, v, 10, 8);
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, v, 10, 8);
 }
 
-static void dispc_enable_oldi(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
 			      const struct dispc_bus_format *fmt)
 {
 	u32 oldi_cfg = 0;
-	u32 oldi_reset_bit = BIT(5 + vp_idx);
+	u32 oldi_reset_bit = BIT(5 + hw_videoport);
 	int count = 0;
 
 	/*
-	 * For the moment MASTERSLAVE, and SRC bits of DISPC_VP_DSS_OLDI_CFG are
-	 * always set to 0.
+	 * For the moment DUALMODESYNC, MASTERSLAVE, MODE, and SRC
+	 * bits of DISPC_VP_DSS_OLDI_CFG are set statically to 0.
 	 */
 
 	if (fmt->data_width == 24)
@@ -1277,27 +1161,7 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 vp_idx,
 
 	oldi_cfg |= BIT(0); /* ENABLE */
 
-	switch (dispc->oldi_mode) {
-	case OLDI_MODE_SINGLE_LINK:
-		/* All configuration is done for this mode.  */
-		break;
-
-	case OLDI_MODE_CLONE_SINGLE_LINK:
-		oldi_cfg |= BIT(5); /* CLONE MODE */
-		break;
-
-	case OLDI_MODE_DUAL_LINK:
-		oldi_cfg |= BIT(11); /* DUALMODESYNC */
-		oldi_cfg |= BIT(3); /* data-mapping field also indicates dual-link mode */
-		break;
-
-	default:
-		dev_warn(dispc->dev, "%s: Incorrect oldi mode. Returning.\n",
-			 __func__);
-		return;
-	}
-
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_DSS_OLDI_CFG, oldi_cfg);
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, oldi_cfg);
 
 	while (!(oldi_reset_bit & dispc_read(dispc, DSS_SYSSTATUS)) &&
 	       count < 10000)
@@ -1308,28 +1172,26 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 vp_idx,
 			 __func__);
 }
 
-void dispc_vp_prepare(struct dispc_device *dispc, u32 vp_idx,
+void dispc_vp_prepare(struct dispc_device *dispc, u32 hw_videoport,
 		      const struct drm_crtc_state *state)
 {
 	const struct tidss_crtc_state *tstate = to_tidss_crtc_state(state);
 	const struct dispc_bus_format *fmt;
-	enum dispc_output_type output_type;
 
-	fmt = dispc_vp_find_bus_fmt(dispc, vp_idx, tstate->bus_format,
+	fmt = dispc_vp_find_bus_fmt(dispc, hw_videoport, tstate->bus_format,
 				    tstate->bus_flags);
 
 	if (WARN_ON(!fmt))
 		return;
 
-	output_type = dispc_get_output_type(dispc, vp_idx);
-	if (output_type == DISPC_OUTPUT_OLDI) {
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
 		dispc_oldi_tx_power(dispc, true);
 
-		dispc_enable_oldi(dispc, vp_idx, fmt);
+		dispc_enable_oldi(dispc, hw_videoport, fmt);
 	}
 }
 
-void dispc_vp_enable(struct dispc_device *dispc, u32 vp_idx,
+void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
 		     const struct drm_crtc_state *state)
 {
 	const struct drm_display_mode *mode = &state->adjusted_mode;
@@ -1337,15 +1199,14 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 vp_idx,
 	bool align, onoff, rf, ieo, ipc, ihs, ivs;
 	const struct dispc_bus_format *fmt;
 	u32 hsw, hfp, hbp, vsw, vfp, vbp;
-	enum dispc_output_type output_type;
 
-	fmt = dispc_vp_find_bus_fmt(dispc, vp_idx, tstate->bus_format,
+	fmt = dispc_vp_find_bus_fmt(dispc, hw_videoport, tstate->bus_format,
 				    tstate->bus_flags);
 
 	if (WARN_ON(!fmt))
 		return;
 
-	dispc_set_num_datalines(dispc, vp_idx, fmt->data_width);
+	dispc_set_num_datalines(dispc, hw_videoport, fmt->data_width);
 
 	hfp = mode->hsync_start - mode->hdisplay;
 	hsw = mode->hsync_end - mode->hsync_start;
@@ -1355,12 +1216,12 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 vp_idx,
 	vsw = mode->vsync_end - mode->vsync_start;
 	vbp = mode->vtotal - mode->vsync_end;
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_TIMING_H,
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_TIMING_H,
 		       FLD_VAL(hsw - 1, 7, 0) |
 		       FLD_VAL(hfp - 1, 19, 8) |
 		       FLD_VAL(hbp - 1, 31, 20));
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_TIMING_V,
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_TIMING_V,
 		       FLD_VAL(vsw - 1, 7, 0) |
 		       FLD_VAL(vfp, 19, 8) |
 		       FLD_VAL(vbp, 31, 20));
@@ -1382,11 +1243,10 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 vp_idx,
 	align = true;
 
 	/* always use DE_HIGH for OLDI */
-	output_type = dispc_get_output_type(dispc, vp_idx);
-	if (output_type == DISPC_OUTPUT_OLDI)
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI)
 		ieo = false;
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_POL_FREQ,
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_POL_FREQ,
 		       FLD_VAL(align, 18, 18) |
 		       FLD_VAL(onoff, 17, 17) |
 		       FLD_VAL(rf, 16, 16) |
@@ -1395,39 +1255,36 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 vp_idx,
 		       FLD_VAL(ihs, 13, 13) |
 		       FLD_VAL(ivs, 12, 12));
 
-	dispc_vp_write(dispc, vp_idx, DISPC_VP_SIZE_SCREEN,
+	dispc_vp_write(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN,
 		       FLD_VAL(mode->hdisplay - 1, 11, 0) |
 		       FLD_VAL(mode->vdisplay - 1, 27, 16));
 
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 1, 0, 0);
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 0, 0);
 }
 
-void dispc_vp_disable(struct dispc_device *dispc, u32 vp_idx)
+void dispc_vp_disable(struct dispc_device *dispc, u32 hw_videoport)
 {
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 0, 0, 0);
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 0, 0, 0);
 }
 
-void dispc_vp_unprepare(struct dispc_device *dispc, u32 vp_idx)
+void dispc_vp_unprepare(struct dispc_device *dispc, u32 hw_videoport)
 {
-	enum dispc_output_type output_type;
-
-	output_type = dispc_get_output_type(dispc, vp_idx);
-	if (output_type == DISPC_OUTPUT_OLDI) {
-		dispc_vp_write(dispc, vp_idx, DISPC_VP_DSS_OLDI_CFG, 0);
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
+		dispc_vp_write(dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, 0);
 
 		dispc_oldi_tx_power(dispc, false);
 	}
 }
 
-bool dispc_vp_go_busy(struct dispc_device *dispc, u32 vp_idx)
+bool dispc_vp_go_busy(struct dispc_device *dispc, u32 hw_videoport)
 {
-	return VP_REG_GET(dispc, vp_idx, DISPC_VP_CONTROL, 5, 5);
+	return VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5);
 }
 
-void dispc_vp_go(struct dispc_device *dispc, u32 vp_idx)
+void dispc_vp_go(struct dispc_device *dispc, u32 hw_videoport)
 {
-	WARN_ON(VP_REG_GET(dispc, vp_idx, DISPC_VP_CONTROL, 5, 5));
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 1, 5, 5);
+	WARN_ON(VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5));
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 5, 5);
 }
 
 enum c8_to_c12_mode { C8_TO_C12_REPLICATE, C8_TO_C12_MAX, C8_TO_C12_MIN };
@@ -1470,37 +1327,38 @@ static u64 argb8888_to_argb12121212(u32 argb8888, enum c8_to_c12_mode m)
 	return v;
 }
 
-static void dispc_vp_set_default_color(struct dispc_device *dispc, u32 vp_idx,
-				       u32 default_color)
+static void dispc_vp_set_default_color(struct dispc_device *dispc,
+				       u32 hw_videoport, u32 default_color)
 {
 	u64 v;
 
 	v = argb8888_to_argb12121212(default_color, C8_TO_C12_REPLICATE);
 
-	dispc_ovr_write(dispc, vp_idx,
+	dispc_ovr_write(dispc, hw_videoport,
 			DISPC_OVR_DEFAULT_COLOR, v & 0xffffffff);
-	dispc_ovr_write(dispc, vp_idx,
+	dispc_ovr_write(dispc, hw_videoport,
 			DISPC_OVR_DEFAULT_COLOR2, (v >> 32) & 0xffff);
 }
 
-enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc, u32 vp_idx,
+enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc,
+					 u32 hw_videoport,
 					 const struct drm_display_mode *mode)
 {
 	u32 hsw, hfp, hbp, vsw, vfp, vbp;
-	enum dispc_output_type output_type;
+	enum dispc_vp_bus_type bus_type;
 	int max_pclk;
 
-	output_type = dispc_get_output_type(dispc, vp_idx);
+	bus_type = dispc->feat->vp_bus_type[hw_videoport];
 
-	max_pclk = dispc->feat->max_pclk_khz[output_type];
+	max_pclk = dispc->feat->max_pclk_khz[bus_type];
 
 	/*
 	 * For shared mode, with remote core driving the video port, make sure that Linux
 	 * controlled primary plane doesn't exceed video port screen size set by remote core
 	 */
-	if (dispc->tidss->shared_mode && !dispc->tidss->shared_mode_owned_vps[vp_idx]) {
-		int vp_hdisplay = VP_REG_GET(dispc, vp_idx, DISPC_VP_SIZE_SCREEN, 11, 0) + 1;
-		int vp_vdisplay = VP_REG_GET(dispc, vp_idx, DISPC_VP_SIZE_SCREEN, 27, 16) + 1;
+	if (dispc->tidss->shared_mode && !dispc->tidss->shared_mode_owned_vps[hw_videoport]) {
+		int vp_hdisplay = VP_REG_GET(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN, 11, 0) + 1;
+		int vp_vdisplay = VP_REG_GET(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN, 27, 16) + 1;
 
 		if (mode->hdisplay > vp_hdisplay ||
 		    mode->vdisplay > vp_vdisplay) {
@@ -1558,7 +1416,8 @@ enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc, u32 vp_idx,
 		return MODE_BAD_VVALUE;
 
 	if (dispc->memory_bandwidth_limit) {
-		if (!dispc->tidss->shared_mode || dispc->tidss->shared_mode_owned_vps[vp_idx]) {
+		if (!dispc->tidss->shared_mode ||
+		    dispc->tidss->shared_mode_owned_vps[hw_videoport]) {
 			const unsigned int bpp = 4;
 			u64 bandwidth;
 
@@ -1574,9 +1433,9 @@ enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc, u32 vp_idx,
 	return MODE_OK;
 }
 
-int dispc_vp_enable_clk(struct dispc_device *dispc, u32 vp_idx)
+int dispc_vp_enable_clk(struct dispc_device *dispc, u32 hw_videoport)
 {
-	int ret = clk_prepare_enable(dispc->vp_clk[vp_idx]);
+	int ret = clk_prepare_enable(dispc->vp_clk[hw_videoport]);
 
 	if (ret)
 		dev_err(dispc->dev, "%s: enabling clk failed: %d\n", __func__,
@@ -1585,16 +1444,15 @@ int dispc_vp_enable_clk(struct dispc_device *dispc, u32 vp_idx)
 	return ret;
 }
 
-void dispc_vp_disable_clk(struct dispc_device *dispc, u32 vp_idx)
+void dispc_vp_disable_clk(struct dispc_device *dispc, u32 hw_videoport)
 {
-	clk_disable_unprepare(dispc->vp_clk[vp_idx]);
+	clk_disable_unprepare(dispc->vp_clk[hw_videoport]);
 }
 
 /*
  * Calculate the percentage difference between the requested pixel clock rate
  * and the effective rate resulting from calculating the clock divider value.
  */
-static
 unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate)
 {
 	int r = rate / 100, rr = real_rate / 100;
@@ -1602,47 +1460,36 @@ unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate)
 	return (unsigned int)(abs(((rr - r) * 100) / r));
 }
 
-int dispc_vp_set_clk_rate(struct dispc_device *dispc, u32 vp_idx,
+int dispc_vp_set_clk_rate(struct dispc_device *dispc, u32 hw_videoport,
 			  unsigned long rate)
 {
 	int r;
 	unsigned long new_rate;
 
-	/*
-	 * For AM625 OLDI video ports, the requested pixel clock needs to take into account the
-	 * serial clock required for the serialization of DPI signals into LVDS signals. The
-	 * incoming pixel clock on the OLDI video port gets divided by 7 whenever OLDI enable bit
-	 * gets set.
-	 */
-	if (dispc_get_output_type(dispc, vp_idx) == DISPC_OUTPUT_OLDI &&
-	    ((dispc->feat->subrev == DISPC_AM625) ||
-	     (dispc->feat->subrev == DISPC_AM62P51) ||
-	     (dispc->feat->subrev == DISPC_AM62P52)))
-		rate *= 7;
+	r = clk_set_rate(dispc->vp_clk[hw_videoport], rate);
 
-	r = clk_set_rate(dispc->vp_clk[vp_idx], rate);
 	if (r) {
 		dev_err(dispc->dev, "vp%d: failed to set clk rate to %lu\n",
-			vp_idx, rate);
+			hw_videoport, rate);
 		return r;
 	}
 
-	new_rate = clk_get_rate(dispc->vp_clk[vp_idx]);
+	new_rate = clk_get_rate(dispc->vp_clk[hw_videoport]);
 
 	if (dispc_pclk_diff(rate, new_rate) > 5)
 		dev_warn(dispc->dev,
 			 "vp%d: Clock rate %lu differs over 5%% from requested %lu\n",
-			 vp_idx, new_rate, rate);
+			 hw_videoport, new_rate, rate);
 
 	dev_dbg(dispc->dev, "vp%d: new rate %lu Hz (requested %lu Hz)\n",
-		vp_idx, clk_get_rate(dispc->vp_clk[vp_idx]), rate);
+		hw_videoport, clk_get_rate(dispc->vp_clk[hw_videoport]), rate);
 
 	return 0;
 }
 
 /* OVR */
 static void dispc_k2g_ovr_set_plane(struct dispc_device *dispc,
-				    u32 hw_plane, u32 vp_idx,
+				    u32 hw_plane, u32 hw_videoport,
 				    u32 x, u32 y, u32 layer)
 {
 	/* On k2g there is only one plane and no need for ovr */
@@ -1651,35 +1498,35 @@ static void dispc_k2g_ovr_set_plane(struct dispc_device *dispc,
 }
 
 static void dispc_am65x_ovr_set_plane(struct dispc_device *dispc,
-				      u32 hw_plane, u32 vp_idx,
+				      u32 hw_plane, u32 hw_videoport,
 				      u32 x, u32 y, u32 layer)
 {
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			hw_plane, 4, 1);
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			x, 17, 6);
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			y, 30, 19);
 }
 
 static void dispc_j721e_ovr_set_plane(struct dispc_device *dispc,
-				      u32 hw_plane, u32 vp_idx,
+				      u32 hw_plane, u32 hw_videoport,
 				      u32 x, u32 y, u32 layer)
 {
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			hw_plane, 4, 1);
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES2(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer),
 			x, 13, 0);
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES2(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer),
 			y, 29, 16);
 }
 
 void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
-			 u32 vp_idx, u32 x, u32 y, u32 layer)
+			 u32 hw_videoport, u32 x, u32 y, u32 layer)
 {
 	switch (dispc->feat->subrev) {
 	case DISPC_K2G:
-		dispc_k2g_ovr_set_plane(dispc, hw_plane, vp_idx,
+		dispc_k2g_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					x, y, layer);
 		break;
 	case DISPC_AM625:
@@ -1687,11 +1534,11 @@ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
 	case DISPC_AM62P51:
 	case DISPC_AM62P52:
 	case DISPC_AM65X:
-		dispc_am65x_ovr_set_plane(dispc, hw_plane, vp_idx,
+		dispc_am65x_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					  x, y, layer);
 		break;
 	case DISPC_J721E:
-		dispc_j721e_ovr_set_plane(dispc, hw_plane, vp_idx,
+		dispc_j721e_ovr_set_plane(dispc, hw_plane, hw_videoport,
 					  x, y, layer);
 		break;
 	default:
@@ -1700,13 +1547,13 @@ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
 	}
 }
 
-void dispc_ovr_enable_layer(struct dispc_device *dispc, u32 vp_idx,
-			    u32 layer, bool enable)
+void dispc_ovr_enable_layer(struct dispc_device *dispc,
+			    u32 hw_videoport, u32 layer, bool enable)
 {
 	if (dispc->feat->subrev == DISPC_K2G)
 		return;
 
-	OVR_REG_FLD_MOD(dispc, vp_idx, DISPC_OVR_ATTRIBUTES(layer),
+	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			!!enable, 0, 0);
 }
 
@@ -2306,12 +2153,6 @@ const u32 *dispc_plane_formats(struct dispc_device *dispc, unsigned int *len)
 	return dispc->fourccs;
 }
 
-void dispc_set_oldi_mode(struct dispc_device *dispc,
-			 enum dispc_oldi_modes oldi_mode)
-{
-	dispc->oldi_mode = oldi_mode;
-}
-
 static s32 pixinc(int pixels, u8 ps)
 {
 	if (pixels == 1)
@@ -2327,7 +2168,7 @@ static s32 pixinc(int pixels, u8 ps)
 
 int dispc_plane_check(struct dispc_device *dispc, u32 hw_plane,
 		      const struct drm_plane_state *state,
-		      u32 vp_idx)
+		      u32 hw_videoport)
 {
 	bool lite = dispc->feat->vid_lite[hw_plane];
 	u32 fourcc = state->fb->format->format;
@@ -2396,9 +2237,9 @@ dma_addr_t dispc_plane_state_p_uv_addr(const struct drm_plane_state *state)
 		(y * fb->pitches[1] / fb->format->vsub);
 }
 
-int dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
-		      const struct drm_plane_state *state,
-		      u32 vp_idx)
+void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+		       const struct drm_plane_state *state,
+		       u32 hw_videoport)
 {
 	bool lite = dispc->feat->vid_lite[hw_plane];
 	u32 fourcc = state->fb->format->format;
@@ -2477,15 +2318,11 @@ int dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
 	else
 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 0,
 				28, 28);
-
-	return 0;
 }
 
-int dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable)
+void dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable)
 {
 	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable, 0, 0);
-
-	return 0;
 }
 
 static u32 dispc_vid_get_fifo_size(struct dispc_device *dispc, u32 hw_plane)
@@ -2653,13 +2490,13 @@ static void dispc_initial_config(struct dispc_device *dispc)
 }
 
 static void dispc_k2g_vp_write_gamma_table(struct dispc_device *dispc,
-					   u32 vp_idx)
+					   u32 hw_videoport)
 {
-	u32 *table = dispc->vp_data[vp_idx].gamma_table;
+	u32 *table = dispc->vp_data[hw_videoport].gamma_table;
 	u32 hwlen = dispc->feat->vp_feat.color.gamma_size;
 	unsigned int i;
 
-	dev_dbg(dispc->dev, "%s: vp_idx %d\n", __func__, vp_idx);
+	dev_dbg(dispc->dev, "%s: hw_videoport %d\n", __func__, hw_videoport);
 
 	if (WARN_ON(dispc->feat->vp_feat.color.gamma_type != TIDSS_GAMMA_8BIT))
 		return;
@@ -2669,18 +2506,19 @@ static void dispc_k2g_vp_write_gamma_table(struct dispc_device *dispc,
 
 		v |= i << 24;
 
-		dispc_vp_write(dispc, vp_idx, DISPC_VP_K2G_GAMMA_TABLE, v);
+		dispc_vp_write(dispc, hw_videoport, DISPC_VP_K2G_GAMMA_TABLE,
+			       v);
 	}
 }
 
 static void dispc_am65x_vp_write_gamma_table(struct dispc_device *dispc,
-					     u32 vp_idx)
+					     u32 hw_videoport)
 {
-	u32 *table = dispc->vp_data[vp_idx].gamma_table;
+	u32 *table = dispc->vp_data[hw_videoport].gamma_table;
 	u32 hwlen = dispc->feat->vp_feat.color.gamma_size;
 	unsigned int i;
 
-	dev_dbg(dispc->dev, "%s: vp_idx %d\n", __func__, vp_idx);
+	dev_dbg(dispc->dev, "%s: hw_videoport %d\n", __func__, hw_videoport);
 
 	if (WARN_ON(dispc->feat->vp_feat.color.gamma_type != TIDSS_GAMMA_8BIT))
 		return;
@@ -2690,18 +2528,18 @@ static void dispc_am65x_vp_write_gamma_table(struct dispc_device *dispc,
 
 		v |= i << 24;
 
-		dispc_vp_write(dispc, vp_idx, DISPC_VP_GAMMA_TABLE, v);
+		dispc_vp_write(dispc, hw_videoport, DISPC_VP_GAMMA_TABLE, v);
 	}
 }
 
 static void dispc_j721e_vp_write_gamma_table(struct dispc_device *dispc,
-					     u32 vp_idx)
+					     u32 hw_videoport)
 {
-	u32 *table = dispc->vp_data[vp_idx].gamma_table;
+	u32 *table = dispc->vp_data[hw_videoport].gamma_table;
 	u32 hwlen = dispc->feat->vp_feat.color.gamma_size;
 	unsigned int i;
 
-	dev_dbg(dispc->dev, "%s: vp_idx %d\n", __func__, vp_idx);
+	dev_dbg(dispc->dev, "%s: hw_videoport %d\n", __func__, hw_videoport);
 
 	if (WARN_ON(dispc->feat->vp_feat.color.gamma_type != TIDSS_GAMMA_10BIT))
 		return;
@@ -2712,25 +2550,26 @@ static void dispc_j721e_vp_write_gamma_table(struct dispc_device *dispc,
 		if (i == 0)
 			v |= 1 << 31;
 
-		dispc_vp_write(dispc, vp_idx, DISPC_VP_GAMMA_TABLE, v);
+		dispc_vp_write(dispc, hw_videoport, DISPC_VP_GAMMA_TABLE, v);
 	}
 }
 
-static void dispc_vp_write_gamma_table(struct dispc_device *dispc, u32 vp_idx)
+static void dispc_vp_write_gamma_table(struct dispc_device *dispc,
+				       u32 hw_videoport)
 {
 	switch (dispc->feat->subrev) {
 	case DISPC_K2G:
-		dispc_k2g_vp_write_gamma_table(dispc, vp_idx);
+		dispc_k2g_vp_write_gamma_table(dispc, hw_videoport);
 		break;
 	case DISPC_AM625:
 	case DISPC_AM62A7:
 	case DISPC_AM62P51:
 	case DISPC_AM62P52:
 	case DISPC_AM65X:
-		dispc_am65x_vp_write_gamma_table(dispc, vp_idx);
+		dispc_am65x_vp_write_gamma_table(dispc, hw_videoport);
 		break;
 	case DISPC_J721E:
-		dispc_j721e_vp_write_gamma_table(dispc, vp_idx);
+		dispc_j721e_vp_write_gamma_table(dispc, hw_videoport);
 		break;
 	default:
 		WARN_ON(1);
@@ -2743,17 +2582,18 @@ static const struct drm_color_lut dispc_vp_gamma_default_lut[] = {
 	{ .red = U16_MAX, .green = U16_MAX, .blue = U16_MAX, },
 };
 
-static void dispc_vp_set_gamma(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_vp_set_gamma(struct dispc_device *dispc,
+			       u32 hw_videoport,
 			       const struct drm_color_lut *lut,
 			       unsigned int length)
 {
-	u32 *table = dispc->vp_data[vp_idx].gamma_table;
+	u32 *table = dispc->vp_data[hw_videoport].gamma_table;
 	u32 hwlen = dispc->feat->vp_feat.color.gamma_size;
 	u32 hwbits;
 	unsigned int i;
 
-	dev_dbg(dispc->dev, "%s: vp_idx %d, lut len %u, hw len %u\n",
-		__func__, vp_idx, length, hwlen);
+	dev_dbg(dispc->dev, "%s: hw_videoport %d, lut len %u, hw len %u\n",
+		__func__, hw_videoport, length, hwlen);
 
 	if (dispc->feat->vp_feat.color.gamma_type == TIDSS_GAMMA_10BIT)
 		hwbits = 10;
@@ -2789,7 +2629,7 @@ static void dispc_vp_set_gamma(struct dispc_device *dispc, u32 vp_idx,
 		}
 	}
 
-	dispc_vp_write_gamma_table(dispc, vp_idx);
+	dispc_vp_write_gamma_table(dispc, hw_videoport);
 }
 
 static s16 dispc_S31_32_to_s2_8(s64 coef)
@@ -2836,7 +2676,7 @@ static void dispc_k2g_vp_csc_cpr_regval(const struct dispc_csc_coef *csc,
 
 #undef CVAL
 
-static void dispc_k2g_vp_write_csc(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_k2g_vp_write_csc(struct dispc_device *dispc, u32 hw_videoport,
 				   const struct dispc_csc_coef *csc)
 {
 	static const u16 dispc_vp_cpr_coef_reg[] = {
@@ -2849,11 +2689,11 @@ static void dispc_k2g_vp_write_csc(struct dispc_device *dispc, u32 vp_idx,
 	dispc_k2g_vp_csc_cpr_regval(csc, regval);
 
 	for (i = 0; i < ARRAY_SIZE(dispc_vp_cpr_coef_reg); i++)
-		dispc_vp_write(dispc, vp_idx, dispc_vp_cpr_coef_reg[i],
+		dispc_vp_write(dispc, hw_videoport, dispc_vp_cpr_coef_reg[i],
 			       regval[i]);
 }
 
-static void dispc_k2g_vp_set_ctm(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_k2g_vp_set_ctm(struct dispc_device *dispc, u32 hw_videoport,
 				 struct drm_color_ctm *ctm)
 {
 	u32 cprenable = 0;
@@ -2862,11 +2702,11 @@ static void dispc_k2g_vp_set_ctm(struct dispc_device *dispc, u32 vp_idx,
 		struct dispc_csc_coef cpr;
 
 		dispc_k2g_cpr_from_ctm(ctm, &cpr);
-		dispc_k2g_vp_write_csc(dispc, vp_idx, &cpr);
+		dispc_k2g_vp_write_csc(dispc, hw_videoport, &cpr);
 		cprenable = 1;
 	}
 
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONFIG,
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG,
 		       cprenable, 15, 15);
 }
 
@@ -2901,7 +2741,7 @@ static void dispc_csc_from_ctm(const struct drm_color_ctm *ctm,
 	cpr->m[CSC_BB] = dispc_S31_32_to_s3_8(ctm->matrix[8]);
 }
 
-static void dispc_k3_vp_write_csc(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_k3_vp_write_csc(struct dispc_device *dispc, u32 hw_videoport,
 				  const struct dispc_csc_coef *csc)
 {
 	static const u16 dispc_vp_csc_coef_reg[DISPC_CSC_REGVAL_LEN] = {
@@ -2915,11 +2755,11 @@ static void dispc_k3_vp_write_csc(struct dispc_device *dispc, u32 vp_idx,
 	csc->to_regval(csc, regval);
 
 	for (i = 0; i < ARRAY_SIZE(regval); i++)
-		dispc_vp_write(dispc, vp_idx, dispc_vp_csc_coef_reg[i],
+		dispc_vp_write(dispc, hw_videoport, dispc_vp_csc_coef_reg[i],
 			       regval[i]);
 }
 
-static void dispc_k3_vp_set_ctm(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_k3_vp_set_ctm(struct dispc_device *dispc, u32 hw_videoport,
 				struct drm_color_ctm *ctm)
 {
 	u32 colorconvenable = 0;
@@ -2928,15 +2768,16 @@ static void dispc_k3_vp_set_ctm(struct dispc_device *dispc, u32 vp_idx,
 		struct dispc_csc_coef csc;
 
 		dispc_csc_from_ctm(ctm, &csc);
-		dispc_k3_vp_write_csc(dispc, vp_idx, &csc);
+		dispc_k3_vp_write_csc(dispc, hw_videoport, &csc);
 		colorconvenable = 1;
 	}
 
-	VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONFIG,
+	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG,
 		       colorconvenable, 24, 24);
 }
 
-static void dispc_vp_set_color_mgmt(struct dispc_device *dispc, u32 vp_idx,
+static void dispc_vp_set_color_mgmt(struct dispc_device *dispc,
+				    u32 hw_videoport,
 				    const struct drm_crtc_state *state,
 				    bool newmodeset)
 {
@@ -2952,40 +2793,33 @@ static void dispc_vp_set_color_mgmt(struct dispc_device *dispc, u32 vp_idx,
 		length = state->gamma_lut->length / sizeof(*lut);
 	}
 
-	dispc_vp_set_gamma(dispc, vp_idx, lut, length);
+	dispc_vp_set_gamma(dispc, hw_videoport, lut, length);
 
 	if (state->ctm)
 		ctm = (struct drm_color_ctm *)state->ctm->data;
 
 	if (dispc->feat->subrev == DISPC_K2G)
-		dispc_k2g_vp_set_ctm(dispc, vp_idx, ctm);
+		dispc_k2g_vp_set_ctm(dispc, hw_videoport, ctm);
 	else
-		dispc_k3_vp_set_ctm(dispc, vp_idx, ctm);
+		dispc_k3_vp_set_ctm(dispc, hw_videoport, ctm);
 }
 
-static const char *get_vp_from_vp_idx(u32 vp_idx)
+static int get_vp_idx_from_vp(const char *vp_name)
 {
-	const char *vp_name = NULL;
+	u32 vp_idx;
 
-	switch (vp_idx) {
-	case 0:
-		vp_name = "vp1";
-		break;
-	case 1:
-		vp_name = "vp2";
-		break;
-	case 2:
-		vp_name = "vp3";
-		break;
-	case 3:
-		vp_name = "vp4";
-		break;
-	default:
-		vp_name = NULL;
-		break;
-	}
+	if (!strcmp("vp1", vp_name))
+		vp_idx = 0;
+	else if (!strcmp("vp2", vp_name))
+		vp_idx = 1;
+	else if (!strcmp("vp3", vp_name))
+		vp_idx = 2;
+	else if (!strcmp("vp4", vp_name))
+		vp_idx = 3;
+	else
+		return 0;
 
-	return vp_name;
+	return vp_idx;
 }
 
 static const char *get_ovr_from_vp(const char *vp_name)
@@ -3006,45 +2840,24 @@ static const char *get_ovr_from_vp(const char *vp_name)
 	return ovr_name;
 }
 
-static void dispc_shared_mode_update_outputs(struct dispc_features *shared_mode_feat,
-					     struct dispc_device *dispc)
+static void dispc_shared_mode_update_bus_type(struct dispc_features *shared_mode_feat,
+					      struct dispc_device *dispc)
 {
-	u32 i, j;
-	int num_outputs = shared_mode_feat->num_outputs;
-	u32 output_source_vp[TIDSS_MAX_OUTPUTS];
-	enum dispc_output_type output_type[TIDSS_MAX_OUTPUTS];
+	u32 i, vp_idx;
+	int num_vps = shared_mode_feat->num_vps;
+	enum dispc_vp_bus_type vp_bus_type[TIDSS_MAX_PORTS];
 
-	memcpy((void *)output_source_vp, (void *)shared_mode_feat->output_source_vp,
-	       sizeof(output_source_vp));
-	memset(shared_mode_feat->output_source_vp, 0, sizeof(output_source_vp));
-	memcpy((void *)output_type, (void *)shared_mode_feat->output_type,
-	       sizeof(output_type));
-	memset(shared_mode_feat->output_type, 0, sizeof(output_type));
+	memcpy((void *)vp_bus_type, (void *)shared_mode_feat->vp_bus_type,
+	       sizeof(vp_bus_type));
+	memset(shared_mode_feat->vp_bus_type, 0, sizeof(vp_bus_type));
 
-	for (i = 0, j = 0; i < num_outputs; i++) {
+	for (i = 0; i < num_vps; i++) {
 		/*
-		 * Find corresponding output type and source video port index from video ports that
-		 * were made available to Linux either in shared context
-		 * or ownership context.
+		 * Find corresponding vp bus type.
 		 */
-		if (get_vp_from_vp_idx(output_source_vp[i]) &&
-		    match_string(shared_mode_feat->vp_name, shared_mode_feat->num_vps,
-				 get_vp_from_vp_idx(output_source_vp[i])) >=  0) {
-			shared_mode_feat->output_source_vp[j] = output_source_vp[i];
-			shared_mode_feat->output_type[j++] = output_type[i];
-			if (dispc->tidss->shared_mode_owned_vps[output_source_vp[i]] &&
-			    output_type[i] == DISPC_OUTPUT_OLDI)
-				dispc->tidss->shared_mode_own_oldi = true;
-			dev_dbg(dispc->dev, "output_source_vp[%d] : %u, output_type[%d] : %u\n",
-				j - 1, shared_mode_feat->output_source_vp[j - 1], j - 1,
-				shared_mode_feat->output_type[j - 1]);
-		}
+		vp_idx = get_vp_idx_from_vp(shared_mode_feat->vp_name[i]);
+		shared_mode_feat->vp_bus_type[i] = vp_bus_type[vp_idx];
 	}
-
-	shared_mode_feat->num_outputs = j;
-	dev_dbg(dispc->dev, "num_outputs : %u, tidss->shared_mode_own_oldi : %s\n",
-		shared_mode_feat->num_outputs,
-		dispc->tidss->shared_mode_own_oldi ? "true" : "false");
 }
 
 static int dispc_update_shared_mode_features(struct dispc_features *shared_mode_feat,
@@ -3089,7 +2902,7 @@ static int dispc_update_shared_mode_features(struct dispc_features *shared_mode_
 
 	memset(shared_mode_feat->vp_name, 0, sizeof(shared_mode_feat->vp_name));
 	r = device_property_read_string_array(dispc->dev, "ti,dss-shared-mode-vp",
-					      shared_mode_feat->vp_name, TIDSS_MAX_VPS);
+					      shared_mode_feat->vp_name, TIDSS_MAX_PORTS);
 	if (r < 0) {
 		dev_err(dispc->dev, "failed to read shared video port name: %d\n", r);
 		return r;
@@ -3126,17 +2939,17 @@ static int dispc_update_shared_mode_features(struct dispc_features *shared_mode_
 		shared_mode_feat->common_regs = tidss_am62_common1_regs;
 
 	dev_dbg(dispc->dev, "common : %s\n", shared_mode_feat->common);
-	dispc_shared_mode_update_outputs(shared_mode_feat, dispc);
+	dispc_shared_mode_update_bus_type(shared_mode_feat, dispc);
 	dev_dbg(dispc->dev, "Feature list updated for shared mode\n");
 
 	return 0;
 }
 
-void dispc_vp_setup(struct dispc_device *dispc, u32 vp_idx,
+void dispc_vp_setup(struct dispc_device *dispc, u32 hw_videoport,
 		    const struct drm_crtc_state *state, bool newmodeset)
 {
-	dispc_vp_set_default_color(dispc, vp_idx, 0);
-	dispc_vp_set_color_mgmt(dispc, vp_idx, state, newmodeset);
+	dispc_vp_set_default_color(dispc, hw_videoport, 0);
+	dispc_vp_set_color_mgmt(dispc, hw_videoport, state, newmodeset);
 }
 
 static bool dispc_is_idle(struct dispc_device *dispc)
@@ -3188,7 +3001,8 @@ int dispc_runtime_resume(struct dispc_device *dispc)
 		REG_GET(dispc, DSS_SYSSTATUS, 2, 2),
 		REG_GET(dispc, DSS_SYSSTATUS, 3, 3));
 
-	if (dispc->feat->has_oldi)
+	if (dispc->feat->subrev == DISPC_AM625 ||
+	    dispc->feat->subrev == DISPC_AM65X)
 		dev_dbg(dispc->dev, "OLDI RESETDONE %d,%d,%d\n",
 			REG_GET(dispc, DSS_SYSSTATUS, 5, 5),
 			REG_GET(dispc, DSS_SYSSTATUS, 6, 6),
@@ -3229,7 +3043,7 @@ static int dispc_iomap_resource(struct platform_device *pdev, const char *name,
 	return 0;
 }
 
-static int dispc_init_am6xx_oldi_io_ctrl(struct device *dev,
+static int dispc_init_am65x_oldi_io_ctrl(struct device *dev,
 					 struct dispc_device *dispc)
 {
 	dispc->oldi_io_ctrl =
@@ -3279,31 +3093,6 @@ static int dispc_softreset(struct dispc_device *dispc)
 	if (dispc->feat->subrev == DISPC_K2G) {
 		dispc_softreset_k2g(dispc);
 		return 0;
-	}
-
-	/*
-	 * When we reset the DSS, we also reset the OLDI enable. This disables
-	 * a /7 divider and could, in some cases, lead to the DSS receiving a
-	 * much too high pixel clock. According to the HW folks, receiving such
-	 * a high clock can potentially cause damage to the DSS controller hardware.
-	 *
-	 * So set the VP clock rate for OLDI to a lower frequency before
-	 * resetting the DSS.
-	 */
-	for (u32 vp_idx = 0; vp_idx < dispc->feat->num_vps; vp_idx++) {
-		if (dispc_get_output_type(dispc, vp_idx) == DISPC_OUTPUT_OLDI &&
-		    ((dispc->feat->subrev == DISPC_AM625) ||
-		     (dispc->feat->subrev == DISPC_AM62P51) ||
-		     (dispc->feat->subrev == DISPC_AM62P52))) {
-			ret = clk_set_rate(dispc->vp_clk[vp_idx],
-					   TIDSS_AM625_IDLE_OLDI_CLOCK);
-			if (ret) {
-				dev_err(dispc->dev,
-					"vp%d: failed to set oldi clk rate to %u\n",
-					vp_idx, TIDSS_AM625_IDLE_OLDI_CLOCK);
-				return ret;
-			}
-		}
 	}
 
 	/* Soft reset */
@@ -3441,6 +3230,8 @@ int dispc_init(struct tidss_device *tidss)
 			dev_warn(dev, "cannot set DMA masks to 48-bit\n");
 	}
 
+	dma_set_max_seg_size(dev, UINT_MAX);
+
 	dispc = devm_kzalloc(dev, sizeof(*dispc), GFP_KERNEL);
 	if (!dispc)
 		return -ENOMEM;
@@ -3527,20 +3318,18 @@ int dispc_init(struct tidss_device *tidss)
 		dispc->vp_data[i].gamma_table = gamma_table;
 	}
 
-	if (feat->has_oldi) {
+	if (feat->subrev == DISPC_AM65X) {
 		/*
 		 * For shared mode, Initialize the OLDI IO control only if we own
 		 * the OLDI Tx ports
 		 */
 		if (!tidss->shared_mode || tidss->shared_mode_own_oldi) {
-			r = dispc_init_am6xx_oldi_io_ctrl(dev, dispc);
+			r = dispc_init_am65x_oldi_io_ctrl(dev, dispc);
 			if (r)
 				return r;
 		}
 	}
 
-	of_property_read_u32(dispc->dev->of_node, "max-memory-bandwidth",
-			     &dispc->memory_bandwidth_limit);
 	/*
 	 * For shared mode, Initialize the hardware and clocking only if processing core running
 	 * Linux has ownership of DSS global register space
@@ -3553,6 +3342,9 @@ int dispc_init(struct tidss_device *tidss)
 			return PTR_ERR(dispc->fclk);
 		}
 		dev_dbg(dev, "DSS fclk %lu Hz\n", clk_get_rate(dispc->fclk));
+
+		of_property_read_u32(dispc->dev->of_node, "max-memory-bandwidth",
+				     &dispc->memory_bandwidth_limit);
 
 		r = dispc_init_hw(dispc);
 		if (r)

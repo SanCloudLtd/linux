@@ -73,19 +73,19 @@
 };
 
 &main_pmx0 {
-	vddshv_sdio_pins_default: vddshv-sdio-pins-default {
+	vddshv_sdio_pins_default: vddshv-sdio-default-pins {
 		pinctrl-single,pins = <
 			AM62X_IOPAD(0x07c, PIN_OUTPUT, 7) /* (M19) GPMC0_CLK.GPIO0_31 */
 		>;
 	};
 
-	main_gpio1_ioexp_intr_pins_default: main-gpio1-ioexp-intr-pins-default {
+	main_gpio1_ioexp_intr_pins_default: main-gpio1-ioexp-intr-default-pins {
 		pinctrl-single,pins = <
 			AM62X_IOPAD(0x01d4, PIN_INPUT, 7) /* (C13) UART0_RTSn.GPIO1_23 */
 		>;
 	};
 
-	pmic_irq_pins_default: pmic-irq-pins-default {
+	pmic_irq_pins_default: pmic-irq-default-pins {
 		pinctrl-single,pins = <
 			AM62X_IOPAD(0x01f4, PIN_INPUT, 0) /* (B16) EXTINTn */
 		>;
@@ -166,6 +166,7 @@
 
 		interrupt-parent = <&gic500>;
 		interrupts = <GIC_SPI 224 IRQ_TYPE_LEVEL_HIGH>;
+		ti,power-button;
 
 		regulators {
 			buck1_reg: buck1 {
@@ -230,6 +231,7 @@
 };
 
 &ospi0 {
+
 	flash@0 {
 		compatible = "spi-nand";
 		reg = <0x0>;
@@ -241,7 +243,6 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <2>;
-		cdns,phy-mode;
 
 		partitions {
 			compatible = "fixed-partitions";
@@ -286,15 +287,6 @@
 	};
 };
 
-/*
- * All SoC variants with the AMC package have no PRU.
- * Attempting to access the PRU on these devices will
- * result in a crash at kernel bootup.
- *
- * For now, we do not have any code that can figure out
- * the absence of the PRU by reading any SoC registers,
- * so for now disable the PRU here in the board DTS file.
- */
-&pruss {
-        status = "disabled";
+&gpmc0 {
+	ranges = <0 0 0x00 0x51000000 0x01000000>; /* CS0 space. Min partition = 16MB */
 };
