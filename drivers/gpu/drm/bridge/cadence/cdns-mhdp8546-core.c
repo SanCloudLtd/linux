@@ -1888,15 +1888,6 @@ static void cdns_mhdp_atomic_enable(struct drm_bridge *bridge,
 		mutex_lock(&mhdp->link_mutex);
 	}
 
-	if (mhdp->hdcp_supported &&
-	    mhdp->hw_state == MHDP_HW_READY &&
-	    conn_state->content_protection ==
-	    DRM_MODE_CONTENT_PROTECTION_DESIRED) {
-		mutex_unlock(&mhdp->link_mutex);
-		cdns_mhdp_hdcp_enable(mhdp, conn_state->hdcp_content_type);
-		mutex_lock(&mhdp->link_mutex);
-	}
-
 	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
 	if (WARN_ON(!crtc_state))
 		goto out;
@@ -2106,19 +2097,6 @@ static int cdns_mhdp_atomic_check(struct drm_bridge *bridge,
 static enum drm_connector_status cdns_mhdp_bridge_detect(struct drm_bridge *bridge)
 {
 	struct cdns_mhdp_device *mhdp = bridge_to_mhdp(bridge);
-
-	if (mhdp->no_hpd) {
-		int ret = cdns_mhdp_update_link_status(mhdp);
-
-		if (mhdp->connector.dev) {
-			if (ret < 0)
-				schedule_work(&mhdp->modeset_retry_work);
-			else
-				drm_kms_helper_hotplug_event(mhdp->bridge.dev);
-		} else {
-			drm_bridge_hpd_notify(&mhdp->bridge, cdns_mhdp_detect(mhdp));
-		}
-	}
 
 	return cdns_mhdp_detect(mhdp);
 }

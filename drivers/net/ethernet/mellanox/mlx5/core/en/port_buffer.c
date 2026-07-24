@@ -294,8 +294,6 @@ static int port_set_buffer(struct mlx5e_priv *priv,
 	int err;
 	int i;
 
-	current_headroom_size = port_buffer->headroom_size;
-
 	in = kzalloc(sz, GFP_KERNEL);
 	if (!in)
 		return -ENOMEM;
@@ -312,7 +310,6 @@ static int port_set_buffer(struct mlx5e_priv *priv,
 		u64 xoff = port_buffer->buffer[i].xoff;
 		u64 xon = port_buffer->buffer[i].xon;
 
-		new_headroom_size += size;
 		do_div(size, port_buff_cell_sz);
 		new_headroom_cells += size;
 		do_div(xoff, port_buff_cell_sz);

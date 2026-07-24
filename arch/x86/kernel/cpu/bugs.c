@@ -61,22 +61,6 @@ EXPORT_SYMBOL_GPL(x86_spec_ctrl_base);
 DEFINE_PER_CPU(u64, x86_spec_ctrl_current);
 EXPORT_PER_CPU_SYMBOL_GPL(x86_spec_ctrl_current);
 
-void (*x86_return_thunk)(void) __ro_after_init = __x86_return_thunk;
-
-static void __init set_return_thunk(void *thunk)
-{
-	x86_return_thunk = thunk;
-
-	pr_info("active return thunk: %ps\n", thunk);
-}
-
-/* Update SPEC_CTRL MSR and its cached copy unconditionally */
-static void update_spec_ctrl(u64 val)
-{
-	this_cpu_write(x86_spec_ctrl_current, val);
-	wrmsrl(MSR_IA32_SPEC_CTRL, val);
-}
-
 /*
  * Set when the CPU has run a potentially malicious guest. An IBPB will
  * be needed to before running userspace. That IBPB will flush the branch

@@ -53,8 +53,6 @@
 
 #define RENESAS_FW_NAME	"renesas_usb_fw.mem"
 
-#define RENESAS_FW_NAME	"renesas_usb_fw.mem"
-
 static int renesas_fw_download_image(struct pci_dev *dev,
 				     const u32 *fw, size_t step, bool rom)
 {

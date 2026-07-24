@@ -3113,27 +3113,6 @@ static struct ceph_msg *create_request_message(struct ceph_mds_session *session,
 	if (test_bit(CEPH_MDS_R_FSCRYPT_FILE, &req->r_req_flags))
 		len += sizeof(__le64);
 
-	/* MClientRequest tail */
-
-	/* req->r_stamp */
-	len += sizeof(struct ceph_timespec);
-
-	/* gid list */
-	len += sizeof(u32) + (sizeof(u64) * req->r_cred->group_info->ngroups);
-
-	/* alternate name */
-	len += sizeof(u32) + req->r_altname_len;
-
-	/* fscrypt_auth */
-	len += sizeof(u32); // fscrypt_auth
-	if (req->r_fscrypt_auth)
-		len += ceph_fscrypt_auth_len(req->r_fscrypt_auth);
-
-	/* fscrypt_file */
-	len += sizeof(u32);
-	if (test_bit(CEPH_MDS_R_FSCRYPT_FILE, &req->r_req_flags))
-		len += sizeof(__le64);
-
 	msg = ceph_msg_new2(CEPH_MSG_CLIENT_REQUEST, len, 1, GFP_NOFS, false);
 	if (!msg) {
 		msg = ERR_PTR(-ENOMEM);

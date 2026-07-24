@@ -1157,9 +1157,6 @@ static __printf(3, 4) void slab_err(struct kmem_cache *s, struct slab *slab,
 	if (slab_add_kunit_errors())
 		return;
 
-	if (slab_add_kunit_errors())
-		return;
-
 	va_start(args, fmt);
 	__slab_bug(s, fmt, args);
 	va_end(args);

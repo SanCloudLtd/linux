@@ -1169,15 +1169,6 @@ nft_pipapo_avx2_lookup(const struct net *net, const struct nft_set *set,
 		return ext;
 	}
 
-	local_bh_disable();
-
-	if (unlikely(!irq_fpu_usable())) {
-		bool fallback_res = nft_pipapo_lookup(net, set, key, ext);
-
-		local_bh_enable();
-		return fallback_res;
-	}
-
 	m = rcu_dereference(priv->match);
 
 	/* This also protects access to all data related to scratch maps.

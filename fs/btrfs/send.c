@@ -2749,39 +2749,6 @@ out:
 	return ret;
 }
 
-static int send_fileattr(struct send_ctx *sctx, u64 ino, u64 gen, u64 fileattr)
-{
-	struct btrfs_fs_info *fs_info = sctx->send_root->fs_info;
-	int ret = 0;
-	struct fs_path *p;
-
-	if (sctx->proto < 2)
-		return 0;
-
-	btrfs_debug(fs_info, "send_fileattr %llu fileattr=%llu", ino, fileattr);
-
-	p = fs_path_alloc();
-	if (!p)
-		return -ENOMEM;
-
-	ret = begin_cmd(sctx, BTRFS_SEND_C_FILEATTR);
-	if (ret < 0)
-		goto out;
-
-	ret = get_cur_path(sctx, ino, gen, p);
-	if (ret < 0)
-		goto out;
-	TLV_PUT_PATH(sctx, BTRFS_SEND_A_PATH, p);
-	TLV_PUT_U64(sctx, BTRFS_SEND_A_FILEATTR, fileattr);
-
-	ret = send_cmd(sctx);
-
-tlv_put_failure:
-out:
-	fs_path_free(p);
-	return ret;
-}
-
 static int send_chown(struct send_ctx *sctx, u64 ino, u64 gen, u64 uid, u64 gid)
 {
 	struct btrfs_fs_info *fs_info = sctx->send_root->fs_info;

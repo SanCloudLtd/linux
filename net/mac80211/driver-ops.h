@@ -1395,11 +1395,6 @@ drv_get_ftm_responder_stats(struct ieee80211_local *local,
 	if (!check_sdata_in_driver(sdata))
 		return -EIO;
 
-	might_sleep();
-	lockdep_assert_wiphy(local->hw.wiphy);
-	if (!check_sdata_in_driver(sdata))
-		return -EIO;
-
 	if (local->ops->get_ftm_responder_stats)
 		ret = local->ops->get_ftm_responder_stats(&local->hw,
 							 &sdata->vif,
