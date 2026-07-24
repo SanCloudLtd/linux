@@ -15,9 +15,11 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/omap-mailbox.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos.h>
 #include <linux/remoteproc.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
 
 #include "omap_remoteproc.h"
 #include "remoteproc_internal.h"
@@ -98,6 +100,14 @@ struct k3_dsp_rproc {
 	struct mbox_chan *mbox;
 	struct mbox_client client;
 	struct completion shut_comp;
+	struct completion suspend_comp;
+	struct notifier_block pm_notifier;
+	u32 suspend_status;
+};
+
+enum core_status {
+	CORE_IS_OFF = 0,
+	CORE_IS_ON
 };
 
 /**
@@ -120,6 +130,33 @@ static int is_core_in_wfi(struct k3_dsp_rproc *core)
 
 	return (stat & PROC_BOOT_STATUS_FLAG_CPU_WFI);
 }
+/**
+ * get_core_status - local utility function to check core status
+ * @core: remote core pointer used for checking core status
+ * @cstatus: core status
+ *
+ * This utility function is invoked by the resume handler to get remote core
+ * status.
+ */
+static int get_core_status(struct k3_dsp_rproc *core, enum core_status *cstatus)
+{
+	const struct ti_sci_handle *ti_sci = core->ti_sci;
+	bool r_state = false, c_state = false;
+	int ret;
+
+	ret = ti_sci->ops.dev_ops.is_on(ti_sci, core->ti_sci_id, &r_state, &c_state);
+	if (ret) {
+		dev_err(core->dev, "ti_sci call to get dev status failed\n");
+		return ret;
+	}
+
+	if (c_state)
+		*cstatus = CORE_IS_ON;
+	else
+		*cstatus = CORE_IS_OFF;
+
+	return 0;
+}
 
 /**
  * k3_dsp_rproc_mbox_callback() - inbound mailbox message handler
@@ -141,7 +178,7 @@ static void k3_dsp_rproc_mbox_callback(struct mbox_client *client, void *data)
 						  client);
 	struct device *dev = kproc->rproc->dev.parent;
 	const char *name = kproc->rproc->name;
-	u32 msg = omap_mbox_message(data);
+	u32 msg = (u32)(uintptr_t)(data);
 
 	dev_dbg(dev, "mbox msg: 0x%x\n", msg);
 
@@ -159,6 +196,21 @@ static void k3_dsp_rproc_mbox_callback(struct mbox_client *client, void *data)
 	case RP_MBOX_SHUTDOWN_ACK:
 		dev_dbg(dev, "received shutdown_ack from %s\n", name);
 		complete(&kproc->shut_comp);
+		break;
+	case RP_MBOX_SUSPEND_ACK:
+		dev_dbg(dev, "received suspend_ack from %s\n", name);
+		kproc->suspend_status = RP_MBOX_SUSPEND_ACK;
+		complete(&kproc->suspend_comp);
+		break;
+	case RP_MBOX_SUSPEND_CANCEL:
+		dev_err(dev, "received suspend_cancel from %s\n", name);
+		kproc->suspend_status = RP_MBOX_SUSPEND_CANCEL;
+		complete(&kproc->suspend_comp);
+		break;
+	case RP_MBOX_SUSPEND_AUTO:
+		dev_dbg(dev, "received suspend_auto from %s\n", name);
+		kproc->suspend_status = RP_MBOX_SUSPEND_AUTO;
+		complete(&kproc->suspend_comp);
 		break;
 	default:
 		/* silently handle all other valid messages */
@@ -184,14 +236,14 @@ static void k3_dsp_rproc_kick(struct rproc *rproc, int vqid)
 {
 	struct k3_dsp_rproc *kproc = rproc->priv;
 	struct device *dev = rproc->dev.parent;
-	mbox_msg_t msg = (mbox_msg_t)vqid;
+	u32 msg = (u32)vqid;
 	int ret;
 
 	/* send the index of the triggered virtqueue in the mailbox payload */
-	ret = mbox_send_message(kproc->mbox, (void *)msg);
+	ret = mbox_send_message(kproc->mbox, (void *)(uintptr_t)msg);
 	if (ret < 0)
-		dev_err(dev, "failed to send mailbox message (%pe)\n",
-			ERR_PTR(ret));
+		dev_err(dev, "failed to send mailbox message, status = %d\n",
+			ret);
 }
 
 /* Put the DSP processor into reset */
@@ -202,7 +254,7 @@ static int k3_dsp_rproc_reset(struct k3_dsp_rproc *kproc)
 
 	ret = reset_control_assert(kproc->reset);
 	if (ret) {
-		dev_err(dev, "local-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "local-reset assert failed, ret = %d\n", ret);
 		return ret;
 	}
 
@@ -212,7 +264,7 @@ static int k3_dsp_rproc_reset(struct k3_dsp_rproc *kproc)
 	ret = kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret) {
-		dev_err(dev, "module-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset assert failed, ret = %d\n", ret);
 		if (reset_control_deassert(kproc->reset))
 			dev_warn(dev, "local-reset deassert back failed\n");
 	}
@@ -232,14 +284,14 @@ static int k3_dsp_rproc_release(struct k3_dsp_rproc *kproc)
 	ret = kproc->ti_sci->ops.dev_ops.get_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret) {
-		dev_err(dev, "module-reset deassert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset deassert failed, ret = %d\n", ret);
 		return ret;
 	}
 
 lreset:
 	ret = reset_control_deassert(kproc->reset);
 	if (ret) {
-		dev_err(dev, "local-reset deassert failed, (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "local-reset deassert failed, ret = %d\n", ret);
 		if (kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 							  kproc->ti_sci_id))
 			dev_warn(dev, "module-reset assert back failed\n");
@@ -278,7 +330,7 @@ static int k3_dsp_rproc_request_mbox(struct rproc *rproc)
 	 */
 	ret = mbox_send_message(kproc->mbox, (void *)RP_MBOX_ECHO_REQUEST);
 	if (ret < 0) {
-		dev_err(dev, "mbox_send_message failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "mbox_send_message failed: %d\n", ret);
 		mbox_free_channel(kproc->mbox);
 		return ret;
 	}
@@ -304,8 +356,8 @@ static int k3_dsp_rproc_prepare(struct rproc *rproc)
 	ret = kproc->ti_sci->ops.dev_ops.get_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret)
-		dev_err(dev, "module-reset deassert failed, cannot enable internal RAM loading (%pe)\n",
-			ERR_PTR(ret));
+		dev_err(dev, "module-reset deassert failed, cannot enable internal RAM loading, ret = %d\n",
+			ret);
 
 	return ret;
 }
@@ -328,7 +380,7 @@ static int k3_dsp_rproc_unprepare(struct rproc *rproc)
 	ret = kproc->ti_sci->ops.dev_ops.put_device(kproc->ti_sci,
 						    kproc->ti_sci_id);
 	if (ret)
-		dev_err(dev, "module-reset assert failed (%pe)\n", ERR_PTR(ret));
+		dev_err(dev, "module-reset assert failed, ret = %d\n", ret);
 
 	return ret;
 }
@@ -347,32 +399,23 @@ static int k3_dsp_rproc_start(struct rproc *rproc)
 	u32 boot_addr;
 	int ret;
 
-	ret = k3_dsp_rproc_request_mbox(rproc);
-	if (ret)
-		return ret;
-
 	boot_addr = rproc->bootaddr;
 	if (boot_addr & (kproc->data->boot_align_addr - 1)) {
 		dev_err(dev, "invalid boot address 0x%x, must be aligned on a 0x%x boundary\n",
 			boot_addr, kproc->data->boot_align_addr);
-		ret = -EINVAL;
-		goto put_mbox;
+		return -EINVAL;
 	}
 
 	dev_err(dev, "booting DSP core using boot addr = 0x%x\n", boot_addr);
 	ret = ti_sci_proc_set_config(kproc->tsp, boot_addr, 0, 0);
 	if (ret)
-		goto put_mbox;
+		return ret;
 
 	ret = k3_dsp_rproc_release(kproc);
 	if (ret)
-		goto put_mbox;
+		return ret;
 
 	return 0;
-
-put_mbox:
-	mbox_free_channel(kproc->mbox);
-	return ret;
 }
 
 /*
@@ -402,11 +445,7 @@ static int k3_dsp_rproc_stop(struct rproc *rproc)
 		dev_err(dev, "%s: timedout waiting for rproc completion event\n", __func__);
 	};
 
-	mbox_free_channel(kproc->mbox);
-
-	ret = readx_poll_timeout(is_core_in_wfi, kproc, stat, stat, 200, 2000);
-	if (ret)
-		return ret;
+	readx_poll_timeout(is_core_in_wfi, kproc, stat, stat, 200, 2000);
 
 	k3_dsp_rproc_reset(kproc);
 
@@ -416,42 +455,22 @@ static int k3_dsp_rproc_stop(struct rproc *rproc)
 /*
  * Attach to a running DSP remote processor (IPC-only mode)
  *
- * This rproc attach callback only needs to request the mailbox, the remote
- * processor is already booted, so there is no need to issue any TI-SCI
- * commands to boot the DSP core. This callback is invoked only in IPC-only
- * mode.
+ * This rproc attach callback is a NOP. The remote processor is already booted,
+ * and all required resources have been acquired during probe routine, so there
+ * is no need to issue any TI-SCI commands to boot the DSP core. This callback
+ * is invoked only in IPC-only mode and exists because rproc_validate() checks
+ * for its existence.
  */
-static int k3_dsp_rproc_attach(struct rproc *rproc)
-{
-	struct k3_dsp_rproc *kproc = rproc->priv;
-	struct device *dev = kproc->dev;
-	int ret;
-
-	ret = k3_dsp_rproc_request_mbox(rproc);
-	if (ret)
-		return ret;
-
-	dev_info(dev, "DSP initialized in IPC-only mode\n");
-	return 0;
-}
+static int k3_dsp_rproc_attach(struct rproc *rproc) { return 0; }
 
 /*
  * Detach from a running DSP remote processor (IPC-only mode)
  *
- * This rproc detach callback performs the opposite operation to attach callback
- * and only needs to release the mailbox, the DSP core is not stopped and will
- * be left to continue to run its booted firmware. This callback is invoked only
- * in IPC-only mode.
+ * This rproc detach callback is a NOP. The DSP core is not stopped and will be
+ * left to continue to run its booted firmware. This callback is invoked only in
+ * IPC-only mode and exists for sanity sake.
  */
-static int k3_dsp_rproc_detach(struct rproc *rproc)
-{
-	struct k3_dsp_rproc *kproc = rproc->priv;
-	struct device *dev = kproc->dev;
-
-	mbox_free_channel(kproc->mbox);
-	dev_info(dev, "DSP deinitialized in IPC-only mode\n");
-	return 0;
-}
+static int k3_dsp_rproc_detach(struct rproc *rproc) { return 0; }
 
 /*
  * This function implements the .get_loaded_rsc_table() callback and is used
@@ -715,6 +734,130 @@ struct ti_sci_proc *k3_dsp_rproc_of_get_tsp(struct device *dev,
 	return tsp;
 }
 
+static int k3_dsp_suspend(struct rproc *rproc)
+{
+	struct k3_dsp_rproc *kproc = rproc->priv;
+	unsigned long msg = RP_MBOX_SUSPEND_SYSTEM;
+	unsigned long to = msecs_to_jiffies(5000);
+	struct dev_pm_qos_request qos_req;
+	struct device *dev = kproc->dev;
+	int ret;
+
+	kproc->suspend_status = 0;
+	reinit_completion(&kproc->suspend_comp);
+
+	ret = mbox_send_message(kproc->mbox, (void *)msg);
+	if (ret < 0) {
+		dev_err(dev, "PM mbox_send_message failed: %d\n", ret);
+		return ret;
+	}
+
+	ret = wait_for_completion_timeout(&kproc->suspend_comp, to);
+	if (ret == 0) {
+		dev_err(dev, "%s: timedout waiting for rproc completion event\n", __func__);
+		// Set constraint to keep the device on
+		dev_pm_qos_add_request(kproc->dev, &qos_req, DEV_PM_QOS_RESUME_LATENCY, 0);
+		return 0;
+	};
+
+	dev_dbg(dev, "%s: suspend ack from remote 0x%x\n", __func__, kproc->suspend_status);
+	if (kproc->suspend_status == RP_MBOX_SUSPEND_ACK) {
+		const struct ti_sci_handle *ti_sci = kproc->ti_sci;
+		// shutdown the remote core
+		ret = rproc_shutdown(rproc);
+		if (ret) {
+			dev_err(dev, "rproc_shutdown failed, ret = %d\n", ret);
+			return -EBUSY;
+		}
+		if (!kproc->data->uses_lreset) {
+			ret = ti_sci->ops.dev_ops.put_device(ti_sci, kproc->ti_sci_id);
+			if (ret) {
+				dev_err(dev, "module-reset assert failed, ret = %d\n", ret);
+				if (reset_control_deassert(kproc->reset))
+					dev_warn(dev, "local-reset deassert back failed\n");
+			}
+		}
+		kproc->rproc->state = RPROC_SUSPENDED;
+	} else if (kproc->suspend_status == RP_MBOX_SUSPEND_CANCEL) {
+		return -EBUSY;
+	} else if (kproc->suspend_status == RP_MBOX_SUSPEND_AUTO) {
+		kproc->rproc->state = RPROC_SUSPENDED;
+	}
+
+	return 0;
+}
+
+static int k3_dsp_resume(struct rproc *rproc)
+{
+	struct k3_dsp_rproc *kproc = rproc->priv;
+	enum core_status cstatus = CORE_IS_OFF;
+	unsigned long msg = RP_MBOX_ECHO_REQUEST;
+	struct device *dev = kproc->dev;
+	int ret;
+
+	ret = get_core_status(kproc, &cstatus);
+	if (cstatus == CORE_IS_OFF) {
+		dev_info(dev, "Core is off in resume\n");
+		k3_dsp_rproc_reset(kproc);
+		rproc_boot(rproc);
+	} else {
+		dev_err(dev, "Core is on in resume\n");
+		msg = RP_MBOX_ECHO_REQUEST;
+		ret = mbox_send_message(kproc->mbox, (void *)msg);
+		if (ret < 0) {
+			dev_err(dev, "PM mbox_send_message failed: %d\n", ret);
+			return ret;
+		}
+	}
+	kproc->rproc->state = RPROC_RUNNING;
+
+	return 0;
+}
+
+/**
+ * PM notifier call.
+ * This is a callback function for PM notifications. On a resume completion
+ * i.e after all the resume driver calls are handled on PM_POST_SUSPEND,
+ * on a deep sleep the remote core is rebooted.
+ */
+static int dsp_pm_notifier_call(struct notifier_block *bl, unsigned long state, void *unused)
+{
+	struct k3_dsp_rproc *kproc = container_of(bl, struct k3_dsp_rproc, pm_notifier);
+	struct rproc *rproc = kproc->rproc;
+
+	switch (state) {
+	case PM_HIBERNATION_PREPARE:
+	case PM_RESTORE_PREPARE:
+	case PM_SUSPEND_PREPARE:
+		break;
+
+	case PM_POST_HIBERNATION:
+	case PM_POST_RESTORE:
+	case PM_POST_SUSPEND:
+		if (rproc->state == RPROC_SUSPENDED)
+			return k3_dsp_resume(rproc);
+		break;
+	}
+	return 0;
+}
+
+static int k3_dsp_suspend_late(struct device *dev)
+{
+	struct rproc *rproc = dev_get_drvdata(dev);
+	struct k3_dsp_rproc *kproc = rproc->priv;
+
+/**
+ * Check if pm notifier call is set. if it is, suspend/resume is supported
+ */
+	if (!kproc->pm_notifier.notifier_call)
+		return 0;
+
+	return k3_dsp_suspend(rproc);
+}
+
+
+
+
 static int k3_dsp_rproc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -750,6 +893,10 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 	kproc->dev = dev;
 	kproc->data = data;
 
+	ret = k3_dsp_rproc_request_mbox(rproc);
+	if (ret)
+		return ret;
+
 	kproc->ti_sci = devm_ti_sci_get_by_phandle(dev, "ti,sci");
 	if (IS_ERR(kproc->ti_sci))
 		return dev_err_probe(dev, PTR_ERR(kproc->ti_sci),
@@ -768,6 +915,8 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 	if (IS_ERR(kproc->tsp))
 		return dev_err_probe(dev, PTR_ERR(kproc->tsp),
 				     "failed to construct ti-sci proc control\n");
+	init_completion(&kproc->shut_comp);
+	init_completion(&kproc->suspend_comp);
 
 	ret = ti_sci_proc_request(kproc->tsp);
 	if (ret < 0) {
@@ -791,7 +940,7 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to get initial state, mode cannot be determined\n");
 
-	/* configure J721E devices for either remoteproc or IPC-only mode */
+	/* configure devices for either remoteproc or IPC-only mode */
 	if (p_state) {
 		dev_info(dev, "configured DSP for IPC-only mode\n");
 		rproc->state = RPROC_DETACHED;
@@ -805,6 +954,9 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 		rproc->ops->get_loaded_rsc_table = k3_dsp_get_loaded_rsc_table;
 	} else {
 		dev_info(dev, "configured DSP for remoteproc mode\n");
+		/* register for PM notifiers */
+		kproc->pm_notifier.notifier_call = dsp_pm_notifier_call;
+		register_pm_notifier(&kproc->pm_notifier);
 		/*
 		 * ensure the DSP local reset is asserted to ensure the DSP
 		 * doesn't execute bogus code in .prepare() when the module
@@ -821,6 +973,7 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 		}
 	}
 
+	dev_set_drvdata(dev, rproc);
 	ret = dma_coerce_mask_and_coherent(&rproc->dev, DMA_BIT_MASK(48));
 	if (ret) {
 		dev_warn(dev, "Failed to set DMA mask %llx. Trying to continue... (%pe)\n",
@@ -831,9 +984,7 @@ static int k3_dsp_rproc_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to add register device with remoteproc core\n");
 
-	platform_set_drvdata(pdev, kproc);
 
-	init_completion(&kproc->shut_comp);
 	return 0;
 }
 
@@ -849,6 +1000,10 @@ static void k3_dsp_rproc_remove(struct platform_device *pdev)
 		if (ret)
 			dev_err(dev, "failed to detach proc (%pe)\n", ERR_PTR(ret));
 	}
+
+	mbox_free_channel(kproc->mbox);
+	if (kproc->pm_notifier.notifier_call)
+		unregister_pm_notifier(&kproc->pm_notifier);
 }
 
 static const struct k3_dsp_mem_data c66_mems[] = {
@@ -905,11 +1060,16 @@ static const struct of_device_id k3_dsp_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, k3_dsp_of_match);
 
+static const struct dev_pm_ops k3_dsp_pm_ops = {
+	LATE_SYSTEM_SLEEP_PM_OPS(k3_dsp_suspend_late, NULL)
+};
+
 static struct platform_driver k3_dsp_rproc_driver = {
 	.probe	= k3_dsp_rproc_probe,
 	.remove_new = k3_dsp_rproc_remove,
 	.driver	= {
 		.name = "k3-dsp-rproc",
+		.pm = &k3_dsp_pm_ops,
 		.of_match_table = k3_dsp_of_match,
 	},
 };
