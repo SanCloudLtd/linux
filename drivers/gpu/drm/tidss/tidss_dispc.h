@@ -48,11 +48,12 @@ struct dispc_features_scaling {
 
 struct dispc_errata {
 	bool i2000; /* DSS Does Not Support YUV Pixel Data Formats */
+	bool i2097; /* OVR Layer Disable May Cause Sync Lost */
 };
 
 enum dispc_vp_bus_type {
 	DISPC_VP_DPI,		/* DPI output */
-	DISPC_VP_OLDI,		/* OLDI (LVDS) output */
+	DISPC_VP_OLDI_AM65X,	/* OLDI (LVDS) output for AM65x DSS */
 	DISPC_VP_INTERNAL,	/* SoC internal routing */
 	DISPC_VP_TIED_OFF,	/* Tied off / Unavailable */
 	DISPC_VP_MAX_BUS_TYPE,

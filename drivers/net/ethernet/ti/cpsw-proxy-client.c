@@ -2543,6 +2543,9 @@ static const struct soc_device_attribute soc_dma_type[] = {
 	{ .family = "J721E", .data = &j721e_soc_data },
 	{ .family = "J784S4", .data = &j721e_soc_data },
 	{ .family = "AM62PX", .data = &am62px_soc_data },
+	{ .family = "J722S", .data = &am62px_soc_data },
+	{ .family = "AM62AX", .data = &am62px_soc_data },
+	{ /* sentinel */}
 };
 
 static int cpsw_proxy_client_probe(struct rpmsg_device *rpdev)

@@ -268,17 +268,9 @@ static int start_encode(struct vpu_instance *inst, u32 *fail_res)
 		dst_buf->vb2_buf.timestamp = src_buf->vb2_buf.timestamp;
 		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_ERROR);
 		v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_ERROR);
-	} else {
+	} else
 		dev_dbg(inst->dev->dev, "%s: wave5_vpu_enc_start_one_frame success\n",
 			__func__);
-		/*
-		 * Remove the source buffer from the ready-queue now and finish
-		 * it in the videobuf2 framework once the index is returned by the
-		 * firmware in finish_encode
-		 */
-		if (src_buf)
-			v4l2_m2m_src_buf_remove_by_idx(m2m_ctx, src_buf->vb2_buf.index);
-	}
 
 	return 0;
 }
@@ -304,27 +296,13 @@ static void wave5_vpu_enc_finish_encode(struct vpu_instance *inst)
 		__func__,  enc_output_info.pic_type, enc_output_info.recon_frame_index,
 		enc_output_info.enc_src_idx, enc_output_info.enc_pic_byte, enc_output_info.pts);
 
-	/*
-	 * The source buffer will not be found in the ready-queue as it has been
-	 * dropped after sending of the encode firmware command, locate it in
-	 * the videobuf2 queue directly
-	 */
 	if (enc_output_info.enc_src_idx >= 0) {
-		struct vb2_buffer *vb = vb2_get_buffer(v4l2_m2m_get_src_vq(m2m_ctx),
-						       enc_output_info.enc_src_idx);
-		if (vb->state != VB2_BUF_STATE_ACTIVE)
-			dev_warn(inst->dev->dev,
-				 "%s: encoded buffer (%d) was not in ready queue %i.",
-				 __func__, enc_output_info.enc_src_idx, vb->state);
-		else
-			src_buf = to_vb2_v4l2_buffer(vb);
-
-		if (src_buf) {
+		src_buf = v4l2_m2m_src_buf_remove(m2m_ctx);
+		if (!src_buf)
+			dev_warn(inst->dev->dev, "%s: no source buffer found\n", __func__);
+		else {
 			inst->timestamp = src_buf->vb2_buf.timestamp;
 			v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_DONE);
-		} else {
-			dev_warn(inst->dev->dev, "%s: no source buffer with index: %d found\n",
-				 __func__, enc_output_info.enc_src_idx);
 		}
 	}
 
@@ -705,6 +683,11 @@ static int wave5_vpu_enc_encoder_cmd(struct file *file, void *fh, struct v4l2_en
 
 		m2m_ctx->last_src_buf = v4l2_m2m_last_src_buf(m2m_ctx);
 		m2m_ctx->is_draining = true;
+
+		if (v4l2_m2m_num_dst_bufs_ready(m2m_ctx) > 0) {
+			dev_dbg(inst->dev->dev, "Forcing job run for draining\n");
+			v4l2_m2m_try_schedule(m2m_ctx);
+		}
 		break;
 	case V4L2_ENC_CMD_START:
 		break;
@@ -1411,6 +1394,34 @@ free_buffers:
 	return ret;
 }
 
+static int wave5_vpu_enc_prepare_cap_seq(struct vpu_instance *inst)
+{
+	int ret = 0;
+
+	ret = initialize_sequence(inst);
+	if (ret) {
+		dev_warn(inst->dev->dev, "Sequence not found: %d\n", ret);
+		return ret;
+	}
+	ret = switch_state(inst, VPU_INST_STATE_INIT_SEQ);
+	if (ret)
+		return ret;
+
+	/*
+	 * The sequence must be analyzed first to calculate the proper
+	 * size of the auxiliary buffers.
+	 */
+	ret = prepare_fb(inst);
+	if (ret) {
+		dev_warn(inst->dev->dev, "Framebuffer preparation, fail: %d\n", ret);
+		return ret;
+	}
+
+	ret = switch_state(inst, VPU_INST_STATE_PIC_RUN);
+
+	return ret;
+}
+
 static int wave5_vpu_enc_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct vpu_instance *inst = vb2_get_drv_priv(q);
@@ -1453,27 +1464,8 @@ static int wave5_vpu_enc_start_streaming(struct vb2_queue *q, unsigned int count
 		if (ret)
 			goto return_buffers;
 	}
-	if (inst->state == VPU_INST_STATE_OPEN && m2m_ctx->cap_q_ctx.q.streaming) {
-		ret = initialize_sequence(inst);
-		if (ret) {
-			dev_warn(inst->dev->dev, "Sequence not found: %d\n", ret);
-			goto return_buffers;
-		}
-		ret = switch_state(inst, VPU_INST_STATE_INIT_SEQ);
-		if (ret)
-			goto return_buffers;
-		/*
-		 * The sequence must be analyzed first to calculate the proper
-		 * size of the auxiliary buffers.
-		 */
-		ret = prepare_fb(inst);
-		if (ret) {
-			dev_warn(inst->dev->dev, "Framebuffer preparation, fail: %d\n", ret);
-			goto return_buffers;
-		}
-
-		ret = switch_state(inst, VPU_INST_STATE_PIC_RUN);
-	}
+	if (inst->state == VPU_INST_STATE_OPEN && m2m_ctx->cap_q_ctx.q.streaming)
+		ret = wave5_vpu_enc_prepare_cap_seq(inst);
 	if (ret)
 		goto return_buffers;
 
@@ -1598,6 +1590,14 @@ static void wave5_vpu_enc_device_run(void *priv)
 
 	pm_runtime_resume_and_get(inst->dev->dev);
 	switch (inst->state) {
+	case VPU_INST_STATE_OPEN:
+		ret = wave5_vpu_enc_prepare_cap_seq(inst);
+		if (ret) {
+			dev_warn(inst->dev->dev, "Framebuffer preparation, fail: %d\n", ret);
+			switch_state(inst, VPU_INST_STATE_STOP);
+			break;
+		}
+		fallthrough;
 	case VPU_INST_STATE_PIC_RUN:
 		ret = start_encode(inst, &fail_res);
 		if (ret) {
@@ -1633,6 +1633,12 @@ static int wave5_vpu_enc_job_ready(void *priv)
 	case VPU_INST_STATE_NONE:
 		dev_dbg(inst->dev->dev, "Encoder must be open to start queueing M2M jobs!\n");
 		return false;
+	case VPU_INST_STATE_OPEN:
+		if (wave5_vpu_both_queues_are_streaming(inst)) {
+			dev_dbg(inst->dev->dev, "Both queues have been turned on now, M2M job can occur\n");
+			return true;
+		}
+		return false;
 	case VPU_INST_STATE_PIC_RUN:
 		if (m2m_ctx->is_draining || v4l2_m2m_num_src_bufs_ready(m2m_ctx)) {
 			dev_dbg(inst->dev->dev, "Encoder ready for a job, state: %s\n",
@@ -1642,9 +1648,9 @@ static int wave5_vpu_enc_job_ready(void *priv)
 		fallthrough;
 	default:
 		dev_dbg(inst->dev->dev,
-			"Encoder not ready for a job, state: %s, %s draining, %d src bufs ready\n",
+			"Encoder not ready for a job, state: %s, %s draining, %d src bufs ready, %d dst bufs ready\n",
 			state_to_str(inst->state), m2m_ctx->is_draining ? "is" : "is not",
-			v4l2_m2m_num_src_bufs_ready(m2m_ctx));
+			v4l2_m2m_num_src_bufs_ready(m2m_ctx), v4l2_m2m_num_dst_bufs_ready(m2m_ctx));
 		break;
 	}
 	return false;
@@ -1856,6 +1862,11 @@ static int wave5_vpu_open_enc(struct file *filp)
 	inst->frame_rate = 30;
 
 	init_completion(&inst->irq_done);
+	ret = wave5_kfifo_alloc(inst);
+	if (ret) {
+		dev_err(inst->dev->dev, "failed to allocate fifo\n");
+		goto cleanup_inst;
+	}
 
 	inst->id = ida_alloc(&inst->dev->inst_ida, GFP_KERNEL);
 	if (inst->id < 0) {

@@ -173,8 +173,8 @@
 		cdns_csi2rx1: csi-bridge@30121000 {
 			compatible = "ti,j721e-csi2rx", "cdns,csi2rx";
 			reg = <0x00 0x30121000 0x00 0x1000>;
-			interrupts = <GIC_SPI 161 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 162 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 146 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 147 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "error_irq", "irq";
 			clocks = <&k3_clks 247 0>, <&k3_clks 247 3>, <&k3_clks 247 0>,
 				 <&k3_clks 247 0>, <&k3_clks 247 4>, <&k3_clks 247 4>;
@@ -230,8 +230,8 @@
 		cdns_csi2rx2: csi-bridge@30141000 {
 			compatible = "ti,j721e-csi2rx", "cdns,csi2rx";
 			reg = <0x00 0x30141000 0x00 0x1000>;
-			interrupts = <GIC_SPI 202 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 215 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 187 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 200 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "error_irq", "irq";
 			clocks = <&k3_clks 248 0>, <&k3_clks 248 3>, <&k3_clks 248 0>,
 				 <&k3_clks 248 0>, <&k3_clks 248 4>, <&k3_clks 248 4>;
@@ -287,8 +287,8 @@
 		cdns_csi2rx3: csi-bridge@30161000 {
 			compatible = "ti,j721e-csi2rx", "cdns,csi2rx";
 			reg = <0x00 0x30161000 0x00 0x1000>;
-			interrupts = <GIC_SPI 232 IRQ_TYPE_LEVEL_HIGH>,
-				     <GIC_SPI 233 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 217 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 218 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "error_irq", "irq";
 			clocks = <&k3_clks 249 0>, <&k3_clks 249 3>, <&k3_clks 249 0>,
 				 <&k3_clks 249 0>, <&k3_clks 249 4>, <&k3_clks 249 4>;
@@ -401,6 +401,17 @@
 		ti,sci-proc-ids = <0x31 0xff>;
 		status = "disabled";
 	};
+
+	e5010: e5010@fd20000 {
+		compatible = "img,e5010-jpeg-enc";
+		reg = <0x00 0xfd20000 0x00 0x100>,
+		      <0x00 0xfd20200 0x00 0x200>;
+		reg-names = "core", "mmu";
+		clocks = <&k3_clks 201 0>;
+		clock-names = "core_clk";
+		power-domains = <&k3_pds 201 TI_SCI_PD_EXCLUSIVE>;
+		interrupts = <GIC_SPI 98 IRQ_TYPE_LEVEL_HIGH>;
+	};
 };
 
 &main_bcdma_csi {
@@ -458,21 +469,6 @@
 
 &inta_main_dmss {
 	ti,interrupt-ranges = <7 71 21>;
-};
-
-&main_pmx0 {
-	pinctrl-single,gpio-range =
-		<&main_pmx0_range 0 32 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 33 38 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 72 17 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 101 25 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 137 5 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 143 3 PIN_GPIO_RANGE_IOPAD>,
-		<&main_pmx0_range 149 2 PIN_GPIO_RANGE_IOPAD>;
-
-	main_pmx0_range: gpio-range {
-		#pinctrl-single,gpio-range-cells = <3>;
-	};
 };
 
 &main_gpio0 {

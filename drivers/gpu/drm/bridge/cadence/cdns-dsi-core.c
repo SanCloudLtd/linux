@@ -762,6 +762,19 @@ static void cdns_dsi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 		dev_err(dsi->base.dev,
 			"Timed Out: DSI-DPhy Clock and Data Lanes not ready.\n");
 
+	/*
+	 * Now that the DSI Link and DSI Phy are initialized,
+	 * wait for the CLK and Data Lanes to be ready.
+	 */
+	tmp = CLK_LANE_RDY;
+	for (int i = 0; i < nlanes; i++)
+		tmp |= DATA_LANE_RDY(i);
+
+	if (readl_poll_timeout(dsi->regs + MCTL_MAIN_STS, status,
+			       (tmp == (status & tmp)), 100, 500000))
+		dev_err(dsi->base.dev,
+			"Timed Out: DSI-DPhy Clock and Data Lanes not ready.\n");
+
 	writel(HBP_LEN(dsi_cfg.hbp) | HSA_LEN(dsi_cfg.hsa),
 	       dsi->regs + VID_HSIZE1);
 	writel(HFP_LEN(dsi_cfg.hfp) | HACT_LEN(dsi_cfg.hact),
@@ -1224,7 +1237,18 @@ static const struct mipi_dsi_host_ops cdns_dsi_ops = {
 	.transfer = cdns_dsi_transfer,
 };
 
-static int __maybe_unused cdns_dsi_resume(struct device *dev)
+static int cdns_dsi_runtime_suspend(struct device *dev)
+{
+	struct cdns_dsi *dsi = dev_get_drvdata(dev);
+
+	clk_disable_unprepare(dsi->dsi_sys_clk);
+	clk_disable_unprepare(dsi->dsi_p_clk);
+	reset_control_assert(dsi->dsi_p_rst);
+
+	return 0;
+}
+
+static int cdns_dsi_runtime_resume(struct device *dev)
 {
 	struct cdns_dsi *dsi = dev_get_drvdata(dev);
 
@@ -1235,18 +1259,21 @@ static int __maybe_unused cdns_dsi_resume(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused cdns_dsi_suspend(struct device *dev)
+static int cdns_dsi_suspend(struct device *dev)
 {
-	struct cdns_dsi *dsi = dev_get_drvdata(dev);
-
-	clk_disable_unprepare(dsi->dsi_sys_clk);
-	clk_disable_unprepare(dsi->dsi_p_clk);
-	reset_control_assert(dsi->dsi_p_rst);
-	return 0;
+	return pm_runtime_force_suspend(dev);
 }
 
-static UNIVERSAL_DEV_PM_OPS(cdns_dsi_pm_ops, cdns_dsi_suspend, cdns_dsi_resume,
-			    NULL);
+static int cdns_dsi_resume(struct device *dev)
+{
+	return pm_runtime_force_resume(dev);
+}
+
+static const struct dev_pm_ops cdns_dsi_pm_ops = {
+      SET_RUNTIME_PM_OPS(cdns_dsi_runtime_suspend,
+                         cdns_dsi_runtime_resume, NULL)
+      SET_SYSTEM_SLEEP_PM_OPS(cdns_dsi_suspend, cdns_dsi_resume)
+};
 
 static int cdns_dsi_drm_probe(struct platform_device *pdev)
 {
@@ -1317,6 +1344,7 @@ static int cdns_dsi_drm_probe(struct platform_device *pdev)
 	input->id = CDNS_DPI_INPUT;
 	input->bridge.funcs = &cdns_dsi_bridge_funcs;
 	input->bridge.of_node = pdev->dev.of_node;
+	input->bridge.type = DRM_MODE_CONNECTOR_DSI;
 
 	/* Mask all interrupts before registering the IRQ handler. */
 	writel(0, dsi->regs + MCTL_MAIN_STS_CTL);

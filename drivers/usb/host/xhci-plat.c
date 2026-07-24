@@ -152,7 +152,7 @@ int xhci_plat_probe(struct platform_device *pdev, struct device *sysdev, const s
 	int			ret;
 	int			irq;
 	struct xhci_plat_priv	*priv = NULL;
-	bool			of_match;
+	const struct of_device_id *of_match;
 
 	if (usb_disabled())
 		return -ENODEV;
@@ -326,7 +326,8 @@ int xhci_plat_probe(struct platform_device *pdev, struct device *sysdev, const s
 	}
 
 	usb3_hcd = xhci_get_usb3_hcd(xhci);
-	if (usb3_hcd && HCC_MAX_PSA(xhci->hcc_params) >= 4)
+	if (usb3_hcd && HCC_MAX_PSA(xhci->hcc_params) >= 4 &&
+	    !(xhci->quirks & XHCI_BROKEN_STREAMS))
 		usb3_hcd->can_do_streams = 1;
 
 	if (xhci->shared_hcd) {
@@ -477,9 +478,10 @@ static int xhci_plat_suspend(struct device *dev)
 	return 0;
 }
 
-static int xhci_plat_resume_common(struct device *dev, struct pm_message pmsg)
+static int xhci_plat_resume_common(struct device *dev, bool power_lost)
 {
 	struct usb_hcd	*hcd = dev_get_drvdata(dev);
+	struct xhci_plat_priv *priv = hcd_to_xhci_priv(hcd);
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 	int ret;
 
@@ -499,7 +501,7 @@ static int xhci_plat_resume_common(struct device *dev, struct pm_message pmsg)
 	if (ret)
 		goto disable_clks;
 
-	ret = xhci_resume(xhci, pmsg);
+	ret = xhci_resume(xhci, power_lost || priv->power_lost, false);
 	if (ret)
 		goto disable_clks;
 
@@ -520,12 +522,12 @@ disable_clks:
 
 static int xhci_plat_resume(struct device *dev)
 {
-	return xhci_plat_resume_common(dev, PMSG_RESUME);
+	return xhci_plat_resume_common(dev, false);
 }
 
 static int xhci_plat_restore(struct device *dev)
 {
-	return xhci_plat_resume_common(dev, PMSG_RESTORE);
+	return xhci_plat_resume_common(dev, true);
 }
 
 static int __maybe_unused xhci_plat_runtime_suspend(struct device *dev)
@@ -546,7 +548,7 @@ static int __maybe_unused xhci_plat_runtime_resume(struct device *dev)
 	struct usb_hcd  *hcd = dev_get_drvdata(dev);
 	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
 
-	return xhci_resume(xhci, PMSG_AUTO_RESUME);
+	return xhci_resume(xhci, false, true);
 }
 
 const struct dev_pm_ops xhci_plat_pm_ops = {

@@ -36,6 +36,13 @@
 #include "tidss_dispc_regs.h"
 #include "tidss_scale_coefs.h"
 
+/*
+ * Position value used by the erratum i2097 workaround to move an OVR layer
+ * into the non-visible area. 0x3FFF exceeds the maximum display resolution
+ * supported by any SoC using this driver.
+ */
+#define OVR_LAYER_MAX_POS		0x3FFFu
+
 static const u16 tidss_k2g_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
 	[DSS_REVISION_OFF] =                    0x00,
 	[DSS_SYSCONFIG_OFF] =                   0x04,
@@ -162,7 +169,7 @@ static const u16 tidss_am62l_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
 const struct dispc_features dispc_am65x_feats = {
 	.max_pclk_khz = {
 		[DISPC_VP_DPI] = 165000,
-		[DISPC_VP_OLDI] = 165000,
+		[DISPC_VP_OLDI_AM65X] = 165000,
 	},
 
 	.scaling = {
@@ -192,7 +199,7 @@ const struct dispc_features dispc_am65x_feats = {
 	.vp_name = { "vp1", "vp2" },
 	.ovr_name = { "ovr1", "ovr2" },
 	.vpclk_name =  { "vp1", "vp2" },
-	.vp_bus_type = { DISPC_VP_OLDI, DISPC_VP_DPI },
+	.vp_bus_type = { DISPC_VP_OLDI_AM65X, DISPC_VP_DPI },
 
 	.vp_feat = { .color = {
 			.has_ctm = true,
@@ -553,13 +560,14 @@ struct dispc_device {
 	void __iomem *base_ovr[TIDSS_MAX_PORTS];
 	void __iomem *base_vp[TIDSS_MAX_PORTS];
 
-	struct regmap *oldi_io_ctrl;
+	struct regmap *am65x_oldi_io_ctrl;
 
 	struct clk *vp_clk[TIDSS_MAX_PORTS];
 
 	const struct dispc_features *feat;
 
 	struct clk *fclk;
+	struct regmap *clk_ctrl;
 
 	bool is_enabled;
 
@@ -571,6 +579,9 @@ struct dispc_device {
 	u32 memory_bandwidth_limit;
 
 	struct dispc_errata errata;
+
+	// WA for erratum i2097: OVR Layer Disable May Cause Sync Lost.
+	u32 pending_disable_layers[TIDSS_MAX_PORTS];
 };
 
 static void dispc_write(struct dispc_device *dispc, u16 reg, u32 val)
@@ -1164,13 +1175,11 @@ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
 	}
 }
 
-enum dispc_oldi_mode_reg_val { SPWG_18 = 0, JEIDA_24 = 1, SPWG_24 = 2 };
-
 struct dispc_bus_format {
 	u32 bus_fmt;
 	u32 data_width;
 	bool is_oldi_fmt;
-	enum dispc_oldi_mode_reg_val oldi_mode_reg_val;
+	enum oldi_mode_reg_val am65x_oldi_mode_reg_val;
 };
 
 static const struct dispc_bus_format dispc_bus_formats[] = {
@@ -1214,7 +1223,7 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
 		return -EINVAL;
 	}
 
-	if (dispc->feat->vp_bus_type[hw_videoport] != DISPC_VP_OLDI &&
+	if (dispc->feat->vp_bus_type[hw_videoport] != DISPC_VP_OLDI_AM65X &&
 	    fmt->is_oldi_fmt) {
 		dev_dbg(dispc->dev, "%s: %s is not OLDI-port\n",
 			__func__, dispc->feat->vp_name[hw_videoport]);
@@ -1224,23 +1233,23 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
 	return 0;
 }
 
-static void dispc_oldi_tx_power(struct dispc_device *dispc, bool power)
+static void dispc_am65x_oldi_tx_power(struct dispc_device *dispc, bool power)
 {
-	u32 val = power ? 0 : OLDI_PWRDN_TX;
+	u32 val = power ? 0 : AM65X_OLDI_PWRDN_TX;
 
-	if (WARN_ON(!dispc->oldi_io_ctrl))
+	if (WARN_ON(!dispc->am65x_oldi_io_ctrl))
 		return;
 
-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT0_IO_CTRL,
-			   OLDI_PWRDN_TX, val);
-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT1_IO_CTRL,
-			   OLDI_PWRDN_TX, val);
-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT2_IO_CTRL,
-			   OLDI_PWRDN_TX, val);
-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT3_IO_CTRL,
-			   OLDI_PWRDN_TX, val);
-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_CLK_IO_CTRL,
-			   OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT0_IO_CTRL,
+			   AM65X_OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT1_IO_CTRL,
+			   AM65X_OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT2_IO_CTRL,
+			   AM65X_OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT3_IO_CTRL,
+			   AM65X_OLDI_PWRDN_TX, val);
+	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_CLK_IO_CTRL,
+			   AM65X_OLDI_PWRDN_TX, val);
 }
 
 static void dispc_set_num_datalines(struct dispc_device *dispc,
@@ -1269,8 +1278,8 @@ static void dispc_set_num_datalines(struct dispc_device *dispc,
 	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, v, 10, 8);
 }
 
-static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
-			      const struct dispc_bus_format *fmt)
+static void dispc_enable_am65x_oldi(struct dispc_device *dispc, u32 hw_videoport,
+				    const struct dispc_bus_format *fmt)
 {
 	u32 oldi_cfg = 0;
 	u32 oldi_reset_bit = BIT(5 + hw_videoport);
@@ -1289,7 +1298,7 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
 
 	oldi_cfg |= BIT(7); /* DEPOL */
 
-	oldi_cfg = FLD_MOD(oldi_cfg, fmt->oldi_mode_reg_val, 3, 1);
+	oldi_cfg = FLD_MOD(oldi_cfg, fmt->am65x_oldi_mode_reg_val, 3, 1);
 
 	oldi_cfg |= BIT(12); /* SOFTRST */
 
@@ -1309,6 +1318,12 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
 void dispc_vp_prepare(struct dispc_device *dispc, u32 hw_videoport,
 		      const struct drm_crtc_state *state)
 {
+	/*
+	 * WA for erratum i2097: clear any stale layer disable tracking
+	 * state left over from the previous VP enable/disable cycle.
+	 */
+	dispc->pending_disable_layers[hw_videoport] = 0;
+
 	const struct tidss_crtc_state *tstate = to_tidss_crtc_state(state);
 	const struct dispc_bus_format *fmt;
 
@@ -1318,10 +1333,10 @@ void dispc_vp_prepare(struct dispc_device *dispc, u32 hw_videoport,
 	if (WARN_ON(!fmt))
 		return;
 
-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
-		dispc_oldi_tx_power(dispc, true);
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X) {
+		dispc_am65x_oldi_tx_power(dispc, true);
 
-		dispc_enable_oldi(dispc, hw_videoport, fmt);
+		dispc_enable_am65x_oldi(dispc, hw_videoport, fmt);
 	}
 }
 
@@ -1377,7 +1392,7 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
 	align = true;
 
 	/* always use DE_HIGH for OLDI */
-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI)
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X)
 		ieo = false;
 
 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_POL_FREQ,
@@ -1394,6 +1409,19 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
 		       FLD_VAL(mode->crtc_vdisplay - 1, 27, 16));
 
 	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 0, 0);
+
+	if (dispc->clk_ctrl) {
+		regmap_update_bits(dispc->clk_ctrl, 0, 0x100, ipc ? 0x100 : 0x000);
+		regmap_update_bits(dispc->clk_ctrl, 0, 0x200, rf ? 0x200 : 0x000);
+	}
+
+	/*
+	 * AM62L: Disable DPIENABLE bitfield (bit 6) when DSI bridge is in use.
+	 * The DPI output path is unused in DSI configurations and disabling it
+	 * reduces power consumption.
+	 */
+	if (dispc->feat->subrev == DISPC_AM62L && dispc->tidss->disable_dpi_pipe_block)
+		VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 0, 6, 6);
 }
 
 void dispc_vp_disable(struct dispc_device *dispc, u32 hw_videoport)
@@ -1403,10 +1431,10 @@ void dispc_vp_disable(struct dispc_device *dispc, u32 hw_videoport)
 
 void dispc_vp_unprepare(struct dispc_device *dispc, u32 hw_videoport)
 {
-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
+	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X) {
 		dispc_vp_write(dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, 0);
 
-		dispc_oldi_tx_power(dispc, false);
+		dispc_am65x_oldi_tx_power(dispc, false);
 	}
 }
 
@@ -1418,6 +1446,28 @@ bool dispc_vp_go_busy(struct dispc_device *dispc, u32 hw_videoport)
 void dispc_vp_go(struct dispc_device *dispc, u32 hw_videoport)
 {
 	WARN_ON(VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5));
+
+	if (dispc->errata.i2097 &&
+	    dispc->pending_disable_layers[hw_videoport]) {
+		u32 layer;
+
+		/*
+		 * WA for erratum i2097:
+		 *
+		 * Write ENABLE=0 here, immediately before the GO bit, so
+		 * that the "disable layer MMR write" and "GO bit set"
+		 * always occur within the same frame window.
+		 */
+		for (layer = 0; layer < dispc->feat->num_planes; layer++) {
+			if (dispc->pending_disable_layers[hw_videoport] &
+			    BIT(layer))
+				OVR_REG_FLD_MOD(dispc, hw_videoport,
+						DISPC_OVR_ATTRIBUTES(layer),
+						0, 0, 0);
+		}
+		dispc->pending_disable_layers[hw_videoport] = 0;
+	}
+
 	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 5, 5);
 }
 
@@ -1700,6 +1750,57 @@ void dispc_ovr_enable_layer(struct dispc_device *dispc,
 {
 	if (dispc->feat->subrev == DISPC_K2G)
 		return;
+
+	if (dispc->errata.i2097 && !enable) {
+		/*
+		 * WA for erratum i2097:
+		 *
+		 * Do not write ENABLE=0 directly. Instead move the layer to
+		 * the non-visible area so it contributes no pixels.
+		 *
+		 * Position register layout differs per SoC:
+		 *   J721E : DISPC_OVR_ATTRIBUTES2, X[13:0],  Y[29:16] (14-bit)
+		 *   Others: DISPC_OVR_ATTRIBUTES,  X[17:6],  Y[30:19] (12-bit)
+		 */
+		switch (dispc->feat->subrev) {
+		case DISPC_J721E:
+			OVR_REG_FLD_MOD(dispc, hw_videoport,
+					DISPC_OVR_ATTRIBUTES2(layer),
+					OVR_LAYER_MAX_POS, 13, 0);
+			OVR_REG_FLD_MOD(dispc, hw_videoport,
+					DISPC_OVR_ATTRIBUTES2(layer),
+					OVR_LAYER_MAX_POS, 29, 16);
+			break;
+		case DISPC_AM62L:
+			OVR_REG_FLD_MOD(dispc, 0,
+					DISPC_OVR_ATTRIBUTES(0),
+					OVR_LAYER_MAX_POS, 17, 6);
+			OVR_REG_FLD_MOD(dispc, 0,
+					DISPC_OVR_ATTRIBUTES(0),
+					OVR_LAYER_MAX_POS, 30, 19);
+			break;
+		default:
+			OVR_REG_FLD_MOD(dispc, hw_videoport,
+					DISPC_OVR_ATTRIBUTES(layer),
+					OVR_LAYER_MAX_POS, 17, 6);
+			OVR_REG_FLD_MOD(dispc, hw_videoport,
+					DISPC_OVR_ATTRIBUTES(layer),
+					OVR_LAYER_MAX_POS, 30, 19);
+			break;
+		}
+
+		dispc->pending_disable_layers[hw_videoport] |= BIT(layer);
+		return;
+	}
+
+	if (dispc->errata.i2097 && enable) {
+		/*
+		 * Layer being re-enabled: cancel any pending disable so
+		 * dispc_vp_go() does not write ENABLE=0 after we have
+		 * just written ENABLE=1 here.
+		 */
+		dispc->pending_disable_layers[hw_videoport] &= ~BIT(layer);
+	}
 
 	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
 			!!enable, 0, 0);
@@ -3196,15 +3297,15 @@ static int dispc_iomap_resource(struct platform_device *pdev, const char *name,
 static int dispc_init_am65x_oldi_io_ctrl(struct device *dev,
 					 struct dispc_device *dispc)
 {
-	dispc->oldi_io_ctrl =
+	dispc->am65x_oldi_io_ctrl =
 		syscon_regmap_lookup_by_phandle(dev->of_node,
 						"ti,am65x-oldi-io-ctrl");
-	if (PTR_ERR(dispc->oldi_io_ctrl) == -ENODEV) {
-		dispc->oldi_io_ctrl = NULL;
-	} else if (IS_ERR(dispc->oldi_io_ctrl)) {
+	if (PTR_ERR(dispc->am65x_oldi_io_ctrl) == -ENODEV) {
+		dispc->am65x_oldi_io_ctrl = NULL;
+	} else if (IS_ERR(dispc->am65x_oldi_io_ctrl)) {
 		dev_err(dev, "%s: syscon_regmap_lookup_by_phandle failed %ld\n",
-			__func__, PTR_ERR(dispc->oldi_io_ctrl));
-		return PTR_ERR(dispc->oldi_io_ctrl);
+			__func__, PTR_ERR(dispc->am65x_oldi_io_ctrl));
+		return PTR_ERR(dispc->am65x_oldi_io_ctrl);
 	}
 	return 0;
 }
@@ -3219,6 +3320,12 @@ static void dispc_init_errata(struct dispc_device *dispc)
 	if (soc_device_match(am65x_sr10_soc_devices)) {
 		dispc->errata.i2000 = true;
 		dev_info(dispc->dev, "WA for erratum i2000: YUV formats disabled\n");
+	}
+
+	if (dispc->feat->subrev != DISPC_K2G) {
+		dispc->errata.i2097 = true;
+		dev_info(dispc->dev,
+			 "WA for erratum i2097: OVR layer disable uses non-visible area\n");
 	}
 }
 
@@ -3395,6 +3502,14 @@ int dispc_init(struct tidss_device *tidss)
 	dispc->feat = feat;
 
 	dispc_init_errata(dispc);
+
+	dispc->clk_ctrl = syscon_regmap_lookup_by_phandle_optional(tidss->dev->of_node,
+								   "ti,clk-ctrl");
+	if (IS_ERR(dispc->clk_ctrl)) {
+		r = dev_err_probe(dispc->dev, PTR_ERR(dispc->clk_ctrl),
+				  "DISPC: syscon_regmap_lookup_by_phandle failed.\n");
+		return r;
+	}
 
 	dispc->fourccs = devm_kcalloc(dev, ARRAY_SIZE(dispc_color_formats),
 				      sizeof(*dispc->fourccs), GFP_KERNEL);

@@ -399,8 +399,8 @@
 
 	main_i2c0_pins_default: main-i2c0-default-pins {
 		pinctrl-single,pins = <
-			J784S4_IOPAD(0x0e0, PIN_INPUT_PULLUP, 0) /* (AN36) I2C0_SCL */
-			J784S4_IOPAD(0x0e4, PIN_INPUT_PULLUP, 0) /* (AP37) I2C0_SDA */
+			J784S4_IOPAD(0x0e0, PIN_INPUT, 0) /* (AN36) I2C0_SCL */
+			J784S4_IOPAD(0x0e4, PIN_INPUT, 0) /* (AP37) I2C0_SDA */
 		>;
 	};
 
@@ -1252,6 +1252,7 @@
 	mboxes = <&mailbox0_cluster0 &mbox_mcu_r5fss0_core0>;
 	memory-region = <&mcu_r5fss0_core0_dma_memory_region>,
 			<&mcu_r5fss0_core0_memory_region>;
+	ti,rproc-attach-only;
 };
 
 &mcu_r5fss0_core1 {
@@ -1398,6 +1399,7 @@
 &serdes_refclk {
 	status = "okay";
 	clock-frequency = <100000000>;
+	bootph-all;
 };
 
 &dss {
@@ -1412,6 +1414,14 @@
 				 <&k3_clks 218 22>;
 };
 
+&pcie1_ctrl {
+	bootph-all;
+};
+
+&serdes_ln_ctrl {
+	bootph-all;
+};
+
 &serdes0 {
 	status = "okay";
 
@@ -1421,6 +1431,7 @@
 		#phy-cells = <0>;
 		cdns,phy-type = <PHY_TYPE_PCIE>;
 		resets = <&serdes_wiz0 1>, <&serdes_wiz0 2>;
+		bootph-all;
 	};
 
 	serdes0_usb_link: phy@3 {

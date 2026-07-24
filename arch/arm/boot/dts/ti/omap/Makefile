@@ -82,6 +82,10 @@ dtb-$(CONFIG_ARCH_OMAP4) += \
 	omap4-var-stk-om44.dtb \
 	omap4-xyboard-mz609.dtb \
 	omap4-xyboard-mz617.dtb
+
+am335x-bone-hdmi-00a0-dtbs := am335x-bonegreen-eco.dtb \
+	am335x-bone-hdmi-00a0.dtbo
+
 dtb-$(CONFIG_SOC_AM33XX) += \
 	am335x-baltos-ir2110.dtb \
 	am335x-baltos-ir3220.dtb \
@@ -94,12 +98,14 @@ dtb-$(CONFIG_SOC_AM33XX) += \
 	am335x-bonegreen.dtb \
 	am335x-bonegreen-wireless.dtb \
 	am335x-bonegreen-eco.dtb \
+	am335x-bone-hdmi-00a0.dtbo \
 	am335x-chiliboard.dtb \
 	am335x-cm-t335.dtb \
 	am335x-evm.dtb \
 	am335x-evmsk.dtb \
 	am335x-guardian.dtb \
 	am335x-icev2.dtb \
+	am335x-icev2-prueth.dtb \
 	am335x-lxm.dtb \
 	am335x-moxa-uc-2101.dtb \
 	am335x-moxa-uc-8100-me-t.dtb \
@@ -125,6 +131,7 @@ dtb-$(CONFIG_SOC_AM43XX) += \
 	am43x-epos-evm.dtb \
 	am437x-cm-t43.dtb \
 	am437x-gp-evm.dtb \
+	am437x-gp-evm-hdmi.dtb \
 	am437x-idk-evm.dtb \
 	am437x-sbc-t43.dtb \
 	am437x-sk-evm.dtb
@@ -175,3 +182,10 @@ dtb-$(CONFIG_SOC_TI81XX) += \
 	dm8148-t410.dtb \
 	dm8168-evm.dtb \
 	dra62x-j5eco-evm.dtb
+
+# Enable support for device-tree overlays
+DTC_FLAGS_am335x-boneblack += -@
+DTC_FLAGS_am335x-boneblack-wireless += -@
+DTC_FLAGS_am335x-bonegreen += -@
+DTC_FLAGS_am335x-bonegreen-wireless += -@
+DTC_FLAGS_am335x-bonegreen-eco += -@

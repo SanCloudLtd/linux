@@ -2243,6 +2243,7 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 			get_net_track(net, &sk->ns_tracker, priority);
 			sock_inuse_add(net, 1);
 		} else {
+			net_passive_inc(net);
 			__netns_tracker_alloc(net, &sk->ns_tracker,
 					      false, priority);
 		}
@@ -2267,6 +2268,7 @@ EXPORT_SYMBOL(sk_alloc);
 static void __sk_destruct(struct rcu_head *head)
 {
 	struct sock *sk = container_of(head, struct sock, sk_rcu);
+	struct net *net = sock_net(sk);
 	struct sk_filter *filter;
 
 	if (sk->sk_destruct)
@@ -2298,13 +2300,27 @@ static void __sk_destruct(struct rcu_head *head)
 	put_cred(sk->sk_peer_cred);
 	put_pid(sk->sk_peer_pid);
 
-	if (likely(sk->sk_net_refcnt))
-		put_net_track(sock_net(sk), &sk->ns_tracker);
-	else
-		__netns_tracker_free(sock_net(sk), &sk->ns_tracker, false);
-
+	if (likely(sk->sk_net_refcnt)) {
+		put_net_track(net, &sk->ns_tracker);
+	} else {
+		__netns_tracker_free(net, &sk->ns_tracker, false);
+		net_passive_dec(net);
+	}
 	sk_prot_free(sk->sk_prot_creator, sk);
 }
+
+void sk_net_refcnt_upgrade(struct sock *sk)
+{
+	struct net *net = sock_net(sk);
+
+	WARN_ON_ONCE(sk->sk_net_refcnt);
+	__netns_tracker_free(net, &sk->ns_tracker, false);
+	net_passive_dec(net);
+	sk->sk_net_refcnt = 1;
+	get_net_track(net, &sk->ns_tracker, GFP_KERNEL);
+	sock_inuse_add(net, 1);
+}
+EXPORT_SYMBOL_GPL(sk_net_refcnt_upgrade);
 
 void sk_destruct(struct sock *sk)
 {
@@ -2402,6 +2418,7 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 		 * is not properly dismantling its kernel sockets at netns
 		 * destroy time.
 		 */
+		net_passive_inc(sock_net(newsk));
 		__netns_tracker_alloc(sock_net(newsk), &newsk->ns_tracker,
 				      false, priority);
 	}
@@ -2517,8 +2534,8 @@ static u32 sk_dst_gso_max_size(struct sock *sk, struct dst_entry *dst)
 		   !ipv6_addr_v4mapped(&sk->sk_v6_rcv_saddr));
 #endif
 	/* pairs with the WRITE_ONCE() in netif_set_gso(_ipv4)_max_size() */
-	max_size = is_ipv6 ? READ_ONCE(dst->dev->gso_max_size) :
-			READ_ONCE(dst->dev->gso_ipv4_max_size);
+	max_size = is_ipv6 ? READ_ONCE(dst_dev(dst)->gso_max_size) :
+			READ_ONCE(dst_dev(dst)->gso_ipv4_max_size);
 	if (max_size > GSO_LEGACY_MAX_SIZE && !sk_is_tcp(sk))
 		max_size = GSO_LEGACY_MAX_SIZE;
 
@@ -2529,9 +2546,13 @@ void sk_setup_caps(struct sock *sk, struct dst_entry *dst)
 {
 	u32 max_segs = 1;
 
-	sk->sk_route_caps = dst->dev->features;
-	if (sk_is_tcp(sk))
+	sk->sk_route_caps = dst_dev(dst)->features;
+	if (sk_is_tcp(sk)) {
+		struct inet_connection_sock *icsk = inet_csk(sk);
+
 		sk->sk_route_caps |= NETIF_F_GSO;
+		icsk->icsk_ack.dst_quick_ack = dst_metric(dst, RTAX_QUICKACK);
+	}
 	if (sk->sk_route_caps & NETIF_F_GSO)
 		sk->sk_route_caps |= NETIF_F_GSO_SOFTWARE;
 	if (unlikely(sk->sk_gso_disabled))
@@ -2543,7 +2564,7 @@ void sk_setup_caps(struct sock *sk, struct dst_entry *dst)
 			sk->sk_route_caps |= NETIF_F_SG | NETIF_F_HW_CSUM;
 			sk->sk_gso_max_size = sk_dst_gso_max_size(sk, dst);
 			/* pairs with the WRITE_ONCE() in netif_set_gso_max_segs() */
-			max_segs = max_t(u32, READ_ONCE(dst->dev->gso_max_segs), 1);
+			max_segs = max_t(u32, READ_ONCE(dst_dev(dst)->gso_max_segs), 1);
 		}
 	}
 	sk->sk_gso_max_segs = max_segs;
@@ -2911,6 +2932,7 @@ EXPORT_SYMBOL(sock_alloc_send_pskb);
 int __sock_cmsg_send(struct sock *sk, struct cmsghdr *cmsg,
 		     struct sockcm_cookie *sockc)
 {
+	struct skb_redundant_info *cred;
 	u32 tsflags;
 
 	switch (cmsg->cmsg_type) {
@@ -2944,6 +2966,16 @@ int __sock_cmsg_send(struct sock *sk, struct cmsghdr *cmsg,
 	/* SCM_RIGHTS and SCM_CREDENTIALS are semantically in SOL_UNIX. */
 	case SCM_RIGHTS:
 	case SCM_CREDENTIALS:
+		break;
+	case SCM_REDUNDANT:
+		if (cmsg->cmsg_len !=
+		    CMSG_LEN(sizeof(struct skb_redundant_info))) {
+			return -EINVAL;
+		}
+
+		cred = (struct skb_redundant_info *)CMSG_DATA(cmsg);
+		memcpy(&sockc->redinfo, cred,
+		       sizeof(struct skb_redundant_info));
 		break;
 	default:
 		return -EINVAL;
@@ -3741,6 +3773,7 @@ void sock_enable_timestamp(struct sock *sk, enum sock_flags flag)
 int sock_recv_errqueue(struct sock *sk, struct msghdr *msg, int len,
 		       int level, int type)
 {
+	struct skb_redundant_info *sred;
 	struct sock_exterr_skb *serr;
 	struct sk_buff *skb;
 	int copied, err;
@@ -3760,6 +3793,9 @@ int sock_recv_errqueue(struct sock *sk, struct msghdr *msg, int len,
 		goto out_free_skb;
 
 	sock_recv_timestamp(msg, sk, skb);
+
+	sred = skb_redinfo(skb);
+	put_cmsg(msg, SOL_SOCKET, SCM_REDUNDANT, sizeof(*sred), sred);
 
 	serr = SKB_EXT_ERR(skb);
 	put_cmsg(msg, level, type, sizeof(serr->ee), &serr->ee);

@@ -3379,12 +3379,10 @@ static const struct spi_controller_mem_caps cqspi_mem_caps = {
 
 static int cqspi_setup_flash(struct cqspi_st *cqspi)
 {
-	unsigned int max_cs = 0;
 	struct platform_device *pdev = cqspi->pdev;
 	struct device *dev = &pdev->dev;
 	struct cqspi_flash_pdata *f_pdata;
-	unsigned int cs;
-	int ret;
+	int ret, cs, max_cs = -1;
 
 	/* Get flash device data */
 	for_each_available_child_of_node_scoped(dev->of_node, np) {
@@ -3397,9 +3395,9 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi)
 		if (cs >= cqspi->num_chipselect) {
 			dev_err(dev, "Chip select %d out of range.\n", cs);
 			return -EINVAL;
-		} else if (cs > max_cs) {
-			max_cs = cs;
 		}
+
+		max_cs = max_t(int, cs, max_cs);
 
 		f_pdata = &cqspi->f_pdata[cs];
 		f_pdata->cqspi = cqspi;
@@ -3408,6 +3406,11 @@ static int cqspi_setup_flash(struct cqspi_st *cqspi)
 		ret = cqspi_of_get_flash_pdata(pdev, f_pdata, np);
 		if (ret)
 			return ret;
+	}
+
+	if (max_cs < 0) {
+		dev_err(dev, "No flash device declared\n");
+		return -ENODEV;
 	}
 
 	cqspi->num_chipselect = max_cs + 1;
@@ -3633,6 +3636,8 @@ static int cqspi_probe(struct platform_device *pdev)
 	cqspi->current_cs = -1;
 	cqspi->sclk = 0;
 
+	pm_runtime_enable(dev);
+
 	ret = cqspi_setup_flash(cqspi);
 	if (ret) {
 		dev_err(dev, "failed to setup flash parameters %d\n", ret);
@@ -3645,13 +3650,6 @@ static int cqspi_probe(struct platform_device *pdev)
 		ret = cqspi_request_mmap_dma(cqspi);
 		if (ret == -EPROBE_DEFER)
 			goto probe_setup_failed;
-	}
-
-	ret = devm_pm_runtime_enable(dev);
-	if (ret) {
-		if (cqspi->rx_chan)
-			dma_release_channel(cqspi->rx_chan);
-		goto probe_setup_failed;
 	}
 
 	pm_runtime_set_autosuspend_delay(dev, CQSPI_AUTOSUSPEND_TIMEOUT);
@@ -3670,6 +3668,7 @@ static int cqspi_probe(struct platform_device *pdev)
 	return 0;
 probe_setup_failed:
 	cqspi_controller_enable(cqspi, 0);
+	pm_runtime_disable(dev);
 probe_reset_failed:
 	if (cqspi->is_jh7110)
 		cqspi_jh7110_disable_clk(pdev, cqspi);
@@ -3688,7 +3687,8 @@ static void cqspi_remove(struct platform_device *pdev)
 	if (cqspi->rx_chan)
 		dma_release_channel(cqspi->rx_chan);
 
-	clk_disable_unprepare(cqspi->clk);
+	if (pm_runtime_get_sync(&pdev->dev) >= 0)
+		clk_disable(cqspi->clk);
 
 	if (cqspi->is_jh7110)
 		cqspi_jh7110_disable_clk(pdev, cqspi);
