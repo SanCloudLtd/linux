@@ -17,6 +17,8 @@
 	model = "Texas Instruments AM62A7 SK";
 
 	aliases {
+		serial0 = &mcu_uart0;
+		serial1 = &wkup_uart0;
 		serial2 = &main_uart0;
 		mmc0 = &sdhci0;
 		mmc1 = &sdhci1;
@@ -438,6 +440,24 @@
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
 
+	typec_pd0: usb-power-controller@3f {
+		compatible = "ti,tps6598x";
+		reg = <0x3f>;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			self-powered;
+			data-role = "dual";
+			power-role = "sink";
+			port {
+				usb_con_hs: endpoint {
+					remote-endpoint = <&usb0_hs_ep>;
+				};
+			};
+		};
+	};
+
 	tps659312: pmic@48 {
 		compatible = "ti,tps6593-q1";
 		reg = <0x48>;
@@ -655,6 +675,24 @@
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_uart0_pins_default>;
+	interrupts-extended = <&gic500 GIC_SPI 178 IRQ_TYPE_LEVEL_HIGH>,
+			<&main_pmx0 0x1c8>; /* (D14) UART0_RXD PADCONFIG114 */
+	interrupt-names = "irq", "wakeup";
+};
+
+&usbss0 {
+	status = "okay";
+	ti,vbus-divider;
+};
+
+&usb0 {
+	usb-role-switch;
+
+	port {
+		usb0_hs_ep: endpoint {
+			remote-endpoint = <&usb_con_hs>;
+		};
+	};
 };
 
 &usbss1 {
@@ -810,6 +848,7 @@
 };
 
 &mailbox0_cluster0 {
+	ti,mbox-num-fifos = <2>;
 	mbox_r5_0: mbox-r5-0 {
 		ti,mbox-rx = <0 0 0>;
 		ti,mbox-tx = <1 0 0>;
@@ -817,6 +856,7 @@
 };
 
 &mailbox0_cluster1 {
+	ti,mbox-num-fifos = <2>;
 	mbox_c7x_0: mbox-c7x-0 {
 		ti,mbox-rx = <0 0 0>;
 		ti,mbox-tx = <1 0 0>;
@@ -824,6 +864,7 @@
 };
 
 &mailbox0_cluster2 {
+	ti,mbox-num-fifos = <2>;
 	mbox_mcu_r5_0: mbox-mcu_r5-0 {
 		ti,mbox-rx = <0 0 0>;
 		ti,mbox-tx = <1 0 0>;

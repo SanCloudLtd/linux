@@ -481,6 +481,7 @@ config HISI_HIKEY_USB
 config OPEN_DICE
 	tristate "Open Profile for DICE driver"
 	depends on OF_RESERVED_MEM
+	depends on HAS_IOMEM
 	help
 	  This driver exposes a DICE reserved memory region to userspace via
 	  a character device. The memory region contains Compound Device
@@ -505,6 +506,7 @@ config VCPU_STALL_DETECTOR
 
 config DMA_BUF_PHYS
 	tristate "DMA-BUF physical address user-space exporter"
+	depends on DMA_SHARED_BUFFER
 	default y
 	help
 	  Exports CPU physical address of DMA-BUF to user-space.

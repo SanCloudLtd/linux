@@ -2732,28 +2732,31 @@ static void bpf_link_put_deferred(struct work_struct *work)
 	bpf_link_free(link);
 }
 
-/* bpf_link_put can be called from atomic context, but ensures that resources
- * are freed from process context
+/* bpf_link_put might be called from atomic context. It needs to be called
+ * from sleepable context in order to acquire sleeping locks during the process.
  */
 void bpf_link_put(struct bpf_link *link)
 {
 	if (!atomic64_dec_and_test(&link->refcnt))
 		return;
 
-	if (in_atomic()) {
-		INIT_WORK(&link->work, bpf_link_put_deferred);
-		schedule_work(&link->work);
-	} else {
-		bpf_link_free(link);
-	}
+	INIT_WORK(&link->work, bpf_link_put_deferred);
+	schedule_work(&link->work);
 }
 EXPORT_SYMBOL(bpf_link_put);
+
+static void bpf_link_put_direct(struct bpf_link *link)
+{
+	if (!atomic64_dec_and_test(&link->refcnt))
+		return;
+	bpf_link_free(link);
+}
 
 static int bpf_link_release(struct inode *inode, struct file *filp)
 {
 	struct bpf_link *link = filp->private_data;
 
-	bpf_link_put(link);
+	bpf_link_put_direct(link);
 	return 0;
 }
 
@@ -3383,6 +3386,11 @@ static int bpf_prog_attach_check_attach_type(const struct bpf_prog *prog,
 		return prog->enforce_expected_attach_type &&
 			prog->expected_attach_type != attach_type ?
 			-EINVAL : 0;
+	case BPF_PROG_TYPE_KPROBE:
+		if (prog->expected_attach_type == BPF_TRACE_KPROBE_MULTI &&
+		    attach_type != BPF_TRACE_KPROBE_MULTI)
+			return -EINVAL;
+		return 0;
 	default:
 		return 0;
 	}
@@ -4669,7 +4677,7 @@ out_put_progs:
 	if (ret)
 		bpf_prog_put(new_prog);
 out_put_link:
-	bpf_link_put(link);
+	bpf_link_put_direct(link);
 	return ret;
 }
 
@@ -4692,7 +4700,7 @@ static int link_detach(union bpf_attr *attr)
 	else
 		ret = -EOPNOTSUPP;
 
-	bpf_link_put(link);
+	bpf_link_put_direct(link);
 	return ret;
 }
 
@@ -4762,7 +4770,7 @@ static int bpf_link_get_fd_by_id(const union bpf_attr *attr)
 
 	fd = bpf_link_new_fd(link);
 	if (fd < 0)
-		bpf_link_put(link);
+		bpf_link_put_direct(link);
 
 	return fd;
 }
@@ -4839,7 +4847,7 @@ static int bpf_iter_create(union bpf_attr *attr)
 		return PTR_ERR(link);
 
 	err = bpf_iter_new_fd(link);
-	bpf_link_put(link);
+	bpf_link_put_direct(link);
 
 	return err;
 }
@@ -5130,14 +5138,15 @@ int kern_sys_bpf(int cmd, union bpf_attr *attr, unsigned int size)
 		}
 
 		run_ctx.bpf_cookie = 0;
-		run_ctx.saved_run_ctx = NULL;
-		if (!__bpf_prog_enter_sleepable(prog, &run_ctx)) {
+		if (!__bpf_prog_enter_sleepable_recur(prog, &run_ctx)) {
 			/* recursion detected */
+			__bpf_prog_exit_sleepable_recur(prog, 0, &run_ctx);
 			bpf_prog_put(prog);
 			return -EBUSY;
 		}
 		attr->test.retval = bpf_prog_run(prog, (void *) (long) attr->test.ctx_in);
-		__bpf_prog_exit_sleepable(prog, 0 /* bpf_prog_run does runtime stats */, &run_ctx);
+		__bpf_prog_exit_sleepable_recur(prog, 0 /* bpf_prog_run does runtime stats */,
+						&run_ctx);
 		bpf_prog_put(prog);
 		return 0;
 #endif
@@ -5284,7 +5293,8 @@ static int bpf_unpriv_handler(struct ctl_table *table, int write,
 		*(int *)table->data = unpriv_enable;
 	}
 
-	unpriv_ebpf_notify(unpriv_enable);
+	if (write)
+		unpriv_ebpf_notify(unpriv_enable);
 
 	return ret;
 }

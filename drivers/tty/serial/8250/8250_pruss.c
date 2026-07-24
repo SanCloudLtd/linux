@@ -12,7 +12,6 @@
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/pruss.h>
 #include <linux/remoteproc.h>
 #include "8250.h"
 
