@@ -136,6 +136,9 @@ struct k3_r5_cluster {
  * @btcm_enable: flag to control BTCM enablement
  * @loczrama: flag to dictate which TCM is at device address 0x0
  * @released_from_reset: flag to signal when core is out of reset
+ * @is_cfg_cached: flag to signal if core's boot cfg is cached
+ * @attach_only: flag to signal if core supports only attach ops
+ * @always_on: flag to signal if core is always ON from Linux POV
  */
 struct k3_r5_core {
 	struct list_head elem;
@@ -155,7 +158,10 @@ struct k3_r5_core {
 	u32 set_cfg;
 	u32 clr_cfg;
 	u64 boot_vec;
+	bool is_cfg_cached;
 	bool released_from_reset;
+	bool attach_only;
+	bool always_on;
 };
 
 /**
@@ -168,6 +174,7 @@ struct k3_r5_core {
  * @core: cached pointer to r5 core structure being used
  * @rmem: reserved memory regions data
  * @num_rmems: number of reserved memory regions
+ * @is_suspending: flag to denote if system suspend has started
  */
 struct k3_r5_rproc {
 	struct device *dev;
@@ -182,6 +189,7 @@ struct k3_r5_rproc {
 	struct completion suspend_comp;
 	struct notifier_block pm_notifier;
 	u32 suspend_status;
+	bool is_suspending;
 };
 
 /**
@@ -294,6 +302,10 @@ static void k3_r5_rproc_mbox_callback(struct mbox_client *client, void *data)
 		complete(&kproc->suspend_comp);
 		break;
 	default:
+		if (kproc->is_suspending) {
+			dev_err(dev, "received stale message after suspend, dropping");
+			return;
+		}
 		/* silently handle all other valid messages */
 		if (msg >= RP_MBOX_READY && msg < RP_MBOX_END_MSG)
 			return;
@@ -489,7 +501,10 @@ static int k3_r5_rproc_request_mbox(struct rproc *rproc)
 	struct k3_r5_rproc *kproc = rproc->priv;
 	struct mbox_client *client = &kproc->client;
 	struct device *dev = kproc->dev;
-	int ret;
+	struct platform_device *mbox_pdev;
+	struct device_node *np = dev_of_node(dev);
+	struct device_node *mbox_np;
+	struct device_link *link;
 
 	client->dev = dev;
 	client->tx_done = NULL;
@@ -502,19 +517,21 @@ static int k3_r5_rproc_request_mbox(struct rproc *rproc)
 		return dev_err_probe(dev, PTR_ERR(kproc->mbox),
 				     "mbox_request_channel failed\n");
 
-	/*
-	 * Ping the remote processor, this is only for sanity-sake for now;
-	 * there is no functional effect whatsoever.
-	 *
-	 * Note that the reply will _not_ arrive immediately: this message
-	 * will wait in the mailbox fifo until the remote processor is booted.
-	 */
-	ret = mbox_send_message(kproc->mbox, (void *)RP_MBOX_ECHO_REQUEST);
-	if (ret < 0) {
-		dev_err(dev, "mbox_send_message failed: %d\n", ret);
-		mbox_free_channel(kproc->mbox);
-		return ret;
-	}
+	mbox_np = of_parse_phandle(np, "mboxes", 0);
+	if (IS_ERR(mbox_np))
+		return dev_err_probe(dev, PTR_ERR(mbox_np), "failed to get mboxes\n");
+
+	mbox_pdev = of_find_device_by_node(mbox_np);
+	of_node_put(mbox_np);
+	if (IS_ERR(mbox_pdev))
+		return dev_err_probe(dev, PTR_ERR(mbox_pdev), "mailbox device not yet ready\n");
+
+	/* Ensure mailbox is suspended after remoteproc */
+	link = device_link_add(dev, &mbox_pdev->dev, DL_FLAG_AUTOREMOVE_SUPPLIER);
+	put_device(&mbox_pdev->dev);
+	if (IS_ERR(link))
+		return dev_err_probe(dev, PTR_ERR(link),
+				     "Unable to create device link with mbox dev\n");
 
 	return 0;
 }
@@ -528,12 +545,13 @@ static int k3_r5_suspend(struct rproc *rproc)
 	struct device *dev = kproc->dev;
 	int ret = 0;
 
-	if (rproc->state != RPROC_RUNNING) {
+	if (rproc->state != RPROC_RUNNING && rproc->state != RPROC_ATTACHED) {
 		dev_err(dev, "remoteproc state not suspendable! State=%d\n", rproc->state);
 		return ret;
 	}
 
 	kproc->suspend_status = 0;
+	kproc->is_suspending = 1;
 	reinit_completion(&kproc->suspend_comp);
 
 	ret = mbox_send_message(kproc->mbox, (void *)msg);
@@ -551,11 +569,14 @@ static int k3_r5_suspend(struct rproc *rproc)
 	}
 
 	if (kproc->suspend_status == RP_MBOX_SUSPEND_ACK) {
-		/* shutdown the remote core */
+		/*
+		 * Try to shutdown the remote core gracefully. But do not block
+		 * suspend if shutdown fails, as the domain is going to go down
+		 * anyways.
+		 */
 		ret = rproc_shutdown(rproc);
 		if (ret) {
-			dev_err(dev, "rproc_shutdown failed, ret = %d\n", ret);
-			return -EBUSY;
+			dev_warn(dev, "rproc_shutdown failed, but continuing anyways ret = %d\n", ret);
 		}
 		kproc->rproc->state = RPROC_SUSPENDED;
 	} else if (kproc->suspend_status == RP_MBOX_SUSPEND_CANCEL) {
@@ -566,6 +587,8 @@ static int k3_r5_suspend(struct rproc *rproc)
 
 	return 0;
 }
+
+static int k3_r5_rproc_configure(struct k3_r5_rproc *kproc);
 
 static int k3_r5_resume(struct rproc *rproc)
 {
@@ -578,6 +601,8 @@ static int k3_r5_resume(struct rproc *rproc)
 
 	if (rproc->state != RPROC_SUSPENDED)
 		return ret;
+
+	kproc->is_suspending = 0;
 
 	ret = get_core_status(core, &cstatus);
 	if (ret) {
@@ -593,22 +618,41 @@ static int k3_r5_resume(struct rproc *rproc)
 			dev_err(dev, "PM mbox_send_message failed: %d\n", ret);
 			return ret;
 		}
+		kproc->rproc->state = RPROC_RUNNING;
+
+		/* Only to setup the RPMsg/Virtio IPC stack */
+		if (kproc->core->attach_only) {
+			kproc->rproc->state = RPROC_DETACHED;
+			goto rproc_boot;
+		}
 	} else {
 		dev_info(dev, "Core is off in resume\n");
-		/* restore device configuration */
-		ret = ti_sci_proc_set_config(core->tsp, core->boot_vec,
+		if (core->is_cfg_cached) {
+			/* restore device configuration */
+			ret = ti_sci_proc_set_config(core->tsp, core->boot_vec,
 						     core->set_cfg, core->clr_cfg);
-		if (ret)
-			dev_err(dev, "set config failed: %d\n", ret);
-
-		ret = rproc_boot(rproc);
-		if (ret) {
-			dev_err(dev, "rproc_boot failed: %d\n", ret);
-			return ret;
+			if (ret)
+				dev_err(dev, "set config failed: %d\n", ret);
+		} else {
+			/* redo device configuration for attached rprocs */
+			ret = k3_r5_rproc_configure(kproc);
+			if (ret)
+				dev_err(dev, "configure() failed at resume, ret = %d\n",
+					ret);
 		}
+
+		/* Load the firmware and setup IPC */
+		goto rproc_boot;
 	}
-	kproc->rproc->state = RPROC_RUNNING;
+
 	return 0;
+
+rproc_boot:
+	ret = rproc_boot(rproc);
+	if (ret)
+		dev_err(dev, "rproc_boot failed: %d\n", ret);
+
+	return ret;
 }
 
 /* PM notifier call.
@@ -644,7 +688,7 @@ static int k3_r5_suspend_late(struct device *dev)
 	struct k3_r5_core *core;
 	int ret = 0;
 
-	list_for_each_entry(core, &cluster->cores, elem) {
+	list_for_each_entry_reverse(core, &cluster->cores, elem) {
 		struct k3_r5_rproc *kproc;
 		struct rproc *rproc;
 
@@ -690,6 +734,10 @@ static int k3_r5_rproc_prepare(struct rproc *rproc)
 	u64 boot_vec = 0;
 	bool mem_init_dis;
 	int ret;
+
+	/* We don't want to control the lifecycle of an attach-only rproc */
+	if (kproc->core->attach_only)
+		return 0;
 
 	/*
 	 * R5 cores require to be powered on sequentially, core0 should be in
@@ -786,6 +834,10 @@ static int k3_r5_rproc_unprepare(struct rproc *rproc)
 	struct device *dev = kproc->dev;
 	int ret;
 
+	/* We don't want to control the lifecycle of an attach-only rproc */
+	if (kproc->core->attach_only)
+		return 0;
+
 	/*
 	 * Ensure power-down of cores is sequential in split mode. Core1 must
 	 * power down before Core0 to maintain the expected state. By placing
@@ -851,6 +903,10 @@ static int k3_r5_rproc_start(struct rproc *rproc)
 	struct k3_r5_core *core;
 	u32 boot_addr;
 	int ret;
+
+	/* We don't want to control the lifecycle of an attach-only rproc */
+	if (kproc->core->attach_only)
+		return 0;
 
 	boot_addr = rproc->bootaddr;
 	/* TODO: add boot_addr sanity checking */
@@ -920,6 +976,10 @@ static int k3_r5_rproc_stop(struct rproc *rproc)
 	int ret;
 	u32 stat = 0;
 
+	/* We don't want to control the lifecycle of an attach-only rproc */
+	if (kproc->core->attach_only)
+		return 0;
+
 	/* halt all applicable cores */
 	if (cluster->mode == CLUSTER_MODE_LOCKSTEP) {
 		list_for_each_entry(core, &cluster->cores, elem) {
@@ -971,13 +1031,27 @@ out:
 /*
  * Attach to a running R5F remote processor (IPC-only mode)
  *
- * The R5F attach callback is a NOP. The remote processor is already booted, and
- * all required resources have been acquired during probe routine, so there is
- * no need to issue any TI-SCI commands to boot the R5F cores in IPC-only mode.
- * This callback is invoked only in IPC-only mode and exists because
- * rproc_validate() checks for its existence.
+ * The R5F attach callback sets up the remoteproc ops for subsequent operations.
+ * We do not want to set these ops during probe as .prepare() is invoked in
+ * rproc attach flow and can lead to undefined behaviour if resets are released
+ * for an already running rproc. This supports shutdown/power-on from userspace
+ * and suspend/resume for early booted remote processors.
+ *
+ * This callback is invoked only in IPC-only mode.
  */
-static int k3_r5_rproc_attach(struct rproc *rproc) { return 0; }
+static int k3_r5_rproc_attach(struct rproc *rproc)
+{
+	struct k3_r5_rproc *kproc = rproc->priv;
+
+	if (!kproc->core->always_on) {
+		rproc->ops->prepare = k3_r5_rproc_prepare;
+		rproc->ops->unprepare = k3_r5_rproc_unprepare;
+		rproc->ops->start = k3_r5_rproc_start;
+		rproc->ops->stop = k3_r5_rproc_stop;
+	}
+
+	return 0;
+}
 
 /*
  * Detach from a running R5F remote processor (IPC-only mode)
@@ -1254,6 +1328,7 @@ static int k3_r5_rproc_configure(struct k3_r5_rproc *kproc)
 	core->boot_vec = boot_vec;
 	core->set_cfg = set_cfg;
 	core->clr_cfg = clr_cfg;
+	core->is_cfg_cached = true;
 out:
 	return ret;
 }
@@ -1479,9 +1554,6 @@ static int k3_r5_rproc_configure_mode(struct k3_r5_rproc *kproc)
 						k3_r5_get_loaded_rsc_table;
 	} else if (!c_state) {
 		dev_info(cdev, "configured R5F for remoteproc mode\n");
-		/* add support for suspend/resume */
-		kproc->pm_notifier.notifier_call = r5f_pm_notifier_call;
-		register_pm_notifier(&kproc->pm_notifier);
 		ret = 0;
 	} else {
 		dev_err(cdev, "mismatched mode: local_reset = %s, module_reset = %s, core_state = %s\n",
@@ -1489,6 +1561,12 @@ static int k3_r5_rproc_configure_mode(struct k3_r5_rproc *kproc)
 			c_state ? "deasserted" : "asserted",
 			halted ? "halted" : "unhalted");
 		ret = -EINVAL;
+	}
+
+	if (!core->always_on) {
+		/* register pm notifiers for both modes */
+		kproc->pm_notifier.notifier_call = r5f_pm_notifier_call;
+		register_pm_notifier(&kproc->pm_notifier);
 	}
 
 	/* fixup TCMs, cluster & core flags to actual values in IPC-only mode */
@@ -1547,6 +1625,7 @@ static int k3_r5_cluster_rproc_init(struct platform_device *pdev)
 		kproc->core = core;
 		kproc->dev = cdev;
 		kproc->rproc = rproc;
+		kproc->is_suspending = 0;
 		core->rproc = rproc;
 
 		ret = k3_r5_rproc_request_mbox(rproc);
@@ -1566,8 +1645,9 @@ static int k3_r5_cluster_rproc_init(struct platform_device *pdev)
 			goto out;
 		}
 
-		init_completion(&kproc->shut_comp);
 init_rmem:
+		init_completion(&kproc->shut_comp);
+
 		k3_r5_adjust_tcm_sizes(kproc);
 
 		ret = k3_r5_reserved_mem_init(kproc);
@@ -1811,6 +1891,9 @@ static int k3_r5_core_of_init(struct platform_device *pdev)
 	core->atcm_enable = 0;
 	core->btcm_enable = 1;
 	core->loczrama = 1;
+
+	core->attach_only = device_property_read_bool(dev, "ti,rproc-attach-only");
+	core->always_on = device_property_read_bool(dev, "ti,rproc-always-on");
 
 	ret = of_property_read_u32(np, "ti,atcm-enable", &core->atcm_enable);
 	if (ret < 0 && ret != -EINVAL) {
