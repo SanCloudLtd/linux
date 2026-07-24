@@ -83,10 +83,10 @@
 			d-cache-line-size = <64>;
 			d-cache-sets = <256>;
 			next-level-cache = <&L2_0>;
-			operating-points-v2 = <&cpu0_opp_table>;
-			#cooling-cells = <2>; /* min followed by max */
 			clocks = <&k3_clks 203 0>;
 			clock-names = "cpu";
+			operating-points-v2 = <&cpu0_opp_table>;
+			#cooling-cells = <2>; /* min followed by max */
 		};
 	};
 

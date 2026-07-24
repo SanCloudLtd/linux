@@ -30,7 +30,7 @@ thermal_zones: thermal-zones {
 			};
 
 			mpu_alert0: mpu_alert {
-				temperature = <55000>; /* millicelsius */
+				temperature = <75000>; /* millicelsius */
 				hysteresis = <5000>; /* millicelsius */
 				type = "passive";
 			};
