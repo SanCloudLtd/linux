@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Texas Instruments ICSSG Ethernet Driver
  *
- * Copyright (C) 2018-2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2018-2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 
@@ -9,7 +9,7 @@
 #include <linux/regmap.h>
 #include <linux/types.h>
 
-#include "icss_mii_rt.h"
+#include "icssg_mii_rt.h"
 #include "icssg_prueth.h"
 
 void icssg_mii_update_ipg(struct regmap *mii_rt, int mii, u32 ipg)
@@ -19,7 +19,6 @@ void icssg_mii_update_ipg(struct regmap *mii_rt, int mii, u32 ipg)
 	if (mii == ICSS_MII0) {
 		regmap_write(mii_rt, PRUSS_MII_RT_TX_IPG0, ipg);
 	} else {
-	/* Errata workaround: IEP1 is not read by h/w unless IEP0 is written */
 		regmap_read(mii_rt, PRUSS_MII_RT_TX_IPG0, &val);
 		regmap_write(mii_rt, PRUSS_MII_RT_TX_IPG1, ipg);
 		regmap_write(mii_rt, PRUSS_MII_RT_TX_IPG0, val);

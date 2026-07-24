@@ -24,15 +24,17 @@ struct rpmsg_kdrv_demo_private {
 
 static int rpmsg_kdrv_demo_get_data(struct rpmsg_remotedev *rdev, void *data, ssize_t len)
 {
-	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private, rdev);
+	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private,
+							    rdev);
 
-	if (!data)
+	if (!data) {
 		if (!len)
 			return priv->data_len;
 		else
 			return -EINVAL;
-	else if (len < priv->data_len)
+	} else if (len < priv->data_len) {
 		return -EINVAL;
+	}
 
 	memcpy(data, priv->data, priv->data_len);
 	return priv->data_len;
@@ -40,7 +42,8 @@ static int rpmsg_kdrv_demo_get_data(struct rpmsg_remotedev *rdev, void *data, ss
 
 static int rpmsg_kdrv_demo_ping(struct rpmsg_remotedev *rdev, void *ping_data, ssize_t ping_len)
 {
-	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private, rdev);
+	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private,
+							    rdev);
 	struct rpmsg_kdrv_device *kddev = priv->kddev;
 	struct rpmsg_device *rpdev = kddev->rpdev;
 	struct rpmsg_kdrv_demodev_ping_request *req;
@@ -67,19 +70,17 @@ static int rpmsg_kdrv_demo_ping(struct rpmsg_remotedev *rdev, void *ping_data, s
 	memcpy(req->data, ping_data, ping_len);
 
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req),
-			resp, sizeof(*resp));
+						    resp, sizeof(*resp));
 	if (ret) {
 		dev_err(&kddev->dev, "%s: rpmsg_kdrv_send_request_with_response\n", __func__);
 		goto out;
 	}
-
 
 	if (resp->header.message_type != RPMSG_KDRV_TP_DEMODEV_PING_RESPONSE) {
 		dev_err(&kddev->dev, "%s: wrong response type\n", __func__);
 		ret = -EIO;
 		goto out;
 	}
-
 
 	memcpy(ping_data, resp->data, RPMSG_KDRV_TP_DEMODEV_MESSAGE_DATA_LEN);
 
@@ -89,9 +90,11 @@ out:
 	return ret;
 }
 
-static int rpmsg_kdrv_demo_c2s_message(struct rpmsg_remotedev *rdev, void *c2s_msg_data, ssize_t len)
+static int rpmsg_kdrv_demo_c2s_message(struct rpmsg_remotedev *rdev, void *c2s_msg_data,
+				       ssize_t len)
 {
-	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private, rdev);
+	struct rpmsg_kdrv_demo_private *priv = container_of(rdev, struct rpmsg_kdrv_demo_private,
+							    rdev);
 	struct rpmsg_kdrv_device *kddev = priv->kddev;
 	struct rpmsg_device *rpdev = kddev->rpdev;
 	struct rpmsg_kdrv_demodev_c2s_message *msg;
@@ -107,7 +110,6 @@ static int rpmsg_kdrv_demo_c2s_message(struct rpmsg_remotedev *rdev, void *c2s_m
 	if (!msg)
 		return -ENOMEM;
 
-
 	msg->header.message_type = RPMSG_KDRV_TP_DEMODEV_C2S_MESSAGE;
 	memcpy(msg->data, c2s_msg_data, len);
 
@@ -118,7 +120,6 @@ static int rpmsg_kdrv_demo_c2s_message(struct rpmsg_remotedev *rdev, void *c2s_m
 	devm_kfree(&kddev->dev, msg);
 	return ret;
 }
-
 
 static struct rpmsg_remotedev_demo_ops demo_ops = {
 	.get_data = rpmsg_kdrv_demo_get_data,
@@ -142,8 +143,6 @@ static int rpmsg_kdrv_demo_probe(struct rpmsg_kdrv_device *dev)
 {
 	struct rpmsg_kdrv_demo_private *priv;
 
-	dev_dbg(&dev->dev, "%s\n", __func__);
-
 	priv = devm_kzalloc(&dev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -162,10 +161,10 @@ static int rpmsg_kdrv_demo_probe(struct rpmsg_kdrv_device *dev)
 
 static void rpmsg_kdrv_demo_remove(struct rpmsg_kdrv_device *dev)
 {
-	dev_dbg(&dev->dev, "%s\n", __func__);
 }
 
-static void rpmsg_kdrv_demo_handle_s2c_message(struct rpmsg_kdrv_device *dev, void *msg, ssize_t len)
+static void rpmsg_kdrv_demo_handle_s2c_message(struct rpmsg_kdrv_device *dev, void *msg,
+					       ssize_t len)
 {
 	struct rpmsg_kdrv_demo_private *priv = dev->driver_private;
 	struct rpmsg_remotedev *rdev = &priv->rdev;
@@ -182,13 +181,14 @@ static int rpmsg_kdrv_demo_callback(struct rpmsg_kdrv_device *dev, void *msg, in
 		struct rpmsg_kdrv_demodev_s2c_message *s2c = msg;
 
 		rpmsg_kdrv_demo_handle_s2c_message(dev, s2c->data,
-				RPMSG_KDRV_TP_DEMODEV_MESSAGE_DATA_LEN);
-	} else
-		dev_err(&dev->dev, "%s: unknown message type (%d) for demo device\n", __func__, hdr->message_type);
+						   RPMSG_KDRV_TP_DEMODEV_MESSAGE_DATA_LEN);
+	} else {
+		dev_err(&dev->dev, "%s: unknown message type (%d) for demo device\n", __func__,
+			hdr->message_type);
+	}
 
 	return 0;
 }
-
 
 static struct rpmsg_kdrv_driver rpmsg_kdrv_demo = {
 	.drv.name = "rpmsg-kdrv-demo",
@@ -211,4 +211,4 @@ module_exit(rpmsg_kdrv_demo_driver_fini);
 
 MODULE_AUTHOR("Subhajit Paul <subhajit_paul@ti.com>");
 MODULE_DESCRIPTION("TI Remote-device Demo Device Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

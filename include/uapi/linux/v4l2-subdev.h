@@ -24,6 +24,7 @@
 #ifndef __LINUX_V4L2_SUBDEV_H
 #define __LINUX_V4L2_SUBDEV_H
 
+#include <linux/const.h>
 #include <linux/ioctl.h>
 #include <linux/types.h>
 #include <linux/v4l2-common.h>
@@ -202,29 +203,14 @@ struct v4l2_subdev_capability {
 /* The v4l2 sub-device video device node is registered in read-only mode. */
 #define V4L2_SUBDEV_CAP_RO_SUBDEV		0x00000001
 
-/* The v4l2 sub-device supports multiplexed streams. */
-#define V4L2_SUBDEV_CAP_MPLEXED         0x00000002
+/* The v4l2 sub-device supports routing and multiplexed streams. */
+#define V4L2_SUBDEV_CAP_STREAMS			0x00000002
 
 /*
  * Is the route active? An active route will start when streaming is enabled
  * on a video node.
  */
-#define V4L2_SUBDEV_ROUTE_FL_ACTIVE		_BITUL(0)
-
-/*
- * Is the route immutable, i.e. can it be activated and inactivated?
- * Set by the driver.
- */
-#define V4L2_SUBDEV_ROUTE_FL_IMMUTABLE		_BITUL(1)
-
-/*
- * Is the route a source endpoint? A source endpoint route refers to a stream
- * generated internally by the subdevice (usually a sensor), and thus there
- * is no sink-side endpoint for the route. The sink_pad and sink_stream
- * fields are unused.
- * Set by the driver.
- */
-#define V4L2_SUBDEV_ROUTE_FL_SOURCE		_BITUL(2)
+#define V4L2_SUBDEV_ROUTE_FL_ACTIVE		(1U << 0)
 
 /**
  * struct v4l2_subdev_route - A route inside a subdev
@@ -249,15 +235,15 @@ struct v4l2_subdev_route {
  * struct v4l2_subdev_routing - Subdev routing information
  *
  * @which: configuration type (from enum v4l2_subdev_format_whence)
- * @routes: pointer to the routes array
  * @num_routes: the total number of routes in the routes array
+ * @routes: pointer to the routes array
  * @reserved: drivers and applications must zero this array
  */
 struct v4l2_subdev_routing {
 	__u32 which;
-	__u64 routes;
 	__u32 num_routes;
-	__u32 reserved[5];
+	__u64 routes;
+	__u32 reserved[6];
 };
 
 /* Backwards compatibility define --- to be removed */

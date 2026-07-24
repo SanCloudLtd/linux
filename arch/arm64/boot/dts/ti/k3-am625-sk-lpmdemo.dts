@@ -7,19 +7,12 @@
  * nodes for peripherals that are not currently tested. Eventually, this
  * should converge to the regular dts file and this file can then be removed.
  *
- * Copyright (C) 2021-2022 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2021-2023 Texas Instruments Incorporated - https://www.ti.com/
  */
 
 #include "k3-am625-sk.dts"
 
 / {
-	leds {
-		led-0 {
-			/* This property is off in sk-common, default in lpmdemo */
-			/delete-property/ default-state;
-		};
-	};
-
 	firmware {
 		optee {
 			status = "disabled";
@@ -33,7 +26,7 @@
 	firmware-name = "ti-sysfw/ti-fs-stub-firmware-am62x-gp-signed.bin";
 };
 
-&wkup_r5fss0 {
+&main_mcan0 {
 	status = "disabled";
 };
 
@@ -41,12 +34,15 @@
 	status = "disabled";
 };
 
-&main_uart0 {
-	/delete-property/ power-domains;
-	/delete-property/ clock-names;
-	/delete-property/ clocks;
+&usbss0 {
+	status = "disabled";
+};
+
+&usbss1 {
+	status = "disabled";
 };
 
 &cbass_mcu {
 	status = "disabled";
 };
+

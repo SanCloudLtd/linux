@@ -188,20 +188,25 @@ config TI_RDEV_ETH_SWITCH_VIRT_EMAC
 	depends on ARCH_K3 && OF && TI_K3_UDMA_GLUE_LAYER
 	help
 	  Support for 1 Port Virtual Eth MAC driver over remotedev
-	  R5F Eth Switch FW RPMSG protocol.
+	  R5F Eth Switch FW RPMSG protocol. The rpmsg-kdrv framework
+	  is utilized to communicate with Eth Switch FW via RPMSG.
 	  This is available starting with the J721E platform.
 
-config TI_PRUETH
-	tristate "TI PRU Ethernet EMAC driver"
+config TI_ICSSG_PRUETH
+	tristate "TI Gigabit PRU Ethernet driver"
+	select PHYLIB
+	select TI_ICSS_IEP
+	select PAGE_POOL
 	depends on PRU_REMOTEPROC
 	depends on NET_SWITCHDEV
-	select TI_ICSS_IEP
-	imply PTP_1588_CLOCK
+	depends on ARCH_K3 && OF && TI_K3_UDMA_GLUE_LAYER
 	help
-	  Some TI SoCs has Programmable Realtime Units (PRUs) cores which can
-	  support Single or Dual Ethernet ports with help of firmware code running
-	  on PRU cores. This driver supports remoteproc based communication to
-	  PRU firmware to expose ethernet interface to Linux.
+	  Support dual Gigabit Ethernet ports over the ICSSG PRU Subsystem.
+	  This subsystem is available starting with the AM65 platform.
+
+	  This driver requires firmware binaries which will run on the PRUs
+	  to support the Ethernet operation. Currently, it supports Ethernet
+	  with 1G and 100M link speed.
 
 config TI_ICSS_IEP
 	tristate "TI PRU ICSS IEP driver"
@@ -210,19 +215,5 @@ config TI_ICSS_IEP
 	help
 	  This enables support for the PRU-ICSS Industrial Ethernet Peripheral
 	  within a PRU-ICSS subsystem present on various TI SoCs.
-
-config TI_ICSSG_PRUETH
-	tristate "TI Gigabit PRU Ethernet driver"
-	select TI_DAVINCI_MDIO
-	select NET_PTP_CLASSIFY
-	select TI_ICSS_IEP
-	select PAGE_POOL
-	imply PTP_1588_CLOCK
-	depends on PRU_REMOTEPROC
-	depends on NET_SWITCHDEV
-	depends on ARCH_K3 && OF && TI_K3_UDMA_GLUE_LAYER
-	help
-	  Support dual Gigabit Ethernet ports over the ICSSG PRU Subsystem
-	  This subsystem is available starting with the AM65 platform.
 
 endif # NET_VENDOR_TI

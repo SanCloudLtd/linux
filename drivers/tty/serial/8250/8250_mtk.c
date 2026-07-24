@@ -223,36 +223,39 @@ static void mtk8250_shutdown(struct uart_port *port)
 static void mtk8250_disable_intrs(struct uart_8250_port *up, int mask)
 {
 	struct uart_port *port = &up->port;
-	unsigned int flags;
-	unsigned int ier;
+	unsigned long flags;
 	bool is_console;
+	int ier;
 
 	is_console = uart_console(port);
 
 	if (is_console)
-		console_atomic_lock(&flags);
+		printk_cpu_sync_get_irqsave(flags);
 
 	ier = serial_in(up, UART_IER);
 	serial_out(up, UART_IER, ier & (~mask));
 
 	if (is_console)
-		console_atomic_unlock(flags);
+		printk_cpu_sync_put_irqrestore(flags);
 }
 
 static void mtk8250_enable_intrs(struct uart_8250_port *up, int mask)
 {
 	struct uart_port *port = &up->port;
-	unsigned int flags;
-	unsigned int ier;
+	unsigned long flags;
+	bool is_console;
+	int ier;
 
-	if (uart_console(port))
-		console_atomic_lock(&flags);
+	is_console = uart_console(port);
+
+	if (is_console)
+		printk_cpu_sync_get_irqsave(flags);
 
 	ier = serial_in(up, UART_IER);
 	serial_out(up, UART_IER, ier | mask);
 
-	if (uart_console(port))
-		console_atomic_unlock(flags);
+	if (is_console)
+		printk_cpu_sync_put_irqrestore(flags);
 }
 
 static void mtk8250_set_flow_ctrl(struct uart_8250_port *up, int mode)
@@ -316,12 +319,12 @@ static void mtk8250_set_flow_ctrl(struct uart_8250_port *up, int mode)
 
 static void
 mtk8250_set_termios(struct uart_port *port, struct ktermios *termios,
-			struct ktermios *old)
+		    const struct ktermios *old)
 {
-	unsigned short fraction_L_mapping[] = {
+	static const unsigned short fraction_L_mapping[] = {
 		0, 1, 0x5, 0x15, 0x55, 0x57, 0x57, 0x77, 0x7F, 0xFF, 0xFF
 	};
-	unsigned short fraction_M_mapping[] = {
+	static const unsigned short fraction_M_mapping[] = {
 		0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 3
 	};
 	struct uart_8250_port *up = up_to_u8250p(port);

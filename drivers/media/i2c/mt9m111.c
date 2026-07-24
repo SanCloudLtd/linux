@@ -4,11 +4,11 @@
  *
  * Copyright (C) 2008, Robert Jarzmik <robert.jarzmik@free.fr>
  */
+#include <linux/clk.h>
 #include <linux/videodev2.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/log2.h>
-#include <linux/gpio.h>
 #include <linux/delay.h>
 #include <linux/regulator/consumer.h>
 #include <linux/v4l2-mediabus.h>
@@ -16,7 +16,6 @@
 #include <linux/property.h>
 
 #include <media/v4l2-async.h>
-#include <media/v4l2-clk.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
@@ -232,7 +231,7 @@ struct mt9m111 {
 	struct v4l2_ctrl *gain;
 	struct mt9m111_context *ctx;
 	struct v4l2_rect rect;	/* cropping rectangle */
-	struct v4l2_clk *clk;
+	struct clk *clk;
 	unsigned int width;	/* output */
 	unsigned int height;	/* sizes */
 	struct v4l2_fract frame_interval;
@@ -977,7 +976,7 @@ static int mt9m111_power_on(struct mt9m111 *mt9m111)
 	struct i2c_client *client = v4l2_get_subdevdata(&mt9m111->subdev);
 	int ret;
 
-	ret = v4l2_clk_enable(mt9m111->clk);
+	ret = clk_prepare_enable(mt9m111->clk);
 	if (ret < 0)
 		return ret;
 
@@ -995,7 +994,7 @@ out_regulator_disable:
 	regulator_disable(mt9m111->regulator);
 
 out_clk_disable:
-	v4l2_clk_disable(mt9m111->clk);
+	clk_disable_unprepare(mt9m111->clk);
 
 	dev_err(&client->dev, "Failed to resume the sensor: %d\n", ret);
 
@@ -1006,7 +1005,7 @@ static void mt9m111_power_off(struct mt9m111 *mt9m111)
 {
 	mt9m111_suspend(mt9m111);
 	regulator_disable(mt9m111->regulator);
-	v4l2_clk_disable(mt9m111->clk);
+	clk_disable_unprepare(mt9m111->clk);
 }
 
 static int mt9m111_s_power(struct v4l2_subdev *sd, int on)
@@ -1143,14 +1142,16 @@ static int mt9m111_get_mbus_config(struct v4l2_subdev *sd,
 {
 	struct mt9m111 *mt9m111 = container_of(sd, struct mt9m111, subdev);
 
-	cfg->flags = V4L2_MBUS_MASTER |
-		V4L2_MBUS_HSYNC_ACTIVE_HIGH | V4L2_MBUS_VSYNC_ACTIVE_HIGH |
-		V4L2_MBUS_DATA_ACTIVE_HIGH;
-
-	cfg->flags |= mt9m111->pclk_sample ? V4L2_MBUS_PCLK_SAMPLE_RISING :
-		V4L2_MBUS_PCLK_SAMPLE_FALLING;
-
 	cfg->type = V4L2_MBUS_PARALLEL;
+
+	cfg->bus.parallel.flags = V4L2_MBUS_MASTER |
+				  V4L2_MBUS_HSYNC_ACTIVE_HIGH |
+				  V4L2_MBUS_VSYNC_ACTIVE_HIGH |
+				  V4L2_MBUS_DATA_ACTIVE_HIGH;
+
+	cfg->bus.parallel.flags |= mt9m111->pclk_sample ?
+				   V4L2_MBUS_PCLK_SAMPLE_RISING :
+				   V4L2_MBUS_PCLK_SAMPLE_FALLING;
 
 	return 0;
 }
@@ -1266,7 +1267,7 @@ static int mt9m111_probe(struct i2c_client *client)
 			return ret;
 	}
 
-	mt9m111->clk = v4l2_clk_get(&client->dev, "mclk");
+	mt9m111->clk = devm_clk_get(&client->dev, "mclk");
 	if (IS_ERR(mt9m111->clk))
 		return PTR_ERR(mt9m111->clk);
 
@@ -1311,7 +1312,7 @@ static int mt9m111_probe(struct i2c_client *client)
 	mt9m111->subdev.ctrl_handler = &mt9m111->hdl;
 	if (mt9m111->hdl.error) {
 		ret = mt9m111->hdl.error;
-		goto out_clkput;
+		return ret;
 	}
 
 #ifdef CONFIG_MEDIA_CONTROLLER
@@ -1354,22 +1355,17 @@ out_entityclean:
 out_hdlfree:
 #endif
 	v4l2_ctrl_handler_free(&mt9m111->hdl);
-out_clkput:
-	v4l2_clk_put(mt9m111->clk);
 
 	return ret;
 }
 
-static int mt9m111_remove(struct i2c_client *client)
+static void mt9m111_remove(struct i2c_client *client)
 {
 	struct mt9m111 *mt9m111 = to_mt9m111(client);
 
 	v4l2_async_unregister_subdev(&mt9m111->subdev);
 	media_entity_cleanup(&mt9m111->subdev.entity);
-	v4l2_clk_put(mt9m111->clk);
 	v4l2_ctrl_handler_free(&mt9m111->hdl);
-
-	return 0;
 }
 static const struct of_device_id mt9m111_of_match[] = {
 	{ .compatible = "micron,mt9m111", },

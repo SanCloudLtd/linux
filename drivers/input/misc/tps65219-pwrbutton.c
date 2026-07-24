@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
-/*
- * Driver for TPS65219 Push Button
- *
- * Copyright (C) 2022 BayLibre Incorporated - https://www.baylibre.com/
- */
+//
+// Driver for TPS65219 Push Button
+//
+// Copyright (C) 2022 BayLibre Incorporated - https://www.baylibre.com/
 
 #include <linux/init.h>
 #include <linux/input.h>
@@ -65,7 +64,6 @@ static int tps65219_pb_probe(struct platform_device *pdev)
 	snprintf(pwr->phys, sizeof(pwr->phys), "%s/input0",
 		 pdev->name);
 	idev->phys = pwr->phys;
-	idev->dev.parent = dev;
 	idev->id.bustype = BUS_I2C;
 
 	input_set_capability(idev, EV_KEY, KEY_POWER);

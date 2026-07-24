@@ -15,33 +15,13 @@
  */
 
 struct irq_work {
-	union {
-		struct __call_single_node node;
-		struct {
-			struct llist_node llnode;
-			atomic_t flags;
-		};
-	};
+	struct __call_single_node node;
 	void (*func)(struct irq_work *);
 	struct rcuwait irqwait;
 };
 
-static inline
-void init_irq_work(struct irq_work *work, void (*func)(struct irq_work *))
-{
-	atomic_set(&work->flags, 0);
-	work->func = func;
-	rcuwait_init(&work->irqwait);
-}
-
-#define DEFINE_IRQ_WORK(name, _f) struct irq_work name = {	\
-		.flags = ATOMIC_INIT(0),			\
-		.func  = (_f),					\
-		.irqwait = __RCUWAIT_INITIALIZER(irqwait),	\
-}
-
 #define __IRQ_WORK_INIT(_func, _flags) (struct irq_work){	\
-	.flags = ATOMIC_INIT(_flags),				\
+	.node = { .u_flags = (_flags), },			\
 	.func = (_func),					\
 	.irqwait = __RCUWAIT_INITIALIZER(irqwait),		\
 }
@@ -50,14 +30,28 @@ void init_irq_work(struct irq_work *work, void (*func)(struct irq_work *))
 #define IRQ_WORK_INIT_LAZY(_func) __IRQ_WORK_INIT(_func, IRQ_WORK_LAZY)
 #define IRQ_WORK_INIT_HARD(_func) __IRQ_WORK_INIT(_func, IRQ_WORK_HARD_IRQ)
 
+#define DEFINE_IRQ_WORK(name, _f)				\
+	struct irq_work name = IRQ_WORK_INIT(_f)
+
+static inline
+void init_irq_work(struct irq_work *work, void (*func)(struct irq_work *))
+{
+	*work = IRQ_WORK_INIT(func);
+}
+
+static inline bool irq_work_is_pending(struct irq_work *work)
+{
+	return atomic_read(&work->node.a_flags) & IRQ_WORK_PENDING;
+}
+
 static inline bool irq_work_is_busy(struct irq_work *work)
 {
-	return atomic_read(&work->flags) & IRQ_WORK_BUSY;
+	return atomic_read(&work->node.a_flags) & IRQ_WORK_BUSY;
 }
 
 static inline bool irq_work_is_hard(struct irq_work *work)
 {
-	return atomic_read(&work->flags) & IRQ_WORK_HARD_IRQ;
+	return atomic_read(&work->node.a_flags) & IRQ_WORK_HARD_IRQ;
 }
 
 bool irq_work_queue(struct irq_work *work);

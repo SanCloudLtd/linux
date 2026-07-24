@@ -5,7 +5,6 @@
 
 #include <linux/delay.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/list_sort.h>
 #include <linux/of_address.h>
 #include <linux/of_pci.h>
@@ -71,7 +70,6 @@ void __iomem *cdns_pci_map_bus(struct pci_bus *bus, unsigned int devfn,
 
 	return rc->cfg_base + (where & 0xfff);
 }
-EXPORT_SYMBOL_GPL(cdns_pci_map_bus);
 
 static struct pci_ops cdns_pcie_host_ops = {
 	.map_bus	= cdns_pci_map_bus,
@@ -123,6 +121,14 @@ static int cdns_pcie_retrain(struct cdns_pcie *pcie)
 		ret = cdns_pcie_host_wait_for_link(pcie);
 	}
 	return ret;
+}
+
+static void cdns_pcie_host_enable_ptm_response(struct cdns_pcie *pcie)
+{
+	u32 val;
+
+	val = cdns_pcie_readl(pcie, CDNS_PCIE_LM_PTM_CTRL);
+	cdns_pcie_writel(pcie, CDNS_PCIE_LM_PTM_CTRL, val | CDNS_PCIE_LM_TPM_CTRL_PTMRSEN);
 }
 
 static int cdns_pcie_host_start_link(struct cdns_pcie_rc *rc)
@@ -503,6 +509,8 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 	if (rc->quirk_detect_quiet_flag)
 		cdns_pcie_detect_quiet_min_delay_set(&rc->pcie);
 
+	cdns_pcie_host_enable_ptm_response(pcie);
+
 	ret = cdns_pcie_start_link(pcie);
 	if (ret) {
 		dev_err(dev, "Failed to start link\n");
@@ -534,6 +542,3 @@ int cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(cdns_pcie_host_setup);
-
-MODULE_LICENSE("GPL v2");

@@ -200,8 +200,10 @@ int pci_epf_add_vepf(struct pci_epf *epf_pf, struct pci_epf *epf_vf)
 	mutex_lock(&epf_pf->lock);
 	vfunc_no = find_first_zero_bit(&epf_pf->vfunction_num_map,
 				       BITS_PER_LONG);
-	if (vfunc_no >= BITS_PER_LONG)
+	if (vfunc_no >= BITS_PER_LONG) {
+		mutex_unlock(&epf_pf->lock);
 		return -EINVAL;
+	}
 
 	set_bit(vfunc_no, &epf_pf->vfunction_num_map);
 	epf_vf->vfunc_no = vfunc_no;
@@ -222,7 +224,7 @@ EXPORT_SYMBOL_GPL(pci_epf_add_vepf);
  *   be removed
  * @epf_vf: the virtual EP function to be removed
  *
- * Invoke to remove a virtual endpoint function from the physcial endpoint
+ * Invoke to remove a virtual endpoint function from the physical endpoint
  * function.
  */
 void pci_epf_remove_vepf(struct pci_epf *epf_pf, struct pci_epf *epf_vf)
@@ -249,7 +251,7 @@ EXPORT_SYMBOL_GPL(pci_epf_remove_vepf);
 void pci_epf_free_space(struct pci_epf *epf, void *addr, enum pci_barno bar,
 			enum pci_epc_interface_type type)
 {
-	struct device *dev = epf->epc->dev.parent;
+	struct device *dev;
 	struct pci_epf_bar *epf_bar;
 	struct pci_epc *epc;
 
@@ -430,7 +432,7 @@ EXPORT_SYMBOL_GPL(pci_epf_destroy);
 /**
  * pci_epf_create() - create a new PCI EPF device
  * @name: the name of the PCI EPF device. This name will be used to bind the
- *	  the EPF device to a EPF driver
+ *	  EPF device to a EPF driver
  *
  * Invoke to create a new PCI EPF device by providing the name of the function
  * device.
@@ -527,17 +529,14 @@ static int pci_epf_device_probe(struct device *dev)
 	return driver->probe(epf);
 }
 
-static int pci_epf_device_remove(struct device *dev)
+static void pci_epf_device_remove(struct device *dev)
 {
-	int ret = 0;
 	struct pci_epf *epf = to_pci_epf(dev);
 	struct pci_epf_driver *driver = to_pci_epf_driver(dev->driver);
 
 	if (driver->remove)
-		ret = driver->remove(epf);
+		driver->remove(epf);
 	epf->driver = NULL;
-
-	return ret;
 }
 
 static struct bus_type pci_epf_bus_type = {

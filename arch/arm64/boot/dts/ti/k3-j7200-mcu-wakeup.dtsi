@@ -6,14 +6,14 @@
  */
 
 &cbass_mcu_wakeup {
-	dmsc: dmsc@44083000 {
+	dmsc: system-controller@44083000 {
 		compatible = "ti,k2g-sci";
 		ti,host-id = <12>;
 
 		mbox-names = "rx", "tx";
 
-		mboxes= <&secure_proxy_main 11>,
-			<&secure_proxy_main 13>;
+		mboxes = <&secure_proxy_main 11>,
+			 <&secure_proxy_main 13>;
 
 		reg-names = "debug_messages";
 		reg = <0x00 0x44083000 0x00 0x1000>;
@@ -23,7 +23,7 @@
 			#power-domain-cells = <2>;
 		};
 
-		k3_clks: clocks {
+		k3_clks: clock-controller {
 			compatible = "ti,k2g-sci-clk";
 			#clock-cells = <2>;
 		};
@@ -100,31 +100,30 @@
 	wkup_uart0: serial@42300000 {
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x42300000 0x00 0x100>;
-		reg-shift = <2>;
-		reg-io-width = <4>;
 		interrupts = <GIC_SPI 897 IRQ_TYPE_LEVEL_HIGH>;
 		clock-frequency = <48000000>;
 		current-speed = <115200>;
 		power-domains = <&k3_pds 287 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 287 2>;
 		clock-names = "fclk";
+		status = "disabled";
 	};
 
 	mcu_uart0: serial@40a00000 {
 		compatible = "ti,j721e-uart", "ti,am654-uart";
 		reg = <0x00 0x40a00000 0x00 0x100>;
-		reg-shift = <2>;
-		reg-io-width = <4>;
 		interrupts = <GIC_SPI 846 IRQ_TYPE_LEVEL_HIGH>;
 		clock-frequency = <96000000>;
 		current-speed = <115200>;
 		power-domains = <&k3_pds 149 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 149 2>;
 		clock-names = "fclk";
+		status = "disabled";
 	};
 
-	wkup_gpio_intr: interrupt-controller2 {
+	wkup_gpio_intr: interrupt-controller@42200000 {
 		compatible = "ti,sci-intr";
+		reg = <0x00 0x42200000 0x00 0x400>;
 		ti,intr-trigger-type = <1>;
 		interrupt-controller;
 		interrupt-parent = <&gic500>;
@@ -143,7 +142,6 @@
 		interrupts = <103>, <104>, <105>, <106>, <107>, <108>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
-		#address-cells = <0>;
 		ti,ngpio = <85>;
 		ti,davinci-gpio-unbanked = <0>;
 		power-domains = <&k3_pds 113 TI_SCI_PD_EXCLUSIVE>;
@@ -160,7 +158,6 @@
 		interrupts = <112>, <113>, <114>, <115>, <116>, <117>;
 		interrupt-controller;
 		#interrupt-cells = <2>;
-		#address-cells = <0>;
 		ti,ngpio = <85>;
 		ti,davinci-gpio-unbanked = <0>;
 		power-domains = <&k3_pds 114 TI_SCI_PD_EXCLUSIVE>;
@@ -281,6 +278,7 @@
 		clock-names = "fck";
 		clocks = <&k3_clks 194 1>;
 		power-domains = <&k3_pds 194 TI_SCI_PD_EXCLUSIVE>;
+		status = "disabled";
 	};
 
 	mcu_i2c1: i2c@40b10000 {
@@ -292,6 +290,7 @@
 		clock-names = "fck";
 		clocks = <&k3_clks 195 1>;
 		power-domains = <&k3_pds 195 TI_SCI_PD_EXCLUSIVE>;
+		status = "disabled";
 	};
 
 	wkup_i2c0: i2c@42120000 {
@@ -303,6 +302,7 @@
 		clock-names = "fck";
 		clocks = <&k3_clks 197 1>;
 		power-domains = <&k3_pds 197 TI_SCI_PD_SHARED>;
+		status = "disabled";
 	};
 
 	mcu_spi0: spi@40300000 {
@@ -313,6 +313,7 @@
 		#size-cells = <0>;
 		power-domains = <&k3_pds 274 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 274 0>;
+		status = "disabled";
 	};
 
 	mcu_spi1: spi@40310000 {
@@ -323,6 +324,7 @@
 		#size-cells = <0>;
 		power-domains = <&k3_pds 275 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 275 0>;
+		status = "disabled";
 	};
 
 	mcu_spi2: spi@40320000 {
@@ -333,6 +335,7 @@
 		#size-cells = <0>;
 		power-domains = <&k3_pds 276 TI_SCI_PD_EXCLUSIVE>;
 		clocks = <&k3_clks 276 0>;
+		status = "disabled";
 	};
 
 	fss: syscon@47000000 {
@@ -362,7 +365,7 @@
 		};
 
 		ospi0: spi@47040000 {
-			compatible = "ti,am654-ospi";
+			compatible = "ti,am654-ospi", "cdns,qspi-nor";
 			reg = <0x0 0x47040000 0x0 0x100>,
 			      <0x5 0x00000000 0x1 0x0000000>;
 			interrupts = <GIC_SPI 840 IRQ_TYPE_LEVEL_HIGH>;
@@ -453,17 +456,7 @@
 			compatible = "inside-secure,safexcel-eip76";
 			reg = <0x00 0x40910000 0x00 0x7d>;
 			interrupts = <GIC_SPI 945 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&k3_clks 265 2>;
-			status = "disabled";
+			status = "disabled"; /* Used by OP-TEE */
 		};
-	};
-
-	wkup_vtm0: temperature-sensor@42040000 {
-		compatible = "ti,j7200-vtm";
-		reg = <0x00 0x42040000 0x00 0x350>,
-		      <0x00 0x42050000 0x00 0x350>,
-		      <0x00 0x43000300 0x00 0x10>;
-		power-domains = <&k3_pds 154 TI_SCI_PD_EXCLUSIVE>;
-		#thermal-sensor-cells = <1>;
 	};
 };

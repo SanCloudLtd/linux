@@ -334,7 +334,7 @@ int pci_epc_set_msi(struct pci_epc *epc, u8 func_no, u8 vfunc_no, u8 interrupts)
 	u8 encode_int;
 
 	if (IS_ERR_OR_NULL(epc) || func_no >= epc->max_functions ||
-	    interrupts > 32)
+	    interrupts < 1 || interrupts > 32)
 		return -EINVAL;
 
 	if (vfunc_no > 0 && (!epc->max_vfs || vfunc_no > epc->max_vfs[func_no]))
@@ -571,6 +571,10 @@ int pci_epc_write_header(struct pci_epc *epc, u8 func_no, u8 vfunc_no,
 	if (vfunc_no > 0 && (!epc->max_vfs || vfunc_no > epc->max_vfs[func_no]))
 		return -EINVAL;
 
+	/* Only Virtual Function #1 has deviceID */
+	if (vfunc_no > 1)
+		return -EINVAL;
+
 	if (!epc->ops->write_header)
 		return 0;
 
@@ -646,6 +650,8 @@ EXPORT_SYMBOL_GPL(pci_epc_add_epf);
  * pci_epc_remove_epf() - remove PCI endpoint function from endpoint controller
  * @epc: the EPC device from which the endpoint function should be removed
  * @epf: the endpoint function to be removed
+ * @type: identifies if the EPC is connected to the primary or secondary
+ *        interface of EPF
  *
  * Invoke to remove PCI endpoint function from the endpoint controller.
  */
@@ -694,7 +700,7 @@ EXPORT_SYMBOL_GPL(pci_epc_linkup);
 /**
  * pci_epc_init_notify() - Notify the EPF device that EPC device's core
  *			   initialization is completed.
- * @epc: the EPC device whose core initialization is completeds
+ * @epc: the EPC device whose core initialization is completed
  *
  * Invoke to Notify the EPF device that the EPC device's initialization
  * is completed.

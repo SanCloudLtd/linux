@@ -1237,10 +1237,9 @@ out_poweroff:
  * sysfs attributes
  */
 static ssize_t
-et8ek8_priv_mem_read(struct device *dev, struct device_attribute *attr,
-		     char *buf)
+priv_mem_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct v4l2_subdev *subdev = i2c_get_clientdata(to_i2c_client(dev));
+	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
 	struct et8ek8_sensor *sensor = to_et8ek8_sensor(subdev);
 
 #if PAGE_SIZE < ET8EK8_PRIV_MEM_SIZE
@@ -1251,7 +1250,7 @@ et8ek8_priv_mem_read(struct device *dev, struct device_attribute *attr,
 
 	return ET8EK8_PRIV_MEM_SIZE;
 }
-static DEVICE_ATTR(priv_mem, 0444, et8ek8_priv_mem_read, NULL);
+static DEVICE_ATTR_RO(priv_mem);
 
 /* --------------------------------------------------------------------------
  * V4L2 subdev core operations
@@ -1377,8 +1376,7 @@ static const struct v4l2_subdev_internal_ops et8ek8_internal_ops = {
  */
 static int __maybe_unused et8ek8_suspend(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
+	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
 	struct et8ek8_sensor *sensor = to_et8ek8_sensor(subdev);
 
 	if (!sensor->power_count)
@@ -1389,8 +1387,7 @@ static int __maybe_unused et8ek8_suspend(struct device *dev)
 
 static int __maybe_unused et8ek8_resume(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
+	struct v4l2_subdev *subdev = dev_get_drvdata(dev);
 	struct et8ek8_sensor *sensor = to_et8ek8_sensor(subdev);
 
 	if (!sensor->power_count)
@@ -1448,7 +1445,7 @@ static int et8ek8_probe(struct i2c_client *client)
 		goto err_mutex;
 	}
 
-	ret = v4l2_async_register_subdev_sensor_common(&sensor->subdev);
+	ret = v4l2_async_register_subdev_sensor(&sensor->subdev);
 	if (ret < 0)
 		goto err_entity;
 
@@ -1463,7 +1460,7 @@ err_mutex:
 	return ret;
 }
 
-static int __exit et8ek8_remove(struct i2c_client *client)
+static void __exit et8ek8_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct et8ek8_sensor *sensor = to_et8ek8_sensor(subdev);
@@ -1480,8 +1477,6 @@ static int __exit et8ek8_remove(struct i2c_client *client)
 	v4l2_async_unregister_subdev(&sensor->subdev);
 	media_entity_cleanup(&sensor->subdev.entity);
 	mutex_destroy(&sensor->power_lock);
-
-	return 0;
 }
 
 static const struct of_device_id et8ek8_of_table[] = {

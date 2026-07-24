@@ -28,19 +28,13 @@ description: |
   PDMAs can be configured via BCDMA split channel's peer registers to match with
   the configuration of the legacy peripheral.
 
+allOf:
+  - $ref: /schemas/dma/dma-controller.yaml#
+  - $ref: /schemas/arm/keystone/ti,k3-sci-common.yaml#
+
 properties:
   compatible:
-    enum:
-      - ti,am62a-dmss-bcdma-csirx
-      - ti,am64-dmss-bcdma
-
-  reg:
-    minItems: 3
-    maxItems: 5
-
-  reg-names:
-    minItems: 3
-    maxItems: 5
+    const: ti,am64-dmss-bcdma
 
   "#dma-cells":
     const: 3
@@ -71,12 +65,18 @@ properties:
 
       cell 3: ASEL value for the channel
 
-  msi-parent: true
+  reg:
+    maxItems: 5
 
-  power-domains:
-    description:
-      Power domain if available
-    maxItems: 1
+  reg-names:
+    items:
+      - const: gcfg
+      - const: bchanrt
+      - const: rchanrt
+      - const: tchanrt
+      - const: ringrt
+
+  msi-parent: true
 
   ti,asel:
     $ref: /schemas/types.yaml#/definitions/uint32
@@ -123,49 +123,9 @@ required:
   - msi-parent
   - ti,sci
   - ti,sci-dev-id
+  - ti,sci-rm-range-bchan
+  - ti,sci-rm-range-tchan
   - ti,sci-rm-range-rchan
-
-allOf:
-  - $ref: /schemas/dma/dma-controller.yaml#
-
-  - if:
-      properties:
-        compatible:
-          contains:
-            const: ti,am62a-dmss-bcdma-csirx
-    then:
-      properties:
-        ti,sci-rm-range-bchan: false
-        ti,sci-rm-range-tchan: false
-
-        reg:
-          maxItems: 3
-
-        reg-names:
-          items:
-            - const: gcfg
-            - const: rchanrt
-            - const: ringrt
-
-      required:
-        - power-domains
-
-    else:
-      properties:
-        reg:
-          minItems: 5
-
-        reg-names:
-          items:
-            - const: gcfg
-            - const: bchanrt
-            - const: rchanrt
-            - const: tchanrt
-            - const: ringrt
-
-      required:
-        - ti,sci-rm-range-bchan
-        - ti,sci-rm-range-tchan
 
 unevaluatedProperties: false
 

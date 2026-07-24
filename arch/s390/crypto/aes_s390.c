@@ -21,6 +21,7 @@
 #include <crypto/algapi.h>
 #include <crypto/ghash.h>
 #include <crypto/internal/aead.h>
+#include <crypto/internal/cipher.h>
 #include <crypto/internal/skcipher.h>
 #include <crypto/scatterwalk.h>
 #include <linux/err.h>
@@ -1048,10 +1049,11 @@ out_err:
 	return ret;
 }
 
-module_cpu_feature_match(MSA, aes_s390_init);
+module_cpu_feature_match(S390_CPU_FEATURE_MSA, aes_s390_init);
 module_exit(aes_s390_fini);
 
 MODULE_ALIAS_CRYPTO("aes-all");
 
 MODULE_DESCRIPTION("Rijndael (AES) Cipher Algorithm");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS(CRYPTO_INTERNAL);

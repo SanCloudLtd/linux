@@ -2,8 +2,8 @@
 /*
  * SRAM DMA-Heap userspace exporter
  *
- * Copyright (C) 2019 Texas Instruments Incorporated - http://www.ti.com/
- *	Andrew F. Davis <afd@ti.com>
+ * Copyright (C) 2019-2022 Texas Instruments Incorporated - https://www.ti.com/
+ *	Andrew Davis <afd@ti.com>
  */
 
 #include <linux/dma-mapping.h>
@@ -95,6 +95,12 @@ static struct sg_table *dma_heap_map_dma_buf(struct dma_buf_attachment *attachme
 	struct dma_heap_attachment *a = attachment->priv;
 	struct sg_table *table = a->table;
 
+	/*
+	 * As this heap is backed by uncached SRAM memory we do not need to
+	 * perform any sync operations on the buffer before allowing device
+	 * domain access. For this reason we use SKIP_CPU_SYNC and also do
+	 * not use or provide begin/end_cpu_access() dma-buf functions.
+	 */
 	if (!dma_map_sg_attrs(attachment->dev, table->sgl, table->nents,
 			      direction, DMA_ATTR_SKIP_CPU_SYNC))
 		return ERR_PTR(-ENOMEM);
@@ -133,11 +139,13 @@ static int dma_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	return ret;
 }
 
-static void *dma_heap_vmap(struct dma_buf *dmabuf)
+static int dma_heap_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
 {
 	struct sram_dma_heap_buffer *buffer = dmabuf->priv;
 
-	return buffer->vaddr;
+	iosys_map_set_vaddr(map, buffer->vaddr);
+
+	return 0;
 }
 
 static const struct dma_buf_ops sram_dma_heap_buf_ops = {
@@ -150,10 +158,10 @@ static const struct dma_buf_ops sram_dma_heap_buf_ops = {
 	.vmap = dma_heap_vmap,
 };
 
-static int sram_dma_heap_allocate(struct dma_heap *heap,
-				  unsigned long len,
-				  unsigned long fd_flags,
-				  unsigned long heap_flags)
+static struct dma_buf *sram_dma_heap_allocate(struct dma_heap *heap,
+					      unsigned long len,
+					      unsigned long fd_flags,
+					      unsigned long heap_flags)
 {
 	struct sram_dma_heap *sram_dma_heap = dma_heap_get_drvdata(heap);
 	struct sram_dma_heap_buffer *buffer;
@@ -164,7 +172,7 @@ static int sram_dma_heap_allocate(struct dma_heap *heap,
 
 	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	buffer->pool = sram_dma_heap->pool;
 	INIT_LIST_HEAD(&buffer->attachments);
 	mutex_init(&buffer->attachments_lock);
@@ -183,6 +191,7 @@ static int sram_dma_heap_allocate(struct dma_heap *heap,
 	}
 
 	/* create the dmabuf */
+	exp_info.exp_name = dma_heap_get_name(heap);
 	exp_info.ops = &sram_dma_heap_buf_ops;
 	exp_info.size = buffer->len;
 	exp_info.flags = fd_flags;
@@ -193,43 +202,36 @@ static int sram_dma_heap_allocate(struct dma_heap *heap,
 		goto free_pool;
 	}
 
-	ret = dma_buf_fd(dmabuf, fd_flags);
-	if (ret < 0) {
-		dma_buf_put(dmabuf);
-		/* just return, as put will call release and that will free */
-		return ret;
-	}
-
-	return ret;
+	return dmabuf;
 
 free_pool:
 	gen_pool_free(buffer->pool, (unsigned long)buffer->vaddr, buffer->len);
 free_buffer:
 	kfree(buffer);
 
-	return ret;
+	return ERR_PTR(ret);
 }
 
 static struct dma_heap_ops sram_dma_heap_ops = {
 	.allocate = sram_dma_heap_allocate,
 };
 
-int sram_dma_heap_export(struct sram_dev *sram,
-			 struct sram_reserve *block,
-			 phys_addr_t start,
-			 struct sram_partition *part)
+int sram_add_dma_heap(struct sram_dev *sram,
+		      struct sram_reserve *block,
+		      phys_addr_t start,
+		      struct sram_partition *part)
 {
 	struct sram_dma_heap *sram_dma_heap;
 	struct dma_heap_export_info exp_info;
 
-	dev_info(sram->dev, "Exporting SRAM pool '%s'\n", block->label);
+	dev_info(sram->dev, "Exporting SRAM Heap '%s'\n", block->label);
 
 	sram_dma_heap = kzalloc(sizeof(*sram_dma_heap), GFP_KERNEL);
 	if (!sram_dma_heap)
 		return -ENOMEM;
 	sram_dma_heap->pool = part->pool;
 
-	exp_info.name = block->label;
+	exp_info.name = kasprintf(GFP_KERNEL, "sram_%s", block->label);
 	exp_info.ops = &sram_dma_heap_ops;
 	exp_info.priv = sram_dma_heap;
 	sram_dma_heap->heap = dma_heap_add(&exp_info);

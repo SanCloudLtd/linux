@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Texas Instruments ICSSG Ethernet driver
  *
- * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 
@@ -18,98 +18,28 @@ struct icssg_flow_cfg {
 	__le16 mgm_base_flow;
 } __packed;
 
-/*------------------------ SR1.0 related --------------------------*/
-
-/* Port queue size in MSMC from firmware
- * PORTQSZ_HP .set (0x1800)
- * PORTQSZ_HP2 .set (PORTQSZ_HP+128) ;include barrier area
- * 0x1880 x 8 bytes per slice  (port)
- */
-
-#define MSMC_RAM_SIZE_SR1	(SZ_64K + SZ_32K + SZ_2K) /* 0x1880 x 8 x 2 */
-
-#define PRUETH_MAX_RX_MGM_DESC	8
-#define PRUETH_MAX_RX_FLOWS_SR1	4	/* excluding default flow */
-#define PRUETH_RX_FLOW_DATA_SR1	3       /* highest priority flow */
-#define PRUETH_MAX_RX_MGM_FLOWS	2	/* excluding default flow */
-#define PRUETH_RX_MGM_FLOW_RESPONSE	0
-#define PRUETH_RX_MGM_FLOW_TIMESTAMP	1
-#define PRUETH_RX_MGM_FLOW_OTHER	2
-
-#define PRUETH_NUM_BUF_POOLS_SR1	16
-#define PRUETH_EMAC_BUF_POOL_START_SR1	8
-#define PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1	128
-#define PRUETH_EMAC_BUF_SIZE_SR1	1536
-#define PRUETH_EMAC_NUM_BUF_SR1		4
-#define PRUETH_EMAC_BUF_POOL_SIZE_SR1	(PRUETH_EMAC_NUM_BUF_SR1 * \
-					 PRUETH_EMAC_BUF_SIZE_SR1)
-/* Config area lies in shared RAM */
-#define ICSSG_CONFIG_OFFSET_SLICE0   0
-#define ICSSG_CONFIG_OFFSET_SLICE1   0x8000
-
-struct icssg_config_sr1 {
-	__le32 status;	/* Firmware status */
-	__le32 addr_lo;	/* MSMC Buffer pool base address low. */
-	__le32 addr_hi;	/* MSMC Buffer pool base address high. Must be 0 */
-	__le32 tx_buf_sz[16];	/* Array of buffer pool sizes */
-	__le32 num_tx_threads;	/* Number of active egress threads, 1 to 4 */
-	__le32 tx_rate_lim_en;	/* Bitmask: Egress rate limit en per thread */
-	__le32 rx_flow_id;	/* RX flow id for first rx ring */
-	__le32 rx_mgr_flow_id;	/* RX flow id for the first management ring */
-	__le32 flags;		/* TBD */
-	__le32 n_burst;		/* for debug */
-	__le32 rtu_status;	/* RTU status */
-	__le32 info;		/* reserved */
-	__le32 reserve;
-	__le32 rand_seed;	/* Used for the random number generation at fw */
-} __packed;
-
-/* Shutdown command to stop processing at firmware.
- * Command format : 0x8101ss00. ss - sequence number. Currently not used
- * by driver.
- */
-#define ICSSG_SHUTDOWN_CMD		0x81010000
-
-/* pstate speed/duplex command to set speed and duplex settings
- * in firmware.
- * Command format : 0x8102ssPN. ss - sequence number: currently not
- * used by driver, P - port number: For switch, N - Speed/Duplex state
- * - Possible values of N:
- * 0x0 - 10Mbps/Half duplex ;
- * 0x8 - 10Mbps/Full duplex ;
- * 0x2 - 100Mbps/Half duplex;
- * 0xa - 100Mbps/Full duplex;
- * 0xc - 1Gbps/Full duplex;
- * NOTE: The above are same as bits [3..1](slice 0) or bits [8..6](slice 1) of
- * RGMII CFG register. So suggested to read the register to populate the command
- * bits.
- */
-#define ICSSG_PSTATE_SPEED_DUPLEX_CMD	0x81020000
-
-/*------------------------ SR2.0 related --------------------------*/
-
 #define PRUETH_PKT_TYPE_CMD	0x10
 #define PRUETH_NAV_PS_DATA_SIZE	16	/* Protocol specific data size */
 #define PRUETH_NAV_SW_DATA_SIZE	48	/* SW related data size */
 #define PRUETH_MAX_TX_DESC	512
 #define PRUETH_MAX_RX_DESC	512
-#define PRUETH_MAX_RX_FLOWS_SR2	1	/* excluding default flow */
-#define PRUETH_RX_FLOW_DATA_SR2	0	/* FIXME: f/w bug to change to highest priority flow */
+#define PRUETH_MAX_RX_FLOWS	1	/* excluding default flow */
+#define PRUETH_RX_FLOW_DATA	0
 
-#define PRUETH_EMAC_BUF_POOL_SIZE_SR2	SZ_8K
+#define PRUETH_EMAC_BUF_POOL_SIZE	SZ_8K
 #define PRUETH_EMAC_POOLS_PER_SLICE	24
-#define PRUETH_EMAC_BUF_POOL_START_SR2	8
-#define PRUETH_NUM_BUF_POOLS_SR2	8
+#define PRUETH_EMAC_BUF_POOL_START	8
+#define PRUETH_NUM_BUF_POOLS	8
 #define PRUETH_EMAC_RX_CTX_BUF_SIZE	SZ_16K	/* per slice */
-#define MSMC_RAM_SIZE_SR2	\
-	(2 * (PRUETH_EMAC_BUF_POOL_SIZE_SR2 * PRUETH_NUM_BUF_POOLS_SR2 + \
+#define MSMC_RAM_SIZE	\
+	(2 * (PRUETH_EMAC_BUF_POOL_SIZE * PRUETH_NUM_BUF_POOLS + \
 	 PRUETH_EMAC_RX_CTX_BUF_SIZE * 2))
 
-#define PRUETH_SW_BUF_POOL_SIZE_HOST_SR2 SZ_2K
-#define PRUETH_SW_NUM_BUF_POOLS_HOST_SR2 16
-#define MSMC_RAM_SIZE_SR2_SWITCH_MODE \
-	(MSMC_RAM_SIZE_SR2 + \
-	(2 * PRUETH_SW_BUF_POOL_SIZE_HOST_SR2 * PRUETH_SW_NUM_BUF_POOLS_HOST_SR2))
+#define PRUETH_SW_BUF_POOL_SIZE_HOST	SZ_2K
+#define PRUETH_SW_NUM_BUF_POOLS_HOST	16
+#define MSMC_RAM_SIZE_SWITCH_MODE \
+	(MSMC_RAM_SIZE + \
+	(2 * PRUETH_SW_BUF_POOL_SIZE_HOST * PRUETH_SW_NUM_BUF_POOLS_HOST))
 
 #define PRUETH_SWITCH_FDB_MASK ((SIZE_OF_FDB / NUMBER_OF_FDB_BUCKET_ENTRIES) - 1)
 
@@ -173,7 +103,11 @@ enum icssg_port_state_cmd {
 #define EMAC_ACCEPT_PRIOR   0xfffc0000
 
 /* Config area lies in DRAM */
-#define ICSSG_CONFIG_OFFSET			0x0
+#define ICSSG_CONFIG_OFFSET	0x0
+
+/* Config area lies in shared RAM */
+#define ICSSG_CONFIG_OFFSET_SLICE0   0
+#define ICSSG_CONFIG_OFFSET_SLICE1   0x8000
 
 #define ICSSG_NUM_NORMAL_PDS	64
 #define ICSSG_NUM_SPECIAL_PDS	16

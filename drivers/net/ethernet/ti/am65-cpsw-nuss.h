@@ -6,7 +6,6 @@
 #ifndef AM65_CPSW_NUSS_H_
 #define AM65_CPSW_NUSS_H_
 
-#include <linux/debugfs.h>
 #include <linux/if_ether.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -33,6 +32,7 @@ struct am65_cpsw_slave_data {
 	struct device_node		*phy_node;
 	phy_interface_t			phy_if;
 	struct phy			*ifphy;
+	struct phy			*serdes_phy;
 	bool				rx_pause;
 	bool				tx_pause;
 	u8				mac_addr[ETH_ALEN];
@@ -56,7 +56,6 @@ struct am65_cpsw_port {
 	bool				rx_ts_enabled;
 	struct am65_cpsw_qos		qos;
 	struct devlink_port		devlink_port;
-	struct dentry			*debugfs_port;
 	/* Only for suspend resume context */
 	u32				vid_context;
 };
@@ -82,7 +81,7 @@ struct am65_cpsw_tx_chn {
 	u32 id;
 	u32 descs_num;
 	char tx_chn_name[128];
-	u32  rate_mbps;
+	u32 rate_mbps;
 };
 
 struct am65_cpsw_rx_chn {
@@ -95,8 +94,8 @@ struct am65_cpsw_rx_chn {
 };
 
 #define AM65_CPSW_QUIRK_I2027_NO_TX_CSUM BIT(0)
-#define AM64_CPSW_QUIRK_CUT_THRU BIT(1)
-#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(2)
+#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(1)
+#define AM64_CPSW_QUIRK_CUT_THRU	 BIT(2)
 
 struct am65_cpsw_pdata {
 	u32	quirks;
@@ -140,9 +139,10 @@ struct am65_cpsw_common {
 
 	struct am65_cpsw_rx_chn	rx_chns;
 	struct napi_struct	napi_rx;
+
 	bool			rx_irq_disabled;
-	struct hrtimer rx_hrtimer;
-	unsigned long rx_pace_timeout;
+	struct hrtimer		rx_hrtimer;
+	unsigned long		rx_pace_timeout;
 
 	u32			nuss_ver;
 	u32			cpsw_ver;
@@ -160,8 +160,6 @@ struct am65_cpsw_common {
 	struct net_device *hw_bridge_dev;
 	struct notifier_block am65_cpsw_netdevice_nb;
 	unsigned char switch_id[MAX_PHYS_ITEM_ID_LEN];
-
-	struct dentry		*debugfs_root;
 	/* only for suspend/resume context restore */
 	u32			*ale_context;
 };
@@ -207,25 +205,5 @@ void am65_cpsw_nuss_remove_tx_chns(struct am65_cpsw_common *common);
 int am65_cpsw_nuss_update_tx_chns(struct am65_cpsw_common *common, int num_tx);
 
 bool am65_cpsw_port_dev_check(const struct net_device *dev);
-
-#if IS_ENABLED(CONFIG_DEBUG_FS)
-int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port);
-int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common);
-void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common);
-#else
-static inline int am65_cpsw_nuss_register_port_debugfs(struct am65_cpsw_port *port)
-{
-	return 0;
-}
-
-static inline int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *common)
-{
-	return 0;
-}
-
-static inline void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common)
-{
-}
-#endif
 
 #endif /* AM65_CPSW_NUSS_H_ */

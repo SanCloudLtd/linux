@@ -18,7 +18,7 @@ struct rpmsg_kdrv_priv {
 	struct rpmsg_device *rpdev;
 
 	struct idr message_idr;
-	struct mutex message_lock;
+	struct mutex message_lock;	/* Protect access to messages. */
 
 	int num_raw_devices;
 	struct rpmsg_kdrv_init_device_info raw_devices[RPMSG_KDRV_TP_MAX_DEVICES];
@@ -48,8 +48,8 @@ static struct bus_type rpmsg_kdrv_bus;
 
 static int rpmsg_kdrv_match_id(struct device *dev, const void *data)
 {
-	const uint32_t *idptr = data;
-	struct rpmsg_kdrv_device *kddev = container_of(dev, struct rpmsg_kdrv_device, dev);
+	const u32 *idptr = data;
+	struct rpmsg_kdrv_device *kddev = to_rpmsg_kdrv_device(dev);
 
 	if (kddev->device_id == *idptr)
 		return 1;
@@ -69,7 +69,7 @@ static int rpmsg_kdrv_match_remotedev(struct device *dev, const void *data)
 static int rpmsg_kdrv_match_name(struct device *dev, const void *data)
 {
 	const char *name = data;
-	struct rpmsg_kdrv_device *kddev = container_of(dev, struct rpmsg_kdrv_device, dev);
+	struct rpmsg_kdrv_device *kddev = to_rpmsg_kdrv_device(dev);
 
 	if (strcmp(kddev->device_name, name) == 0)
 		return 1;
@@ -91,7 +91,8 @@ int rpmsg_kdrv_register_driver(struct rpmsg_kdrv_driver *drv)
 }
 EXPORT_SYMBOL(rpmsg_kdrv_register_driver);
 
-static void rpmsg_kdrv_driver_handle_data(struct rpmsg_device *rpdev, void *data, int len, void *private, u32 src)
+static void rpmsg_kdrv_driver_handle_data(struct rpmsg_device *rpdev, void *data, int len,
+					  void *private, u32 src)
 {
 	struct device *dev;
 	struct rpmsg_kdrv_device_header *hdr = data;
@@ -99,7 +100,7 @@ static void rpmsg_kdrv_driver_handle_data(struct rpmsg_device *rpdev, void *data
 	struct rpmsg_kdrv_driver *kddrv = NULL;
 	void *message;
 	int message_size;
-	uint32_t msg_device_id;
+	u32 msg_device_id;
 	int ret;
 
 	msg_device_id = hdr->device_id;
@@ -108,7 +109,7 @@ static void rpmsg_kdrv_driver_handle_data(struct rpmsg_device *rpdev, void *data
 		dev_err(&rpdev->dev, "%s: message received for unknown device\n", __func__);
 		return;
 	}
-	kddev = container_of(dev, struct rpmsg_kdrv_device, dev);
+	kddev = to_rpmsg_kdrv_device(dev);
 	kddrv = to_rpmsg_kdrv_driver(kddev->dev.driver);
 	if (!kddrv) {
 		dev_err(&rpdev->dev, "%s: message received for device with no driver\n", __func__);
@@ -120,7 +121,6 @@ static void rpmsg_kdrv_driver_handle_data(struct rpmsg_device *rpdev, void *data
 	ret = kddrv->callback(kddev, message, message_size);
 	if (ret)
 		dev_err(&rpdev->dev, "%s: message callback returns %d\n", __func__, ret);
-
 }
 
 static int rpmsg_kdrv_connect(struct rpmsg_device *rpdev, struct rpmsg_kdrv_device *kddev)
@@ -136,7 +136,7 @@ static int rpmsg_kdrv_connect(struct rpmsg_device *rpdev, struct rpmsg_kdrv_devi
 	connect_req->device_id = kddev->device_id;
 
 	ret = rpmsg_kdrv_send_message(rpdev, RPMSG_KDRV_TP_DEVICE_ID_INIT,
-			connect_req, sizeof(*connect_req));
+				      connect_req, sizeof(*connect_req));
 
 	devm_kfree(&rpdev->dev, connect_req);
 	return ret;
@@ -155,7 +155,7 @@ static int rpmsg_kdrv_disconnect(struct rpmsg_device *rpdev, struct rpmsg_kdrv_d
 	disconnect_req->device_id = kddev->device_id;
 
 	ret = rpmsg_kdrv_send_message(rpdev, RPMSG_KDRV_TP_DEVICE_ID_INIT,
-			disconnect_req, sizeof(*disconnect_req));
+				      disconnect_req, sizeof(*disconnect_req));
 
 	devm_kfree(&rpdev->dev, disconnect_req);
 	return ret;
@@ -200,8 +200,6 @@ EXPORT_SYMBOL(rpmsg_remotedev_put_device);
 static void rpmsg_kdrv_release_device(struct device *dev)
 {
 	struct rpmsg_kdrv_device *kddev = to_rpmsg_kdrv_device(dev);
-
-	dev_dbg(dev, "%s\n", __func__);
 
 	devm_kfree(&kddev->rpdev->dev, kddev);
 }
@@ -267,14 +265,15 @@ static int rpmsg_kdrv_get_devices_cb(void *cb_data, void *req, int req_sz, void 
 		cnt = priv->num_raw_devices;
 
 		priv->raw_device_data_size[cnt] = dev->device_data_len;
-		priv->raw_device_data[cnt] = devm_kzalloc(&rpdev->dev, dev->device_data_len, GFP_KERNEL);
+		priv->raw_device_data[cnt] = devm_kzalloc(&rpdev->dev, dev->device_data_len,
+							  GFP_KERNEL);
 		if (!priv->raw_device_data[cnt]) {
 			ret = -ENOMEM;
 			goto out;
 		}
 		memcpy(priv->raw_device_data[cnt],
-				&info_resp->device_data[dev->device_data_offset],
-				dev->device_data_len);
+		       &info_resp->device_data[dev->device_data_offset],
+		       dev->device_data_len);
 		memcpy(&priv->raw_devices[cnt], dev, sizeof(*dev));
 		priv->num_raw_devices++;
 
@@ -301,7 +300,8 @@ static int rpmsg_kdrv_get_devices(struct rpmsg_device *rpdev)
 	info_req->header.message_type = RPMSG_KDRV_TP_INIT_DEV_INFO_REQUEST;
 
 	ret = rpmsg_kdrv_send_request_with_callback(rpdev, RPMSG_KDRV_TP_DEVICE_ID_INIT,
-			info_req, sizeof(*info_req), rpdev, rpmsg_kdrv_get_devices_cb);
+						    info_req, sizeof(*info_req), rpdev,
+						    rpmsg_kdrv_get_devices_cb);
 	if (ret)
 		goto nosend;
 
@@ -336,14 +336,18 @@ static uint32_t rpmsg_kdrv_new_packet_id(struct rpmsg_device *rpdev, void *data)
 	return id;
 }
 
-static void rpmsg_kdrv_dev_hdr_delete(struct rpmsg_device *rpdev, struct rpmsg_kdrv_device_header *hdr)
+static void rpmsg_kdrv_dev_hdr_delete(struct rpmsg_device *rpdev,
+				      struct rpmsg_kdrv_device_header *hdr)
 {
 	rpmsg_kdrv_del_packet_id(rpdev, hdr->packet_id);
 	devm_kfree(&rpdev->dev, hdr);
 }
 
 static struct rpmsg_kdrv_device_header *rpmsg_kdrv_dev_hdr_alloc(struct rpmsg_device *rpdev,
-		int device_id, int size, int pkt_type, int pkt_src, void *msg, int len, struct rpmsg_kdrv_ctx *ctx)
+								 int device_id, int size,
+								 int pkt_type, int pkt_src,
+								 void *msg, int len,
+								 struct rpmsg_kdrv_ctx *ctx)
 {
 	struct rpmsg_kdrv_device_header *dev_hdr;
 	void *dst;
@@ -357,7 +361,6 @@ static struct rpmsg_kdrv_device_header *rpmsg_kdrv_dev_hdr_alloc(struct rpmsg_de
 	dev_hdr->packet_source = pkt_src;
 	dev_hdr->packet_size = size;
 	dev_hdr->packet_id = RPMSG_KDRV_TP_PACKET_ID_NONE;
-
 
 	dst = (void *)(&dev_hdr[1]);
 	memcpy(dst, msg, len);
@@ -377,7 +380,8 @@ static struct rpmsg_kdrv_device_header *rpmsg_kdrv_dev_hdr_alloc(struct rpmsg_de
 }
 
 static struct rpmsg_kdrv_ctx *rpmsg_kdrv_ctx_alloc(struct rpmsg_device *rpdev, bool blocking,
-		request_cb_t callback, void *cb_data, void *req, int req_size, void *resp, int resp_size)
+						   request_cb_t callback, void *cb_data, void *req,
+						   int req_size, void *resp, int resp_size)
 {
 	struct rpmsg_kdrv_ctx *ctx;
 
@@ -424,8 +428,8 @@ static int rpmsg_kdrv_send_packet(struct rpmsg_device *rpdev, void *data, int le
  * expect any more responses
  */
 int rpmsg_kdrv_send_request_with_callback(struct rpmsg_device *rpdev, uint32_t device_id,
-		void *message, uint32_t message_size,
-		void *cb_data, request_cb_t callback)
+					  void *message, uint32_t message_size, void *cb_data,
+					  request_cb_t callback)
 {
 	struct rpmsg_kdrv_device_header *dev_hdr;
 	int total_size = message_size + sizeof(*dev_hdr);
@@ -439,10 +443,9 @@ int rpmsg_kdrv_send_request_with_callback(struct rpmsg_device *rpdev, uint32_t d
 	}
 
 	dev_hdr = rpmsg_kdrv_dev_hdr_alloc(rpdev, device_id, total_size,
-			RPMSG_KDRV_TP_PACKET_TYPE_REQUEST,
-			RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
-			message, message_size,
-			ctx);
+					   RPMSG_KDRV_TP_PACKET_TYPE_REQUEST,
+					   RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
+					   message, message_size, ctx);
 	if (!dev_hdr) {
 		dev_err(&rpdev->dev, "%s: device header allocation failed\n", __func__);
 		ret = -ENOMEM;
@@ -474,25 +477,25 @@ EXPORT_SYMBOL(rpmsg_kdrv_send_request_with_callback);
  * when this function returns
  */
 int rpmsg_kdrv_send_request_with_response(struct rpmsg_device *rpdev, uint32_t device_id,
-		void *message, uint32_t message_size,
-		void *response, uint32_t response_size)
+					  void *message, uint32_t message_size,
+					  void *response, uint32_t response_size)
 {
 	struct rpmsg_kdrv_device_header *dev_hdr;
 	int total_size = message_size + sizeof(*dev_hdr);
 	struct rpmsg_kdrv_ctx *ctx = NULL;
 	int ret;
 
-	ctx = rpmsg_kdrv_ctx_alloc(rpdev, true, NULL, NULL, message, message_size, response, response_size);
+	ctx = rpmsg_kdrv_ctx_alloc(rpdev, true, NULL, NULL, message, message_size, response,
+				   response_size);
 	if (!ctx) {
 		dev_err(&rpdev->dev, "%s: ctx allocation failed\n", __func__);
 		return -ENOMEM;
 	}
 
 	dev_hdr = rpmsg_kdrv_dev_hdr_alloc(rpdev, device_id, total_size,
-			RPMSG_KDRV_TP_PACKET_TYPE_REQUEST,
-			RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
-			message, message_size,
-			ctx);
+					   RPMSG_KDRV_TP_PACKET_TYPE_REQUEST,
+					   RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
+					   message, message_size, ctx);
 	if (!dev_hdr) {
 		dev_err(&rpdev->dev, "%s: device header allocation failed\n", __func__);
 		ret = -ENOMEM;
@@ -505,7 +508,7 @@ int rpmsg_kdrv_send_request_with_response(struct rpmsg_device *rpdev, uint32_t d
 		goto nosend;
 	}
 
-	wait_event(ctx->response_wq, ctx->response_recv == true);
+	wait_event(ctx->response_wq, ctx->response_recv);
 
 nosend:
 	rpmsg_kdrv_dev_hdr_delete(rpdev, dev_hdr);
@@ -524,7 +527,7 @@ EXPORT_SYMBOL(rpmsg_kdrv_send_request_with_response);
  * this function returns
  */
 int rpmsg_kdrv_send_message(struct rpmsg_device *rpdev, uint32_t device_id,
-		void *message, uint32_t message_size)
+			    void *message, uint32_t message_size)
 {
 	struct rpmsg_kdrv_device_header *dev_hdr;
 	int total_size = message_size + sizeof(*dev_hdr);
@@ -533,10 +536,9 @@ int rpmsg_kdrv_send_message(struct rpmsg_device *rpdev, uint32_t device_id,
 	/* We dont need a ctx for direct messages */
 
 	dev_hdr = rpmsg_kdrv_dev_hdr_alloc(rpdev, device_id, total_size,
-			RPMSG_KDRV_TP_PACKET_TYPE_MESSAGE,
-			RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
-			message, message_size,
-			NULL);
+					   RPMSG_KDRV_TP_PACKET_TYPE_MESSAGE,
+					   RPMSG_KDRV_TP_PACKET_SOURCE_CLIENT,
+					   message, message_size, NULL);
 	if (!dev_hdr) {
 		dev_err(&rpdev->dev, "%s: device header allocation failed\n", __func__);
 		return -ENOMEM;
@@ -555,7 +557,7 @@ out:
 EXPORT_SYMBOL(rpmsg_kdrv_send_message);
 
 static int rpmsg_kdrv_cb(struct rpmsg_device *rpdev, void *data, int len,
-						void *private, u32 src)
+			 void *private, u32 src)
 {
 	struct rpmsg_kdrv_priv *priv = dev_get_drvdata(&rpdev->dev);
 	struct rpmsg_kdrv_device_header *hdr = data;
@@ -632,7 +634,7 @@ static int rpmsg_kdrv_dev_probe(struct device *dev)
 	return 0;
 }
 
-static int rpmsg_kdrv_dev_remove(struct device *dev)
+static void rpmsg_kdrv_dev_remove(struct device *dev)
 {
 	struct rpmsg_kdrv_device *kddev = to_rpmsg_kdrv_device(dev);
 	struct rpmsg_kdrv_driver *kddrv = to_rpmsg_kdrv_driver(kddev->dev.driver);
@@ -640,7 +642,6 @@ static int rpmsg_kdrv_dev_remove(struct device *dev)
 	dev_dbg(dev, "%s: remove\n", __func__);
 
 	kddrv->remove(kddev);
-	return 0;
 }
 
 static int rpmsg_kdrv_probe(struct rpmsg_device *rpdev)
@@ -741,4 +742,4 @@ module_exit(rpmsg_kdrv_fini);
 
 MODULE_AUTHOR("Subhajit Paul <subhajit_paul@ti.com>");
 MODULE_DESCRIPTION("TI Remote-device framework Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

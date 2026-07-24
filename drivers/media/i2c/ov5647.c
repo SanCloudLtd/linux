@@ -919,8 +919,8 @@ static const struct v4l2_subdev_video_ops ov5647_subdev_video_ops = {
 };
 
 static int ov5647_enum_mbus_code(struct v4l2_subdev *sd,
-				struct v4l2_subdev_state *sd_state,
-				struct v4l2_subdev_mbus_code_enum *code)
+				 struct v4l2_subdev_state *sd_state,
+				 struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->index > 0)
 		return -EINVAL;
@@ -960,7 +960,8 @@ static int ov5647_get_pad_fmt(struct v4l2_subdev *sd,
 	mutex_lock(&sensor->lock);
 	switch (format->which) {
 	case V4L2_SUBDEV_FORMAT_TRY:
-		sensor_format = v4l2_subdev_get_try_format(sd, sd_state, format->pad);
+		sensor_format = v4l2_subdev_get_try_format(sd, sd_state,
+							   format->pad);
 		break;
 	default:
 		sensor_format = &sensor->mode->format;
@@ -1106,8 +1107,7 @@ static int ov5647_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
 	struct v4l2_mbus_framefmt *format =
 				v4l2_subdev_get_try_format(sd, fh->state, 0);
-	struct v4l2_rect *crop =
-				v4l2_subdev_get_try_crop(sd, fh->state, 0);
+	struct v4l2_rect *crop = v4l2_subdev_get_try_crop(sd, fh->state, 0);
 
 	crop->left = OV5647_PIXEL_ARRAY_LEFT;
 	crop->top = OV5647_PIXEL_ARRAY_TOP;
@@ -1448,7 +1448,7 @@ mutex_destroy:
 	return ret;
 }
 
-static int ov5647_remove(struct i2c_client *client)
+static void ov5647_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov5647 *sensor = to_sensor(sd);
@@ -1459,8 +1459,6 @@ static int ov5647_remove(struct i2c_client *client)
 	v4l2_device_unregister_subdev(sd);
 	pm_runtime_disable(&client->dev);
 	mutex_destroy(&sensor->lock);
-
-	return 0;
 }
 
 static const struct dev_pm_ops ov5647_pm_ops = {

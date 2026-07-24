@@ -12,59 +12,12 @@
 #include <dt-bindings/phy/phy.h>
 
 / {
+	compatible = "ti,j7200-evm", "ti,j7200";
+	model = "Texas Instruments J7200 EVM";
+
 	chosen {
 		stdout-path = "serial2:115200n8";
 		bootargs = "console=ttyS2,115200n8 earlycon=ns16550a,mmio32,0x02800000";
-	};
-
-	cpsw5g_virt_mac: main_r5fss_cpsw5g_virt_mac0 {
-		compatible = "ti,j721e-cpsw-virt-mac";
-		dma-coherent;
-		ti,psil-base = <0x4a00>;
-		ti,remote-name = "mpu_1_0_ethswitch-device-0";
-
-		dmas = <&main_udmap 0xca00>,
-		       <&main_udmap 0xca01>,
-		       <&main_udmap 0xca02>,
-		       <&main_udmap 0xca03>,
-		       <&main_udmap 0xca04>,
-		       <&main_udmap 0xca05>,
-		       <&main_udmap 0xca06>,
-		       <&main_udmap 0xca07>,
-		       <&main_udmap 0x4a00>;
-		dma-names = "tx0", "tx1", "tx2", "tx3",
-			    "tx4", "tx5", "tx6", "tx7",
-			    "rx";
-
-		virt_emac_port {
-			ti,label = "virt-port";
-			/* local-mac-address = [0 0 0 0 0 0]; */
-		};
-	};
-
-	cpsw9g_virt_maconly: main-r5fss-cpsw9g-virt-mac1 {
-		compatible = "ti,j721e-cpsw-virt-mac";
-		dma-coherent;
-		ti,psil-base = <0x4a00>;
-		ti,remote-name = "mpu_1_0_ethmac-device-1";
-
-		dmas = <&main_udmap 0xca00>,
-		       <&main_udmap 0xca01>,
-		       <&main_udmap 0xca02>,
-		       <&main_udmap 0xca03>,
-		       <&main_udmap 0xca04>,
-		       <&main_udmap 0xca05>,
-		       <&main_udmap 0xca06>,
-		       <&main_udmap 0xca07>,
-		       <&main_udmap 0x4a00>;
-		dma-names = "tx0", "tx1", "tx2", "tx3",
-			    "tx4", "tx5", "tx6", "tx7",
-			    "rx";
-
-		virt_emac_port {
-			ti,label = "virt-port";
-			/* local-mac-address = [0 0 0 0 0 0]; */
-		};
 	};
 
 	evm_12v0: fixedregulator-evm12v0 {
@@ -130,25 +83,25 @@
 &wkup_pmx2 {
 	mcu_cpsw_pins_default: mcu-cpsw-pins-default {
 		pinctrl-single,pins = <
-			J721E_WKUP_IOPAD(0x0068, PIN_OUTPUT, 0) /* MCU_RGMII1_TX_CTL */
-			J721E_WKUP_IOPAD(0x006c, PIN_INPUT, 0) /* MCU_RGMII1_RX_CTL */
-			J721E_WKUP_IOPAD(0x0070, PIN_OUTPUT, 0) /* MCU_RGMII1_TD3 */
-			J721E_WKUP_IOPAD(0x0074, PIN_OUTPUT, 0) /* MCU_RGMII1_TD2 */
-			J721E_WKUP_IOPAD(0x0078, PIN_OUTPUT, 0) /* MCU_RGMII1_TD1 */
-			J721E_WKUP_IOPAD(0x007c, PIN_OUTPUT, 0) /* MCU_RGMII1_TD0 */
-			J721E_WKUP_IOPAD(0x0088, PIN_INPUT, 0) /* MCU_RGMII1_RD3 */
-			J721E_WKUP_IOPAD(0x008c, PIN_INPUT, 0) /* MCU_RGMII1_RD2 */
-			J721E_WKUP_IOPAD(0x0090, PIN_INPUT, 0) /* MCU_RGMII1_RD1 */
-			J721E_WKUP_IOPAD(0x0094, PIN_INPUT, 0) /* MCU_RGMII1_RD0 */
-			J721E_WKUP_IOPAD(0x0080, PIN_OUTPUT, 0) /* MCU_RGMII1_TXC */
-			J721E_WKUP_IOPAD(0x0084, PIN_INPUT, 0) /* MCU_RGMII1_RXC */
+			J721E_WKUP_IOPAD(0x0000, PIN_OUTPUT, 0) /* MCU_RGMII1_TX_CTL */
+			J721E_WKUP_IOPAD(0x0004, PIN_INPUT, 0) /* MCU_RGMII1_RX_CTL */
+			J721E_WKUP_IOPAD(0x0008, PIN_OUTPUT, 0) /* MCU_RGMII1_TD3 */
+			J721E_WKUP_IOPAD(0x000c, PIN_OUTPUT, 0) /* MCU_RGMII1_TD2 */
+			J721E_WKUP_IOPAD(0x0010, PIN_OUTPUT, 0) /* MCU_RGMII1_TD1 */
+			J721E_WKUP_IOPAD(0x0014, PIN_OUTPUT, 0) /* MCU_RGMII1_TD0 */
+			J721E_WKUP_IOPAD(0x0020, PIN_INPUT, 0) /* MCU_RGMII1_RD3 */
+			J721E_WKUP_IOPAD(0x0024, PIN_INPUT, 0) /* MCU_RGMII1_RD2 */
+			J721E_WKUP_IOPAD(0x0028, PIN_INPUT, 0) /* MCU_RGMII1_RD1 */
+			J721E_WKUP_IOPAD(0x002c, PIN_INPUT, 0) /* MCU_RGMII1_RD0 */
+			J721E_WKUP_IOPAD(0x0018, PIN_OUTPUT, 0) /* MCU_RGMII1_TXC */
+			J721E_WKUP_IOPAD(0x001c, PIN_INPUT, 0) /* MCU_RGMII1_RXC */
 		>;
 	};
 
 	mcu_mdio_pins_default: mcu-mdio1-pins-default {
 		pinctrl-single,pins = <
-			J721E_WKUP_IOPAD(0x009c, PIN_OUTPUT, 0) /* (L1) MCU_MDIO0_MDC */
-			J721E_WKUP_IOPAD(0x0098, PIN_INPUT, 0) /* (L4) MCU_MDIO0_MDIO */
+			J721E_WKUP_IOPAD(0x0034, PIN_OUTPUT, 0) /* (L1) MCU_MDIO0_MDC */
+			J721E_WKUP_IOPAD(0x0030, PIN_INPUT, 0) /* (L4) MCU_MDIO0_MDIO */
 		>;
 	};
 };
@@ -201,49 +154,25 @@
 	status = "reserved";
 };
 
+&mcu_uart0 {
+	status = "okay";
+	/* Default pinmux */
+};
+
 &main_uart0 {
+	status = "okay";
 	/* Shared with ATF on this platform */
 	power-domains = <&k3_pds 146 TI_SCI_PD_SHARED>;
+};
+
+&main_uart1 {
+	status = "okay";
+	/* Default pinmux */
 };
 
 &main_uart2 {
 	/* MAIN UART 2 is used by R5F firmware */
 	status = "reserved";
-};
-
-&main_uart3 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart4 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart5 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart6 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart7 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart8 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart9 {
-	/* UART not brought out */
-	status = "disabled";
 };
 
 &main_gpio2 {
@@ -262,30 +191,12 @@
 	status = "disabled";
 };
 
-&main_spi4 {
-	status = "disabled";
-};
-
-&mcu_spi0 {
-	status = "disabled";
-};
-
-&mcu_spi1 {
-	status = "disabled";
-};
-
-&mcu_spi2 {
-	status = "disabled";
-};
-
 &mcu_cpsw {
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_cpsw_pins_default &mcu_mdio_pins_default>;
 };
 
 &davinci_mdio {
-	bus_freq = <20000>;
-
 	phy0: ethernet-phy@0 {
 		reg = <0>;
 		ti,rx-internal-delay = <DP83867_RGMIIDCTL_2_00_NS>;
@@ -299,6 +210,7 @@
 };
 
 &main_i2c0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
@@ -326,6 +238,7 @@
  * The i2c1 of the CPB (as it is labeled) is not connected to j7200.
  */
 &main_i2c1 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c1_pins_default>;
 	clock-frequency = <400000>;
@@ -407,14 +320,6 @@
 	};
 };
 
-&cpsw0 {
-	/* Disable cpsw0 since cpsw5g_virt_mac is the default Ethernet
-	 * controller. cpsw0 is enabled with overlay for native
-	 * Ethernet driver support
-	 */
-	status = "disabled";
-};
-
 &pcie1_rc {
 	reset-gpios = <&exp1 2 GPIO_ACTIVE_HIGH>;
 	phys = <&serdes0_pcie_link>;
@@ -427,21 +332,4 @@
 	phy-names = "pcie-phy";
 	num-lanes = <2>;
 	status = "disabled";
-};
-
-&wkup_i2c0 {
-	status = "okay";
-	tps6594x: tps6594x@48 {
-		compatible = "ti,tps6594x";
-		reg = <0x48>;
-		ti,system-power-controller;
-
-		rtc {
-			compatible = "ti,tps6594x-rtc";
-		};
-
-		gpio {
-			compatible = "ti,tps6594x-gpio";
-		};
-	};
 };

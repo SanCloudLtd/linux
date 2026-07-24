@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * Wrapper driver for SERDES used in J721E
  *
  * Copyright (C) 2019 Texas Instruments Incorporated - http://www.ti.com/
@@ -8,6 +8,7 @@
 
 #include <dt-bindings/phy/phy.h>
 #include <dt-bindings/phy/phy-ti.h>
+#include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/gpio.h>
@@ -330,8 +331,9 @@ enum wiz_type {
 	J721E_WIZ_16G,
 	J721E_WIZ_10G,	/* Also for J7200 SR1.0 */
 	AM64_WIZ_10G,
-	J7200_WIZ_10G,	/* J7200 SR2.0 */
+	J7200_WIZ_10G,  /* J7200 SR2.0 */
 	J784S4_WIZ_10G,
+	J721S2_WIZ_10G,
 };
 
 struct wiz_data {
@@ -445,6 +447,8 @@ static int wiz_mode_select(struct wiz *wiz)
 			mode = LANE_MODE_GEN1;
 		else if (wiz->lane_phy_type[i] == PHY_TYPE_QSGMII)
 			mode = LANE_MODE_GEN2;
+		else
+			continue;
 
 		if (wiz->lane_phy_type[i] == PHY_TYPE_USXGMII) {
 			ret = regmap_field_write(wiz->p0_mac_src_sel[i], 0x3);
@@ -515,7 +519,7 @@ static int wiz_init(struct wiz *wiz)
 static int wiz_regfield_init(struct wiz *wiz)
 {
 	struct regmap *regmap = wiz->regmap;
-	struct regmap *scm_regmap = wiz->regmap; /* updated to scm_regmap later if applicable */
+	struct regmap *scm_regmap = wiz->regmap; /* updated later to scm_regmap if applicable */
 	int num_lanes = wiz->num_lanes;
 	struct device *dev = wiz->dev;
 	const struct wiz_data *data = wiz->data;
@@ -1017,6 +1021,7 @@ static void wiz_clock_cleanup(struct wiz *wiz, struct device_node *node)
 	case AM64_WIZ_10G:
 	case J7200_WIZ_10G:
 	case J784S4_WIZ_10G:
+	case J721S2_WIZ_10G:
 		of_clk_del_provider(dev->of_node);
 		return;
 	default:
@@ -1149,6 +1154,7 @@ static int wiz_clock_init(struct wiz *wiz, struct device_node *node)
 	case AM64_WIZ_10G:
 	case J7200_WIZ_10G:
 	case J784S4_WIZ_10G:
+	case J721S2_WIZ_10G:
 		ret = wiz_clock_register(wiz);
 		if (ret)
 			dev_err(dev, "Failed to register wiz clocks\n");
@@ -1232,6 +1238,7 @@ static int wiz_phy_fullrt_div(struct wiz *wiz, int lane)
 	case J721E_WIZ_16G:
 	case J721E_WIZ_10G:
 	case J7200_WIZ_10G:
+	case J721S2_WIZ_10G:
 		if (wiz->lane_phy_type[lane] == PHY_TYPE_SGMII)
 			return regmap_field_write(wiz->p0_fullrt_div[lane], 0x2);
 		break;
@@ -1360,6 +1367,15 @@ static struct wiz_data j784s4_10g_data = {
 	.clk_div_sel_num = WIZ_DIV_NUM_CLOCKS_10G,
 };
 
+static struct wiz_data j721s2_10g_data = {
+	.type = J721S2_WIZ_10G,
+	.pll0_refclk_mux_sel = &pll0_refclk_mux_sel,
+	.pll1_refclk_mux_sel = &pll1_refclk_mux_sel,
+	.refclk_dig_sel = &refclk_dig_sel_10g,
+	.clk_mux_sel = clk_mux_sel_10g,
+	.clk_div_sel_num = WIZ_DIV_NUM_CLOCKS_10G,
+};
+
 static const struct of_device_id wiz_id_table[] = {
 	{
 		.compatible = "ti,j721e-wiz-16g", .data = &j721e_16g_data,
@@ -1375,6 +1391,9 @@ static const struct of_device_id wiz_id_table[] = {
 	},
 	{
 		.compatible = "ti,j784s4-wiz-10g", .data = &j784s4_10g_data,
+	},
+	{
+		.compatible = "ti,j721s2-wiz-10g", .data = &j721s2_10g_data,
 	},
 	{}
 };
@@ -1400,6 +1419,7 @@ static int wiz_get_lane_phy_types(struct device *dev, struct wiz *wiz)
 
 		ret = of_property_read_u32(subnode, "reg", &reg);
 		if (ret) {
+			of_node_put(subnode);
 			dev_err(dev,
 				"%s: Reading \"reg\" from \"%s\" failed: %d\n",
 				__func__, subnode->name, ret);
@@ -1478,7 +1498,8 @@ static int wiz_probe(struct platform_device *pdev)
 	if (IS_ERR(wiz->scm_regmap)) {
 		if (wiz->type == J7200_WIZ_10G) {
 			dev_err(dev, "Couldn't get ti,scm regmap\n");
-			return -ENODEV;
+			ret = -ENODEV;
+			goto err_addr_to_resource;
 		}
 
 		wiz->scm_regmap = NULL;
@@ -1528,7 +1549,7 @@ static int wiz_probe(struct platform_device *pdev)
 
 	ret = wiz_get_lane_phy_types(dev, wiz);
 	if (ret)
-		return ret;
+		goto err_addr_to_resource;
 
 	wiz->dev = dev;
 	wiz->regmap = regmap;

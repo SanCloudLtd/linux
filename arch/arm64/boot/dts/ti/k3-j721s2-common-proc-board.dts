@@ -19,10 +19,11 @@
 
 	chosen {
 		stdout-path = "serial2:115200n8";
-		bootargs = "console=ttyS2,115200n8 earlycon=ns16550a,mmio32,0x2880000";
+		bootargs = "console=ttyS2,115200n8 earlycon=ns16550a,mmio32,2880000";
 	};
 
 	aliases {
+		serial1 = &mcu_uart0;
 		serial2 = &main_uart8;
 		mmc0 = &main_sdhci0;
 		mmc1 = &main_sdhci1;
@@ -31,7 +32,6 @@
 		can2 = &mcu_mcan1;
 		can3 = &main_mcan3;
 		can4 = &main_mcan5;
-		ethernet1 = &main_cpsw_port1;
 	};
 
 	evm_12v0: fixedregulator-evm12v0 {
@@ -138,16 +138,6 @@
 		enable-active-high;
 	};
 
-	dp1_pwr_3v3: regulator-dp1-prw {
-		compatible = "regulator-fixed";
-		regulator-name = "dp1-pwr";
-		regulator-min-microvolt = <3300000>;
-		regulator-max-microvolt = <3300000>;
-		gpio = <&exp4 1 GPIO_ACTIVE_HIGH>; /* P1 - DP1_PWR_SW_EN */
-		enable-active-high;
-		regulator-always-on;
-	};
-
 	dp0: dp0-connector {
 		compatible = "dp-connector";
 		label = "DP0";
@@ -160,25 +150,29 @@
 			};
 		};
 	};
-
-	panel {
-		compatible = "ti,panel-edp";
-		power-supply = <&dp1_pwr_3v3>;
-
-		port {
-			dp1_panel_in: endpoint {
-				remote-endpoint = <&dp1_out>;
-			};
-		};
-	};
 };
 
 &main_i2c4 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c4_pins_default>;
 	clock-frequency = <400000>;
 
 	exp4: gpio@20 {
+		compatible = "ti,tca6408";
+		reg = <0x20>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+};
+
+&main_i2c5 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_i2c5_pins_default>;
+	clock-frequency = <400000>;
+
+	exp5: gpio@20 {
 		compatible = "ti,tca6408";
 		reg = <0x20>;
 		gpio-controller;
@@ -249,17 +243,16 @@
 		>;
 	};
 
-	dp0_pins_default: dp0-pins-default {
-		pinctrl-single,pins = <
-			J721S2_IOPAD(0x0b8, PIN_INPUT, 3) /* (AA24) MCASP1_ACLKX.DP0_HPD */
-		>;
-	};
-
 	main_i2c5_pins_default: main-i2c5-pins-default {
 		pinctrl-single,pins = <
 			J721S2_IOPAD(0x01c, PIN_INPUT, 8) /* (Y24) MCAN15_TX.I2C5_SCL */
 			J721S2_IOPAD(0x018, PIN_INPUT, 8) /* (W23) MCAN14_RX.I2C5_SDA */
+		>;
+	};
 
+	dp0_pins_default: dp0-pins-default {
+		pinctrl-single,pins = <
+			J721S2_IOPAD(0x0b8, PIN_INPUT, 3) /* (AA24) MCASP1_ACLKX.DP0_HPD */
 		>;
 	};
 };
@@ -316,6 +309,32 @@
 		>;
 	};
 
+	mcu_adc0_pins_default: mcu-adc0-pins-default {
+		pinctrl-single,pins = <
+			J721S2_WKUP_IOPAD(0x134, PIN_INPUT, 0) /* (L25) MCU_ADC0_AIN0 */
+			J721S2_WKUP_IOPAD(0x138, PIN_INPUT, 0) /* (K25) MCU_ADC0_AIN1 */
+			J721S2_WKUP_IOPAD(0x13c, PIN_INPUT, 0) /* (M24) MCU_ADC0_AIN2 */
+			J721S2_WKUP_IOPAD(0x140, PIN_INPUT, 0) /* (L24) MCU_ADC0_AIN3 */
+			J721S2_WKUP_IOPAD(0x144, PIN_INPUT, 0) /* (L27) MCU_ADC0_AIN4 */
+			J721S2_WKUP_IOPAD(0x148, PIN_INPUT, 0) /* (K24) MCU_ADC0_AIN5 */
+			J721S2_WKUP_IOPAD(0x14c, PIN_INPUT, 0) /* (M27) MCU_ADC0_AIN6 */
+			J721S2_WKUP_IOPAD(0x150, PIN_INPUT, 0) /* (M26) MCU_ADC0_AIN7 */
+		>;
+	};
+
+	mcu_adc1_pins_default: mcu-adc1-pins-default {
+		pinctrl-single,pins = <
+			J721S2_WKUP_IOPAD(0x154, PIN_INPUT, 0) /* (P25) MCU_ADC1_AIN0 */
+			J721S2_WKUP_IOPAD(0x158, PIN_INPUT, 0) /* (R25) MCU_ADC1_AIN1 */
+			J721S2_WKUP_IOPAD(0x15c, PIN_INPUT, 0) /* (P28) MCU_ADC1_AIN2 */
+			J721S2_WKUP_IOPAD(0x160, PIN_INPUT, 0) /* (P27) MCU_ADC1_AIN3 */
+			J721S2_WKUP_IOPAD(0x164, PIN_INPUT, 0) /* (N25) MCU_ADC1_AIN4 */
+			J721S2_WKUP_IOPAD(0x168, PIN_INPUT, 0) /* (P26) MCU_ADC1_AIN5 */
+			J721S2_WKUP_IOPAD(0x16c, PIN_INPUT, 0) /* (N26) MCU_ADC1_AIN6 */
+			J721S2_WKUP_IOPAD(0x170, PIN_INPUT, 0) /* (N27) MCU_ADC1_AIN7 */
+		>;
+	};
+
 	mcu_fss0_ospi1_pins_default: mcu-fss0-ospi1-pins-default {
 		pinctrl-single,pins = <
 			J721S2_WKUP_IOPAD(0x040, PIN_OUTPUT, 0) /* (A19) MCU_OSPI1_CLK */
@@ -351,47 +370,17 @@
 	status = "reserved";
 };
 
-&main_uart0 {
-	status = "disabled";
-};
-
-&main_uart1 {
-	status = "disabled";
-};
-
-&main_uart2 {
-	status = "disabled";
-};
-
-&main_uart3 {
-	status = "disabled";
-};
-
-&main_uart4 {
-	status = "disabled";
-};
-
-&main_uart5 {
-	status = "disabled";
-};
-
-&main_uart6 {
-	status = "disabled";
-};
-
-&main_uart7 {
-	status = "disabled";
+&mcu_uart0 {
+	status = "okay";
+	/* Default pinmux */
 };
 
 &main_uart8 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_uart8_pins_default>;
 	/* Shared with TFA on this platform */
 	power-domains = <&k3_pds 357 TI_SCI_PD_SHARED>;
-};
-
-&main_uart9 {
-	status = "disabled";
 };
 
 &main_i2c0 {
@@ -421,51 +410,6 @@
 				  "CDCI2_RSTZ", "ENET_EXP_PWRDN", "ENET_EXP_RESETZ", "ENET_I2CMUX_SEL",
 				  "ENET_EXP_SPARE2", "M2PCIE_RTSZ", "USER_INPUT1", "USER_LED1", "USER_LED2";
 	};
-};
-
-&main_i2c1 {
-	status = "disabled";
-};
-
-&main_i2c2 {
-	status = "disabled";
-};
-
-&main_i2c3 {
-	status = "disabled";
-};
-
-&main_i2c5 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_i2c5_pins_default>;
-	clock-frequency = <400000>;
-
-	exp5: gpio@20 {
-		compatible = "ti,tca6408";
-		reg = <0x20>;
-		gpio-controller;
-		#gpio-cells = <2>;
-	};
-};
-
-&main_i2c6 {
-	status = "disabled";
-};
-
-&main_spi4 {
-	status = "disabled";
-};
-
-&mcu_spi0 {
-	status = "disabled";
-};
-
-&mcu_spi1 {
-	status = "disabled";
-};
-
-&mcu_spi2 {
-	status = "disabled";
 };
 
 &main_sdhci0 {
@@ -513,6 +457,7 @@
 };
 
 &serdes0 {
+	status = "okay";
 	serdes0_pcie_link: phy@0 {
 		reg = <0>;
 		cdns,num-lanes = <1>;
@@ -531,6 +476,7 @@
 };
 
 &usbss0 {
+	status = "okay";
 	pinctrl-0 = <&main_usbss0_pins_default>;
 	pinctrl-names = "default";
 	ti,vbus-divider;
@@ -542,21 +488,8 @@
 	maximum-speed = "high-speed";
 };
 
-&pcie1_rc {
-	reset-gpios = <&exp1 2 GPIO_ACTIVE_HIGH>;
-	phys = <&serdes0_pcie_link>;
-	phy-names = "pcie-phy";
-	num-lanes = <1>;
-};
-
-&pcie1_ep {
-	phys = <&serdes0_pcie_link>;
-	phy-names = "pcie-phy";
-	num-lanes = <1>;
-	status = "disabled";
-};
-
 &ospi1 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_fss0_ospi1_pins_default>;
 
@@ -571,12 +504,89 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <2>;
-		#address-cells = <1>;
-		#size-cells = <1>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "qspi.tiboot3";
+				reg = <0x0 0x80000>;
+			};
+
+			partition@80000 {
+				label = "qspi.tispl";
+				reg = <0x80000 0x200000>;
+			};
+
+			partition@280000 {
+				label = "qspi.u-boot";
+				reg = <0x280000 0x400000>;
+			};
+
+			partition@680000 {
+				label = "qspi.env";
+				reg = <0x680000 0x40000>;
+			};
+
+			partition@6c0000 {
+				label = "qspi.env.backup";
+				reg = <0x6c0000 0x40000>;
+			};
+
+			partition@800000 {
+				label = "qspi.rootfs";
+				reg = <0x800000 0x37c0000>;
+			};
+
+			partition@3fc0000 {
+				label = "qspi.phypattern";
+				reg = <0x3fc0000 0x40000>;
+			};
+		};
 	};
 };
 
+&pcie1_rc {
+	status = "okay";
+	reset-gpios = <&exp1 2 GPIO_ACTIVE_HIGH>;
+	phys = <&serdes0_pcie_link>;
+	phy-names = "pcie-phy";
+	num-lanes = <1>;
+};
+
+&mcu_mcan0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcu_mcan0_pins_default>;
+	phys = <&transceiver1>;
+};
+
+&mcu_mcan1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mcu_mcan1_pins_default>;
+	phys = <&transceiver2>;
+};
+
+&main_mcan3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_mcan3_pins_default>;
+	phys = <&transceiver3>;
+};
+
+&main_mcan5 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_mcan5_pins_default>;
+	phys = <&transceiver4>;
+};
+
 &tscadc0 {
+	pinctrl-0 = <&mcu_adc0_pins_default>;
+	pinctrl-names = "default";
 	status = "okay";
 	adc {
 		ti,adc-channels = <0 1 2 3 4 5 6 7>;
@@ -584,22 +594,12 @@
 };
 
 &tscadc1 {
+	pinctrl-0 = <&mcu_adc1_pins_default>;
+	pinctrl-names = "default";
 	status = "okay";
 	adc {
 		ti,adc-channels = <0 1 2 3 4 5 6 7>;
 	};
-};
-
-&mcu_mcan0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_mcan0_pins_default>;
-	phys = <&transceiver1>;
-};
-
-&mcu_mcan1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_mcan1_pins_default>;
-	phys = <&transceiver2>;
 };
 
 &dss {
@@ -611,7 +611,7 @@
 	 * VP2 - DSI
 	 * VP3 - DPI1
 	 */
-
+	status = "okay";
 	assigned-clocks = <&k3_clks 158 2>,
 			  <&k3_clks 158 5>,
 			  <&k3_clks 158 14>,
@@ -623,57 +623,15 @@
 };
 
 &dss_ports {
-	#address-cells = <1>;
-	#size-cells = <0>;
-
-	port@0 {
-		reg = <0>;
+	port {
 		dpi0_out: endpoint {
 			remote-endpoint = <&dp0_in>;
-		};
-	};
-
-	port@2 {
-		reg = <2>;
-		dpi2_out: endpoint {
-			remote-endpoint = <&dsi0_in>;
-		};
-	};
-};
-
-&dsi0_ports {
-	port@0 {
-		reg = <0>;
-		dsi0_out: endpoint {
-			remote-endpoint = <&dp1_in>;
-		};
-	};
-
-	port@1 {
-		reg = <1>;
-		dsi0_in: endpoint {
-			remote-endpoint = <&dpi2_out>;
-		};
-	};
-};
-
-&dsi_edp_bridge_ports {
-	port@0 {
-		reg = <0>;
-		dp1_in: endpoint {
-			remote-endpoint = <&dsi0_out>;
-		};
-	};
-
-	port@1 {
-		reg = <1>;
-		dp1_out: endpoint {
-			remote-endpoint = <&dp1_panel_in>;
 		};
 	};
 };
 
 &mhdp {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&dp0_pins_default>;
 	cdns,no-hpd;
@@ -698,135 +656,20 @@
 	};
 };
 
-&main_mcan0 {
-	status = "disabled";
-};
-
-&main_mcan1 {
-	status = "disabled";
-};
-
-&main_mcan2 {
-	status = "disabled";
-};
-
-&main_mcan3 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mcan3_pins_default>;
-	phys = <&transceiver3>;
-};
-
-&main_mcan4 {
-	status = "disabled";
-};
-
-&main_mcan5 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mcan5_pins_default>;
-	phys = <&transceiver4>;
-};
-
-&main_mcan6 {
-	status = "disabled";
-};
-
-&main_mcan7 {
-	status = "disabled";
-};
-
-&main_mcan8 {
-	status = "disabled";
-};
-
-&main_mcan9 {
-	status = "disabled";
-};
-
-&main_mcan10 {
-	status = "disabled";
-};
-
-&main_mcan11 {
-	status = "disabled";
-};
-
-&main_mcan12 {
-	status = "disabled";
-};
-
-&main_mcan13 {
-	status = "disabled";
-};
-
-&main_mcan14 {
-	status = "disabled";
-};
-
-&main_mcan15 {
-	status = "disabled";
-};
-
-&main_mcan17 {
-	status = "disabled";
-};
-
-&main_cpsw {
-	status = "disabled";
-};
-
-&csi0_port0 {
-	status = "disabled";
-};
-
-&csi0_port1 {
-	status = "disabled";
-};
-
-&csi0_port2 {
-	status = "disabled";
-};
-
-&csi0_port3 {
-	status = "disabled";
-};
-
-&csi0_port4 {
-	status = "disabled";
-};
-
-&csi1_port0 {
-	status = "disabled";
-};
-
-&csi1_port1 {
-	status = "disabled";
-};
-
-&csi1_port2 {
-	status = "disabled";
-};
-
-&csi1_port3 {
-	status = "disabled";
-};
-
-&csi1_port4 {
-	status = "disabled";
-};
-
-&wkup_i2c0 {
+&ti_csi2rx0 {
 	status = "okay";
-	tps6594x: tps6594x@48 {
-		compatible = "ti,tps6594x";
-		reg = <0x48>;
-		ti,system-power-controller;
+	/* MIPI-CSI Connector */
+};
 
-		rtc {
-			compatible = "ti,tps6594x-rtc";
-		};
+&ti_csi2rx1 {
+	status = "okay";
+	/* MIPI-CSI Connector */
+};
 
-		gpio {
-			compatible = "ti,tps6594x-gpio";
-		};
-	};
+&dphy_rx0 {
+	status = "okay";
+};
+
+&dphy_rx1 {
+	status = "okay";
 };

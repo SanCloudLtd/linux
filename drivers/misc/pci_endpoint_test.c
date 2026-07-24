@@ -734,7 +734,7 @@ static long pci_endpoint_test_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd) {
 	case PCITEST_BAR:
 		bar = arg;
-		if (bar < 0 || bar > 5)
+		if (bar > BAR_5)
 			goto ret;
 		if (is_am654_pci_dev(pdev) && bar == BAR_0)
 			goto ret;
@@ -893,7 +893,8 @@ static int pci_endpoint_test_probe(struct pci_dev *pdev,
 		err = -ENOMEM;
 		goto err_release_irq;
 	}
-	misc_device->fops = &pci_endpoint_test_fops,
+	misc_device->parent = &pdev->dev;
+	misc_device->fops = &pci_endpoint_test_fops;
 
 	err = misc_register(misc_device);
 	if (err) {

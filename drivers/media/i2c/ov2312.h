@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Omnivision OV2312 RGB-IR Image Sensor driver
  *
@@ -52,7 +52,6 @@ static const struct v4l2_area ov2312_framesizes[] = {
 static const u32 ov2312_mbus_formats[] = {
 	MEDIA_BUS_FMT_SBGGI10_1X10,
 };
-
 
 static const struct regmap_config ov2312_regmap_config = {
 	.reg_bits = 16,

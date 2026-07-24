@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Texas Instruments ICSSG Ethernet driver
  *
- * Copyright (C) 2018-2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2018-2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 
@@ -15,17 +15,18 @@
 #include <linux/if_vlan.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
+#include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
+#include <linux/net_tstamp.h>
 #include <linux/of.h>
 #include <linux/of_irq.h>
 #include <linux/of_mdio.h>
 #include <linux/of_net.h>
 #include <linux/of_platform.h>
-#include <linux/mfd/syscon.h>
-#include <linux/mutex.h>
-#include <linux/net_tstamp.h>
 #include <linux/phy.h>
-#include <linux/pruss.h>
+#include <linux/remoteproc/pruss.h>
+#include <linux/pruss_driver.h>
 #include <linux/ptp_clock_kernel.h>
 #include <linux/remoteproc.h>
 
@@ -49,6 +50,9 @@
 
 #define ICSSG_MAX_RFLOWS	8	/* per slice */
 
+/* Number of ICSSG related stats */
+#define ICSSG_NUM_STATS 64
+
 /* Firmware status codes */
 #define ICSS_HS_FW_READY 0x55555555
 #define ICSS_HS_FW_DEAD 0xDEAD0000	/* lower 16 bits contain error code */
@@ -69,12 +73,6 @@
 #define ICSS_CMD_DISABLE_VLAN 0x6
 #define ICSS_CMD_ADD_FILTER 0x7
 #define ICSS_CMD_ADD_MAC 0x8
-
-/* Firmware flags */
-#define ICSS_SET_RUN_FLAG_VLAN_ENABLE		BIT(0)	/* switch only */
-#define ICSS_SET_RUN_FLAG_FLOOD_UNICAST		BIT(1)	/* switch only */
-#define ICSS_SET_RUN_FLAG_PROMISC		BIT(2)	/* MAC only */
-#define ICSS_SET_RUN_FLAG_MULTICAST_PROMISC	BIT(3)	/* MAC only */
 
 /* In switch mode there are 3 real ports i.e. 3 mac addrs.
  * however Linux sees only the host side port. The other 2 ports
@@ -163,7 +161,6 @@ struct prueth_swdata {
 
 /* data for each emac port */
 struct prueth_emac {
-	bool is_sr1;
 	bool fw_running;
 	struct prueth *prueth;
 	struct net_device *ndev;
@@ -178,7 +175,6 @@ struct prueth_emac {
 	const char *phy_id;
 	struct device_node *phy_node;
 	phy_interface_t phy_if;
-	struct phy_device *phydev;
 	enum prueth_port port_id;
 	struct icss_iep *iep;
 	unsigned int rx_ts_enabled : 1;
@@ -192,10 +188,6 @@ struct prueth_emac {
 	struct prueth_rx_chn rx_chns;
 	int rx_flow_id_base;
 	int tx_ch_num;
-
-	/* SR1.0 Management channel */
-	struct prueth_rx_chn rx_mgm_chn;
-	int rx_mgm_flow_id_base;
 
 	spinlock_t lock;	/* serialize access */
 
@@ -223,7 +215,7 @@ struct prueth_emac {
 	struct prueth_qos qos;
 	struct work_struct ts_work;
 	struct delayed_work stats_work;
-	u64 *stats;
+	u64 stats[ICSSG_NUM_STATS];
 
 	struct bpf_prog *xdp_prog;
 	struct xdp_attachment_info xdpi;
@@ -234,26 +226,24 @@ struct prueth_emac {
 #define PRUETH_HEADROOM  ALIGN(PRUETH_HEADROOM_NA, sizeof(long))
 
 /**
- * struct prueth - PRUeth platform data
+ * struct prueth_pdata - PRUeth platform data
  * @fdqring_mode: Free desc queue mode
  * @quirk_10m_link_issue: 10M link detect errata
  * @switch_mode: switch firmware support
  */
 struct prueth_pdata {
 	enum k3_ring_mode fdqring_mode;
-
 	u32	quirk_10m_link_issue:1;
 	u32	switch_mode:1;
 };
 
 /**
  * struct prueth - PRUeth structure
- * @is_sr1: device is pg1.0 (pg1.0 will be deprecated upstream)
  * @dev: device
  * @pruss: pruss handle
  * @pru: rproc instances of PRUs
  * @rtu: rproc instances of RTUs
- * @rtu: rproc instances of TX_PRUs
+ * @txpru: rproc instances of TX_PRUs
  * @shram: PRUSS shared RAM region
  * @sram_pool: MSMC RAM pool for buffers
  * @msmcram: MSMC RAM region
@@ -263,15 +253,16 @@ struct prueth_pdata {
  * @fw_data: firmware names to be used with PRU remoteprocs
  * @config: firmware load time configuration per slice
  * @miig_rt: regmap to mii_g_rt block
+ * @mii_rt: regmap to mii_g_rt block
  * @pa_stats: regmap to pa_stats block
  * @pru_id: ID for each of the PRUs
  * @pdev: pointer to ICSSG platform device
- * @iep0: pointer to IEP0 device
- * @iep1: pointer to IEP1 device
  * @pdata: pointer to platform data for ICSSG driver
- * @vlan_tbl: VLAN-FID table pointer
  * @icssg_hwcmdseq: seq counter or HWQ messages
  * @emacs_initialized: num of EMACs/ext ports that are up/running
+ * @iep0: pointer to IEP0 device
+ * @iep1: pointer to IEP1 device
+ * @vlan_tbl: VLAN-FID table pointer
  * @hw_bridge_dev: pointer to HW bridge net device
  * @br_members: bitmask of bridge member ports
  * @prueth_netdevice_nb: netdevice notifier block
@@ -284,7 +275,6 @@ struct prueth_pdata {
  * @devlink: pointer to devlink
  */
 struct prueth {
-	bool is_sr1;
 	struct device *dev;
 	struct pruss *pruss;
 	struct rproc *pru[PRUSS_NUM_PRUS];
@@ -298,20 +288,18 @@ struct prueth {
 	struct prueth_emac *emac[PRUETH_NUM_MACS];
 	struct net_device *registered_netdevs[PRUETH_NUM_MACS];
 	const struct prueth_private_data *fw_data;
-	struct icssg_config_sr1 config[PRUSS_NUM_PRUS];
 	struct regmap *miig_rt;
 	struct regmap *mii_rt;
 	struct regmap *pa_stats;
 
 	enum pruss_pru_id pru_id[PRUSS_NUM_PRUS];
 	struct platform_device *pdev;
+	struct prueth_pdata pdata;
+	u8 icssg_hwcmdseq;
+	int emacs_initialized;
 	struct icss_iep *iep0;
 	struct icss_iep *iep1;
-	struct prueth_pdata pdata;
 	struct prueth_vlan_tbl *vlan_tbl;
-	u8 icssg_hwcmdseq;
-
-	int emacs_initialized;
 
 	struct net_device *hw_bridge_dev;
 	u8 br_members;
@@ -325,13 +313,6 @@ struct prueth {
 	struct devlink *devlink;
 };
 
-struct emac_tx_ts_response_sr1 {
-	u32 lo_ts;
-	u32 hi_ts;
-	u32 reserved;
-	u32 cookie;
-};
-
 struct emac_tx_ts_response {
 	u32 reserved[2];
 	u32 cookie;
@@ -341,13 +322,9 @@ struct emac_tx_ts_response {
 
 /* Classifier helpers */
 void icssg_class_set_mac_addr(struct regmap *miig_rt, int slice, u8 *mac);
-void icssg_class_set_host_mac_addr(struct regmap *miig_rt, u8 *mac);
+void icssg_class_set_host_mac_addr(struct regmap *miig_rt, const u8 *mac);
 void icssg_class_disable(struct regmap *miig_rt, int slice);
-void icssg_class_default(struct regmap *miig_rt, int slice, bool allmulti,
-			 bool is_sr1);
-void icssg_class_promiscuous_sr1(struct regmap *miig_rt, int slice);
-void icssg_class_add_mcast_sr1(struct regmap *miig_rt, int slice,
-			       struct net_device *ndev);
+void icssg_class_default(struct regmap *miig_rt, int slice, bool allmulti);
 void icssg_ft1_set_mac_addr(struct regmap *miig_rt, int slice, u8 *mac_addr);
 
 /* Buffer queue helpers */
@@ -370,10 +347,8 @@ static inline int prueth_emac_slice(struct prueth_emac *emac)
 
 /* config helpers */
 void icssg_config_ipg(struct prueth_emac *emac);
-void icssg_config_sr1(struct prueth *prueth, struct prueth_emac *emac,
-		      int slice);
-int icssg_config_sr2(struct prueth *prueth, struct prueth_emac *emac,
-		     int slice);
+int icssg_config(struct prueth *prueth, struct prueth_emac *emac,
+		 int slice);
 int emac_set_port_state(struct prueth_emac *emac,
 			enum icssg_port_state_cmd state);
 void icssg_config_set_speed(struct prueth_emac *emac);
@@ -394,5 +369,4 @@ void icssg_set_pvid(struct prueth *prueth, u8 vid, u8 port);
 
 u64 prueth_iep_gettime(void *clockops_data, struct ptp_system_timestamp *sts);
 void emac_stats_work_handler(struct work_struct *work);
-void emac_ethtool_stats_init(struct prueth_emac *emac);
 #endif /* __NET_TI_ICSSG_PRUETH_H */

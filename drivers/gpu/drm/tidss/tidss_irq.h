@@ -35,7 +35,7 @@
 
 #define DSS_IRQ_VP_BIT_N(ch, bit)	(4 + 4 * (ch) + (bit))
 #define DSS_IRQ_PLANE_BIT_N(plane, bit) \
-	(DSS_IRQ_VP_BIT_N(TIDSS_MAX_PORTS, 0) + 1 * (plane) + (bit))
+	(DSS_IRQ_VP_BIT_N(TIDSS_MAX_VPS, 0) + 1 * (plane) + (bit))
 
 #define DSS_IRQ_VP_BIT(ch, bit)	BIT(DSS_IRQ_VP_BIT_N((ch), (bit)))
 #define DSS_IRQ_PLANE_BIT(plane, bit) \
@@ -67,10 +67,8 @@ struct tidss_device;
 void tidss_irq_enable_vblank(struct drm_crtc *crtc);
 void tidss_irq_disable_vblank(struct drm_crtc *crtc);
 
-void tidss_irq_preinstall(struct drm_device *ddev);
-int tidss_irq_postinstall(struct drm_device *ddev);
+int tidss_irq_install(struct drm_device *ddev, unsigned int irq);
 void tidss_irq_uninstall(struct drm_device *ddev);
-irqreturn_t tidss_irq_handler(int irq, void *arg);
 
 void tidss_irq_resume(struct tidss_device *tidss);
 

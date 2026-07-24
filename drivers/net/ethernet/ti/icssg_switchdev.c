@@ -1,4 +1,5 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+// SPDX-License-Identifier: GPL-2.0
+
 /* Texas Instruments K3 ICSSG Ethernet Switchdev Driver
  *
  * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
@@ -13,7 +14,7 @@
 
 #include "icssg_prueth.h"
 #include "icssg_switchdev.h"
-#include "icss_mii_rt.h"
+#include "icssg_mii_rt.h"
 
 struct prueth_switchdev_event_work {
 	struct work_struct work;
@@ -23,14 +24,10 @@ struct prueth_switchdev_event_work {
 };
 
 static int prueth_switchdev_stp_state_set(struct prueth_emac *emac,
-					  struct switchdev_trans *trans,
 					  u8 state)
 {
 	enum icssg_port_state_cmd emac_state;
 	int ret = 0;
-
-	if (switchdev_trans_ph_prepare(trans))
-		return 0;
 
 	switch (state) {
 	case BR_STATE_FORWARDING:
@@ -55,16 +52,12 @@ static int prueth_switchdev_stp_state_set(struct prueth_emac *emac,
 }
 
 static int prueth_switchdev_attr_br_flags_set(struct prueth_emac *emac,
-					      struct switchdev_trans *trans,
 					      struct net_device *orig_dev,
-					      unsigned long brport_flags)
+					      struct switchdev_brport_flags brport_flags)
 {
 	enum icssg_port_state_cmd emac_state;
 
-	if (switchdev_trans_ph_prepare(trans))
-		return 0;
-
-	if (brport_flags & BR_MCAST_FLOOD)
+	if (brport_flags.mask & BR_MCAST_FLOOD)
 		emac_state = ICSSG_EMAC_PORT_MC_FLOODING_ENABLE;
 	else
 		emac_state = ICSSG_EMAC_PORT_MC_FLOODING_DISABLE;
@@ -78,18 +71,17 @@ static int prueth_switchdev_attr_br_flags_set(struct prueth_emac *emac,
 }
 
 static int prueth_switchdev_attr_br_flags_pre_set(struct net_device *netdev,
-						  struct switchdev_trans *trans,
-						  unsigned long flags)
+						  struct switchdev_brport_flags brport_flags)
 {
-	if (flags & ~(BR_LEARNING | BR_MCAST_FLOOD))
+	if (brport_flags.mask & ~(BR_LEARNING | BR_MCAST_FLOOD))
 		return -EINVAL;
 
 	return 0;
 }
 
-static int prueth_switchdev_attr_set(struct net_device *ndev,
+static int prueth_switchdev_attr_set(struct net_device *ndev, const void *ctx,
 				     const struct switchdev_attr *attr,
-				     struct switchdev_trans *trans)
+				     struct netlink_ext_ack *extack)
 {
 	struct prueth_emac *emac = netdev_priv(ndev);
 	int ret;
@@ -98,16 +90,16 @@ static int prueth_switchdev_attr_set(struct net_device *ndev,
 
 	switch (attr->id) {
 	case SWITCHDEV_ATTR_ID_PORT_PRE_BRIDGE_FLAGS:
-		ret = prueth_switchdev_attr_br_flags_pre_set(ndev, trans,
+		ret = prueth_switchdev_attr_br_flags_pre_set(ndev,
 							     attr->u.brport_flags);
 		break;
 	case SWITCHDEV_ATTR_ID_PORT_STP_STATE:
-		ret = prueth_switchdev_stp_state_set(emac, trans,
+		ret = prueth_switchdev_stp_state_set(emac,
 						     attr->u.stp_state);
 		netdev_dbg(ndev, "stp state: %u\n", attr->u.stp_state);
 		break;
 	case SWITCHDEV_ATTR_ID_PORT_BRIDGE_FLAGS:
-		ret = prueth_switchdev_attr_br_flags_set(emac, trans, attr->orig_dev,
+		ret = prueth_switchdev_attr_br_flags_set(emac, attr->orig_dev,
 							 attr->u.brport_flags);
 		break;
 	default:
@@ -293,8 +285,7 @@ static int prueth_switchdev_vlan_del(struct prueth_emac *emac, u16 vid,
 }
 
 static int prueth_switchdev_vlans_add(struct prueth_emac *emac,
-				      const struct switchdev_obj_port_vlan *vlan,
-				      struct switchdev_trans *trans)
+				      const struct switchdev_obj_port_vlan *vlan)
 {
 	bool untag = vlan->flags & BRIDGE_VLAN_INFO_UNTAGGED;
 	struct net_device *orig_dev = vlan->obj.orig_dev;
@@ -302,18 +293,15 @@ static int prueth_switchdev_vlans_add(struct prueth_emac *emac,
 	bool pvid = vlan->flags & BRIDGE_VLAN_INFO_PVID;
 
 	netdev_dbg(emac->ndev, "VID add vid:%u flags:%X\n",
-		   vlan->vid_begin, vlan->flags);
+		   vlan->vid, vlan->flags);
 
 	if (cpu_port && !(vlan->flags & BRIDGE_VLAN_INFO_BRENTRY))
 		return 0;
 
-	if (switchdev_trans_ph_prepare(trans))
+	if (vlan->vid > 0xff)
 		return 0;
 
-	if (vlan->vid_begin > 0xff)
-		return 0;
-
-	return prueth_switchdev_vlan_add(emac, untag, pvid, vlan->vid_begin,
+	return prueth_switchdev_vlan_add(emac, untag, pvid, vlan->vid,
 					 orig_dev);
 }
 
@@ -321,25 +309,21 @@ static int prueth_switchdev_vlans_del(struct prueth_emac *emac,
 				      const struct switchdev_obj_port_vlan *vlan)
 
 {
-	if (vlan->vid_begin > 0xff)
+	if (vlan->vid > 0xff)
 		return 0;
 
-	return prueth_switchdev_vlan_del(emac, vlan->vid_begin,
+	return prueth_switchdev_vlan_del(emac, vlan->vid,
 					 vlan->obj.orig_dev);
 }
 
 static int prueth_switchdev_mdb_add(struct prueth_emac *emac,
-				    struct switchdev_obj_port_mdb *mdb,
-				    struct switchdev_trans *trans)
+				    struct switchdev_obj_port_mdb *mdb)
 
 {
 	struct net_device *orig_dev = mdb->obj.orig_dev;
 	bool cpu_port = netif_is_bridge_master(orig_dev);
 	u8 port_mask, fid_c2;
 	int err;
-
-	if (switchdev_trans_ph_prepare(trans))
-		return 0;
 
 	if (cpu_port)
 		port_mask = BIT(PRUETH_PORT_HOST);
@@ -381,9 +365,8 @@ static int prueth_switchdev_mdb_del(struct prueth_emac *emac,
 	return ret;
 }
 
-static int prueth_switchdev_obj_add(struct net_device *ndev,
+static int prueth_switchdev_obj_add(struct net_device *ndev, const void *ctx,
 				    const struct switchdev_obj *obj,
-				    struct switchdev_trans *trans,
 				    struct netlink_ext_ack *extack)
 {
 	struct switchdev_obj_port_vlan *vlan = SWITCHDEV_OBJ_PORT_VLAN(obj);
@@ -395,11 +378,11 @@ static int prueth_switchdev_obj_add(struct net_device *ndev,
 
 	switch (obj->id) {
 	case SWITCHDEV_OBJ_ID_PORT_VLAN:
-		err = prueth_switchdev_vlans_add(emac, vlan, trans);
+		err = prueth_switchdev_vlans_add(emac, vlan);
 		break;
 	case SWITCHDEV_OBJ_ID_PORT_MDB:
 	case SWITCHDEV_OBJ_ID_HOST_MDB:
-		err = prueth_switchdev_mdb_add(emac, mdb, trans);
+		err = prueth_switchdev_mdb_add(emac, mdb);
 		break;
 	default:
 		err = -EOPNOTSUPP;
@@ -409,7 +392,7 @@ static int prueth_switchdev_obj_add(struct net_device *ndev,
 	return err;
 }
 
-static int prueth_switchdev_obj_del(struct net_device *ndev,
+static int prueth_switchdev_obj_del(struct net_device *ndev, const void *ctx,
 				    const struct switchdev_obj *obj)
 {
 	struct switchdev_obj_port_vlan *vlan = SWITCHDEV_OBJ_PORT_VLAN(obj);

@@ -194,16 +194,17 @@ static int dma_heap_mmap(struct dma_buf *dmabuf, struct vm_area_struct *vma)
 	return ret;
 }
 
-static void *dma_heap_vmap(struct dma_buf *dmabuf)
+static int dma_heap_vmap(struct dma_buf *dmabuf, struct iosys_map *map)
 {
 	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
 	void *vaddr;
+	int ret = 0;
 
 	mutex_lock(&buffer->vmap_lock);
 
 	if (buffer->vmap_cnt) {
 		buffer->vmap_cnt++;
-		vaddr = buffer->vaddr;
+		iosys_map_set_vaddr(map, buffer->vaddr);
 		goto exit;
 	}
 	if (buffer->cached)
@@ -212,19 +213,24 @@ static void *dma_heap_vmap(struct dma_buf *dmabuf)
 		vaddr = memremap(buffer->paddr, buffer->len, MEMREMAP_WC);
 	if (!vaddr) {
 		pr_err("Could not memremap buffer\n");
+		ret = -ENOMEM;
 		goto exit;
 	}
-	if (IS_ERR(vaddr))
+	if (IS_ERR(vaddr)) {
+		ret = PTR_ERR(vaddr);
 		goto exit;
+	}
+
 	buffer->vaddr = vaddr;
 	buffer->vmap_cnt++;
-
+	iosys_map_set_vaddr(map, buffer->vaddr);
 exit:
 	mutex_unlock(&buffer->vmap_lock);
-	return vaddr;
+
+	return ret;
 }
 
-static void dma_heap_vunmap(struct dma_buf *dmabuf, void *vaddr)
+static void dma_heap_vunmap(struct dma_buf *dmabuf, struct iosys_map *map)
 {
 	struct carveout_dma_heap_buffer *buffer = dmabuf->priv;
 
@@ -249,10 +255,10 @@ static const struct dma_buf_ops carveout_dma_heap_buf_ops = {
 	.vunmap = dma_heap_vunmap,
 };
 
-static int carveout_dma_heap_allocate(struct dma_heap *heap,
-				      unsigned long len,
-				      unsigned long fd_flags,
-				      unsigned long heap_flags)
+static struct dma_buf *carveout_dma_heap_allocate(struct dma_heap *heap,
+						  unsigned long len,
+						  unsigned long fd_flags,
+						  unsigned long heap_flags)
 {
 	struct carveout_dma_heap *carveout_dma_heap = dma_heap_get_drvdata(heap);
 	struct carveout_dma_heap_buffer *buffer;
@@ -263,7 +269,7 @@ static int carveout_dma_heap_allocate(struct dma_heap *heap,
 
 	buffer = kzalloc(sizeof(*buffer), GFP_KERNEL);
 	if (!buffer)
-		return -ENOMEM;
+		return ERR_PTR(ret);
 	buffer->pool = carveout_dma_heap->pool;
 	buffer->cached = carveout_dma_heap->cached;
 	INIT_LIST_HEAD(&buffer->attachments);
@@ -278,6 +284,7 @@ static int carveout_dma_heap_allocate(struct dma_heap *heap,
 	}
 
 	/* create the dmabuf */
+	exp_info.exp_name = dma_heap_get_name(heap);
 	exp_info.ops = &carveout_dma_heap_buf_ops;
 	exp_info.size = buffer->len;
 	exp_info.flags = fd_flags;
@@ -288,28 +295,21 @@ static int carveout_dma_heap_allocate(struct dma_heap *heap,
 		goto free_pool;
 	}
 
-	ret = dma_buf_fd(dmabuf, fd_flags);
-	if (ret < 0) {
-		dma_buf_put(dmabuf);
-		/* just return, as put will call release and that will free */
-		return ret;
-	}
-
-	return ret;
+	return dmabuf;
 
 free_pool:
 	gen_pool_free(buffer->pool, buffer->paddr, buffer->len);
 free_buffer:
 	kfree(buffer);
 
-	return ret;
+	return ERR_PTR(ret);
 }
 
 static struct dma_heap_ops carveout_dma_heap_ops = {
 	.allocate = carveout_dma_heap_allocate,
 };
 
-int carveout_dma_heap_export(phys_addr_t base, size_t size, const char *name, bool cached)
+static int carveout_dma_heap_export(phys_addr_t base, size_t size, const char *name, bool cached)
 {
 	struct carveout_dma_heap *carveout_dma_heap;
 	struct dma_heap_export_info exp_info;
@@ -333,7 +333,7 @@ int carveout_dma_heap_export(phys_addr_t base, size_t size, const char *name, bo
 
 	carveout_dma_heap->cached = cached;
 
-	exp_info.name = name;
+	exp_info.name = kasprintf(GFP_KERNEL, "carveout_%s", name);
 	exp_info.ops = &carveout_dma_heap_ops;
 	exp_info.priv = carveout_dma_heap;
 	carveout_dma_heap->heap = dma_heap_add(&exp_info);

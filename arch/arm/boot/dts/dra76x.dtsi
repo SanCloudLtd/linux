@@ -83,14 +83,6 @@
 	};
 };
 
-/*
- * On DRA76x CAL replaces VIP3 since we include dra74x.dtsi make sure
- * vip3 is disabled.
- */
-&vip3 {
-	status = "disabled";
-};
-
 &scm_conf_clocks {
 	dpll_gmac_h14x2_ctrl_ck: dpll_gmac_h14x2_ctrl_ck@3fc {
 		#clock-cells = <0>;
@@ -98,8 +90,8 @@
 		clocks = <&dpll_gmac_x2_ck>;
 		ti,max-div = <63>;
 		reg = <0x03fc>;
-		ti,bit-shift=<20>;
-		ti,latch-bit=<26>;
+		ti,bit-shift = <20>;
+		ti,latch-bit = <26>;
 		assigned-clocks = <&dpll_gmac_h14x2_ctrl_ck>;
 		assigned-clock-rates = <80000000>;
 	};
@@ -110,7 +102,7 @@
 		clocks = <&dpll_gmac_ck>, <&dpll_gmac_h14x2_ctrl_ck>;
 		reg = <0x3fc>;
 		ti,bit-shift = <29>;
-		ti,latch-bit=<26>;
+		ti,latch-bit = <26>;
 		assigned-clocks = <&dpll_gmac_h14x2_ctrl_mux_ck>;
 		assigned-clock-parents = <&dpll_gmac_h14x2_ctrl_ck>;
 	};

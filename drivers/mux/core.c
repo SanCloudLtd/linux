@@ -699,18 +699,17 @@ static struct mux_state *mux_state_get(struct device *dev, const char *mux_name)
 	return mstate;
 }
 
-/**
+/*
  * mux_state_put() - Put away the mux-state for good.
  * @mstate: The mux-state to put away.
  *
  * mux_state_put() reverses the effects of mux_state_get().
  */
-void mux_state_put(struct mux_state *mstate)
+static void mux_state_put(struct mux_state *mstate)
 {
 	mux_control_put(mstate->mux);
 	kfree(mstate);
 }
-EXPORT_SYMBOL_GPL(mux_state_put);
 
 static void devm_mux_state_release(struct device *dev, void *res)
 {

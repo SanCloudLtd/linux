@@ -257,7 +257,6 @@ static int davinci_gpio_probe(struct platform_device *pdev)
 #ifdef CONFIG_OF_GPIO
 	chips->chip.of_gpio_n_cells = 2;
 	chips->chip.parent = dev;
-	chips->chip.of_node = dev->of_node;
 	chips->chip.request = gpiochip_generic_request;
 	chips->chip.free = gpiochip_generic_free;
 #endif
@@ -329,7 +328,7 @@ static struct irq_chip gpio_irqchip = {
 	.irq_enable	= gpio_irq_enable,
 	.irq_disable	= gpio_irq_disable,
 	.irq_set_type	= gpio_irq_type,
-	.flags		= IRQCHIP_SET_TYPE_MASKED,
+	.flags		= IRQCHIP_SET_TYPE_MASKED | IRQCHIP_SKIP_SET_WAKE,
 };
 
 static void gpio_irq_handler(struct irq_desc *desc)
@@ -372,8 +371,7 @@ static void gpio_irq_handler(struct irq_desc *desc)
 			 */
 			hw_irq = (bank_num / 2) * 32 + bit;
 
-			generic_handle_irq(
-				irq_find_mapping(d->irq_domain, hw_irq));
+			generic_handle_domain_irq(d->irq_domain, hw_irq);
 		}
 	}
 	chained_irq_exit(irq_desc_get_chip(desc), desc);
@@ -647,9 +645,6 @@ static void davinci_gpio_save_context(struct davinci_gpio_controller *chips,
 		context->set_falling = readl_relaxed(&g->set_falling);
 	}
 
-	/* Clear Bank interrupt enable bit */
-	writel_relaxed(0, base + BINTEN);
-
 	/* Clear all interrupt status registers */
 	writel_relaxed(GENMASK(31, 0), &g->intstat);
 }
@@ -681,7 +676,7 @@ static void davinci_gpio_restore_context(struct davinci_gpio_controller *chips,
 	}
 }
 
-static int __maybe_unused davinci_gpio_suspend(struct device *dev)
+static int davinci_gpio_suspend(struct device *dev)
 {
 	struct davinci_gpio_controller *chips = dev_get_drvdata(dev);
 	struct davinci_gpio_platform_data *pdata = dev_get_platdata(dev);
@@ -692,7 +687,7 @@ static int __maybe_unused davinci_gpio_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused davinci_gpio_resume(struct device *dev)
+static int davinci_gpio_resume(struct device *dev)
 {
 	struct davinci_gpio_controller *chips = dev_get_drvdata(dev);
 	struct davinci_gpio_platform_data *pdata = dev_get_platdata(dev);
@@ -703,8 +698,8 @@ static int __maybe_unused davinci_gpio_resume(struct device *dev)
 	return 0;
 }
 
-SIMPLE_DEV_PM_OPS(davinci_gpio_dev_pm_ops, davinci_gpio_suspend,
-		  davinci_gpio_resume);
+DEFINE_SIMPLE_DEV_PM_OPS(davinci_gpio_dev_pm_ops, davinci_gpio_suspend,
+			 davinci_gpio_resume);
 
 static const struct of_device_id davinci_gpio_ids[] = {
 	{ .compatible = "ti,keystone-gpio", keystone_gpio_get_irq_chip},
@@ -718,7 +713,7 @@ static struct platform_driver davinci_gpio_driver = {
 	.probe		= davinci_gpio_probe,
 	.driver		= {
 		.name		= "davinci_gpio",
-		.pm = &davinci_gpio_dev_pm_ops,
+		.pm = pm_sleep_ptr(&davinci_gpio_dev_pm_ops),
 		.of_match_table	= of_match_ptr(davinci_gpio_ids),
 	},
 };
@@ -732,14 +727,3 @@ static int __init davinci_gpio_drv_reg(void)
 	return platform_driver_register(&davinci_gpio_driver);
 }
 postcore_initcall(davinci_gpio_drv_reg);
-
-static void __exit davinci_gpio_exit(void)
-{
-	platform_driver_unregister(&davinci_gpio_driver);
-}
-module_exit(davinci_gpio_exit);
-
-MODULE_AUTHOR("Jan Kotas <jank@cadence.com>");
-MODULE_DESCRIPTION("DAVINCI GPIO driver");
-MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:gpio-davinci");

@@ -209,8 +209,7 @@ static int dwc3_ti_probe(struct platform_device *pdev)
 
 	if (i == ARRAY_SIZE(dwc3_ti_rate_table)) {
 		dev_err(dev, "unsupported usb2_refclk rate: %lu KHz\n", rate);
-		ret = -EINVAL;
-		goto err_clk_disable;
+		return -EINVAL;
 	}
 
 	data->rate_code = i;
@@ -218,7 +217,7 @@ static int dwc3_ti_probe(struct platform_device *pdev)
 	/* Read the syscon property and set the rate code */
 	ret = phy_syscon_pll_refclk(data);
 	if (ret)
-		goto err_clk_disable;
+		return ret;
 
 	/* VBUS divider select */
 	data->vbus_divider = device_property_read_bool(dev, "ti,vbus-divider");
@@ -265,8 +264,6 @@ err_pm_disable:
 	clk_disable_unprepare(data->usb2_refclk);
 	pm_runtime_disable(dev);
 	pm_runtime_set_suspended(dev);
-err_clk_disable:
-	clk_put(data->usb2_refclk);
 	return ret;
 }
 
@@ -296,7 +293,6 @@ static int dwc3_ti_remove(struct platform_device *pdev)
 	pm_runtime_disable(dev);
 	pm_runtime_set_suspended(dev);
 
-	clk_put(data->usb2_refclk);
 	platform_set_drvdata(pdev, NULL);
 	return 0;
 }
@@ -316,9 +312,11 @@ static int dwc3_ti_suspend_common(struct device *dev)
 		if (current_prtcap_dir == DWC3_GCTL_PRTCAP_HOST) {
 			reg = USBSS_WAKEUP_CFG_LINESTATE_EN | USBSS_WAKEUP_CFG_OVERCURRENT_EN;
 		} else {
-			reg = USBSS_WAKEUP_CFG_ALL;
-			/* HACK: disable linestate due to spurious wake up */
-			reg &= ~USBSS_WAKEUP_CFG_LINESTATE_EN;
+			reg = USBSS_WAKEUP_CFG_VBUSVALID_EN | USBSS_WAKEUP_CFG_SESSVALID_EN;
+			/*
+			 * Enable LINESTATE wake up only if connected to bus
+			 * and in U2/L3 state else it causes spurious wake-up.
+			 */
 		}
 		dwc3_ti_writel(data, USBSS_WAKEUP_CONFIG, reg);
 		/* clear wakeup status so we know what caused the wake up */

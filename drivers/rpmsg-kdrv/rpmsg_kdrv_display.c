@@ -23,13 +23,13 @@ struct rpmsg_kdrv_display_private {
 	struct rpmsg_remotedev rdev;
 
 	struct idr res_idr;
-	struct mutex res_lock;
+	struct mutex res_lock;	/* Protect access to resource. */
 
 };
 
-static uint32_t check_min(uint32_t a, uint32_t b, int line)
+static u32 check_min(u32 a, u32 b, int line)
 {
-	uint32_t res = min(a, b);
+	u32 res = min(a, b);
 
 	if (res != b) {
 		pr_err("Copy mismatch at Line %d\n", line);
@@ -39,7 +39,7 @@ static uint32_t check_min(uint32_t a, uint32_t b, int line)
 	return res;
 }
 
-static inline enum rpmsg_kdrv_display_format rpmsg_kdrv_display_fmt_to_rpmsg_fmt(uint32_t in_fmt)
+static inline enum rpmsg_kdrv_display_format rpmsg_kdrv_display_fmt_to_rpmsg_fmt(u32 in_fmt)
 {
 	switch (in_fmt) {
 	case DRM_FORMAT_ARGB8888:
@@ -51,7 +51,7 @@ static inline enum rpmsg_kdrv_display_format rpmsg_kdrv_display_fmt_to_rpmsg_fmt
 	}
 }
 
-static inline uint32_t rpmsg_kdrv_display_fmt_to_drm_fmt(uint32_t in_fmt)
+static inline u32 rpmsg_kdrv_display_fmt_to_drm_fmt(u32 in_fmt)
 {
 	switch (in_fmt) {
 	case RPMSG_KDRV_TP_DISPLAY_FORMAT_ARGB8888:
@@ -65,7 +65,9 @@ static inline uint32_t rpmsg_kdrv_display_fmt_to_drm_fmt(uint32_t in_fmt)
 
 static bool rpmsg_kdrv_display_ready(struct rpmsg_remotedev *rdev)
 {
-	struct rpmsg_kdrv_display_private *priv = container_of(rdev, struct rpmsg_kdrv_display_private, rdev);
+	struct rpmsg_kdrv_display_private *priv = container_of(rdev,
+							       struct rpmsg_kdrv_display_private,
+							       rdev);
 	struct rpmsg_kdrv_device *kddev = priv->kddev;
 	struct rpmsg_device *rpdev = kddev->rpdev;
 	struct rpmsg_kdrv_display_ready_query_request *req;
@@ -85,7 +87,8 @@ static bool rpmsg_kdrv_display_ready(struct rpmsg_remotedev *rdev)
 
 	req->header.message_type = RPMSG_KDRV_TP_DISPLAY_READY_QUERY_REQUEST;
 
-	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req), resp, sizeof(*resp));
+	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req),
+						    resp, sizeof(*resp));
 	if (ret) {
 		dev_err(&kddev->dev, "%s: rpmsg_kdrv_send_request_with_response\n", __func__);
 		retval = false;
@@ -104,29 +107,34 @@ out:
 	devm_kfree(&kddev->dev, resp);
 	devm_kfree(&kddev->dev, req);
 	return retval;
-
 }
 
-static void rpmsg_kdrv_display_copy_vid_info(struct rpmsg_remotedev_display_pipe *dst, struct rpmsg_kdrv_display_vid_info *src)
+static void rpmsg_kdrv_display_copy_vid_info(struct rpmsg_remotedev_display_pipe *dst,
+					     struct rpmsg_kdrv_display_vid_info *src)
 {
 	int cnt;
-	uint32_t out_fmt;
+	u32 out_fmt;
 
 	dst->pipe_id = src->id;
 	dst->can_scale = src->can_scale ? true : false;
 	dst->can_mod_win = src->mutable_window ? true : false;
-	if (dst->can_mod_win)
-		dst->fixed_win_x = dst->fixed_win_y = dst->fixed_win_w = dst->fixed_win_h = 0;
-	else {
+	if (dst->can_mod_win) {
+		dst->fixed_win_x = 0;
+		dst->fixed_win_y = 0;
+		dst->fixed_win_w = 0;
+		dst->fixed_win_h = 0;
+	} else {
 		dst->fixed_win_x = src->fixed_window_x;
 		dst->fixed_win_y = src->fixed_window_y;
 		dst->fixed_win_w = src->fixed_window_w;
 		dst->fixed_win_h = src->fixed_window_h;
 	}
 	dst->initial_zorder = src->init_zorder;
-	dst->num_formats = check_min(RPMSG_REMOTEDEV_DISPLAY_MAX_FORMATS, src->num_formats, __LINE__);
+	dst->num_formats = check_min(RPMSG_REMOTEDEV_DISPLAY_MAX_FORMATS, src->num_formats,
+				     __LINE__);
 
-	dst->num_allowed_zorders = check_min(RPMSG_REMOTEDEV_DISPLAY_MAX_ZORDERS, src->num_zorders, __LINE__);
+	dst->num_allowed_zorders = check_min(RPMSG_REMOTEDEV_DISPLAY_MAX_ZORDERS, src->num_zorders,
+					     __LINE__);
 
 	for (cnt = 0; cnt < dst->num_formats; cnt++) {
 		out_fmt = rpmsg_kdrv_display_fmt_to_drm_fmt(src->format[cnt]);
@@ -138,7 +146,8 @@ static void rpmsg_kdrv_display_copy_vid_info(struct rpmsg_remotedev_display_pipe
 		dst->allowed_zorders[cnt] = src->zorder[cnt];
 }
 
-static void rpmsg_kdrv_display_copy_vp_info(struct rpmsg_remotedev_display_disp *dst, struct rpmsg_kdrv_display_vp_info *src)
+static void rpmsg_kdrv_display_copy_vp_info(struct rpmsg_remotedev_display_disp *dst,
+					    struct rpmsg_kdrv_display_vp_info *src)
 {
 	int vidcnt;
 
@@ -152,9 +161,12 @@ static void rpmsg_kdrv_display_copy_vp_info(struct rpmsg_remotedev_display_disp 
 		rpmsg_kdrv_display_copy_vid_info(&dst->pipes[vidcnt], &src->vid[vidcnt]);
 }
 
-static int rpmsg_kdrv_display_get_res(struct rpmsg_remotedev *rdev, struct rpmsg_remotedev_display_resinfo *res)
+static int rpmsg_kdrv_display_get_res(struct rpmsg_remotedev *rdev,
+				      struct rpmsg_remotedev_display_resinfo *res)
 {
-	struct rpmsg_kdrv_display_private *priv = container_of(rdev, struct rpmsg_kdrv_display_private, rdev);
+	struct rpmsg_kdrv_display_private *priv = container_of(rdev,
+							       struct rpmsg_kdrv_display_private,
+							       rdev);
 	struct rpmsg_kdrv_device *kddev = priv->kddev;
 	struct rpmsg_device *rpdev = kddev->rpdev;
 	struct rpmsg_kdrv_display_res_info_request *req;
@@ -173,7 +185,8 @@ static int rpmsg_kdrv_display_get_res(struct rpmsg_remotedev *rdev, struct rpmsg
 
 	req->header.message_type = RPMSG_KDRV_TP_DISPLAY_RES_INFO_REQUEST;
 
-	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req), resp, sizeof(*resp));
+	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req),
+						    resp, sizeof(*resp));
 	if (ret) {
 		dev_err(&kddev->dev, "%s: rpmsg_kdrv_send_request_with_response\n", __func__);
 		goto out;
@@ -196,7 +209,7 @@ out:
 	return ret;
 }
 
-static uint32_t rpmsg_kdrv_display_res_id_new(struct rpmsg_kdrv_device *kddev, void *data)
+static u32 rpmsg_kdrv_display_res_id_new(struct rpmsg_kdrv_device *kddev, void *data)
 {
 	struct rpmsg_kdrv_display_private *priv = kddev->driver_private;
 	int id;
@@ -211,7 +224,7 @@ static uint32_t rpmsg_kdrv_display_res_id_new(struct rpmsg_kdrv_device *kddev, v
 	return id;
 }
 
-static void rpmsg_kdrv_display_free_res_id(struct rpmsg_kdrv_device *kddev, uint32_t id)
+static void rpmsg_kdrv_display_free_res_id(struct rpmsg_kdrv_device *kddev, u32 id)
 {
 	struct rpmsg_kdrv_display_private *priv = kddev->driver_private;
 
@@ -220,7 +233,8 @@ static void rpmsg_kdrv_display_free_res_id(struct rpmsg_kdrv_device *kddev, uint
 	mutex_unlock(&priv->res_lock);
 }
 
-static void rpmsg_kdrv_free_request_res(struct rpmsg_kdrv_device *kddev, struct rpmsg_kdrv_display_commit_request *req)
+static void rpmsg_kdrv_free_request_res(struct rpmsg_kdrv_device *kddev,
+					struct rpmsg_kdrv_display_commit_request *req)
 {
 	int i;
 
@@ -229,11 +243,11 @@ static void rpmsg_kdrv_free_request_res(struct rpmsg_kdrv_device *kddev, struct 
 	for (i = 0; i < req->num_vid_updates; i++)
 		if (req->vid[i].enabled)
 			rpmsg_kdrv_display_free_res_id(kddev, req->vid[i].buffer.buffer_id);
-
 }
 
-static bool rpmsg_kdrv_display_copy_buffer(struct rpmsg_kdrv_device *kddev, struct rpmsg_kdrv_display_buffer_info *dst,
-		struct rpmsg_remotedev_display_buffer *src)
+static bool rpmsg_kdrv_display_copy_buffer(struct rpmsg_kdrv_device *kddev,
+					   struct rpmsg_kdrv_display_buffer_info *dst,
+					   struct rpmsg_remotedev_display_buffer *src)
 {
 	int i;
 
@@ -260,8 +274,9 @@ static bool rpmsg_kdrv_display_copy_buffer(struct rpmsg_kdrv_device *kddev, stru
 	return true;
 }
 
-static bool rpmsg_kdrv_display_copy_vid_commit(struct rpmsg_kdrv_device *kddev, struct rpmsg_kdrv_display_vid_update_info *dst,
-		struct rpmsg_remotedev_display_pipe_update *src)
+static bool rpmsg_kdrv_display_copy_vid_commit(struct rpmsg_kdrv_device *kddev,
+					       struct rpmsg_kdrv_display_vid_update_info *dst,
+					       struct rpmsg_remotedev_display_pipe_update *src)
 {
 	dst->id = src->pipe_id;
 	dst->enabled = src->enabled ? 1 : 0;
@@ -278,13 +293,15 @@ static bool rpmsg_kdrv_display_copy_vid_commit(struct rpmsg_kdrv_device *kddev, 
 	return true;
 }
 
-static bool rpmsg_kdrv_display_copy_commit(struct rpmsg_kdrv_device *kddev, struct rpmsg_kdrv_display_commit_request *dst,
-		struct rpmsg_remotedev_display_commit *src)
+static bool rpmsg_kdrv_display_copy_commit(struct rpmsg_kdrv_device *kddev,
+					   struct rpmsg_kdrv_display_commit_request *dst,
+					   struct rpmsg_remotedev_display_commit *src)
 {
 	int i, copied_vids;
 
 	dst->id = src->disp_id;
-	dst->num_vid_updates = check_min(RPMSG_KDRV_TP_DISPLAY_MAX_VIDS, src->num_pipe_updates, __LINE__);
+	dst->num_vid_updates = check_min(RPMSG_KDRV_TP_DISPLAY_MAX_VIDS, src->num_pipe_updates,
+					 __LINE__);
 
 	for (i = 0, copied_vids = 0; i < dst->num_vid_updates; i++, copied_vids++)
 		if (!rpmsg_kdrv_display_copy_vid_commit(kddev, &dst->vid[i], &src->pipes[i]))
@@ -301,12 +318,14 @@ free_vid_res:
 		if (dst->vid[i].enabled)
 			rpmsg_kdrv_display_free_res_id(kddev, dst->vid[i].buffer.buffer_id);
 	return false;
-
 }
 
-static int rpmsg_kdrv_display_commit(struct rpmsg_remotedev *rdev, struct rpmsg_remotedev_display_commit *commit)
+static int rpmsg_kdrv_display_commit(struct rpmsg_remotedev *rdev,
+				     struct rpmsg_remotedev_display_commit *commit)
 {
-	struct rpmsg_kdrv_display_private *priv = container_of(rdev, struct rpmsg_kdrv_display_private, rdev);
+	struct rpmsg_kdrv_display_private *priv = container_of(rdev,
+							       struct rpmsg_kdrv_display_private,
+							       rdev);
 	struct rpmsg_kdrv_device *kddev = priv->kddev;
 	struct rpmsg_device *rpdev = kddev->rpdev;
 	struct rpmsg_kdrv_display_commit_request *req;
@@ -332,12 +351,11 @@ static int rpmsg_kdrv_display_commit(struct rpmsg_remotedev *rdev, struct rpmsg_
 	}
 
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id, req, sizeof(*req),
-			resp, sizeof(*resp));
+						    resp, sizeof(*resp));
 	if (ret) {
 		dev_err(&kddev->dev, "%s: rpmsg_kdrv_send_request_with_response\n", __func__);
 		goto nosend;
 	}
-
 
 	if (resp->header.message_type != RPMSG_KDRV_TP_DISPLAY_COMMIT_RESPONSE) {
 		dev_err(&kddev->dev, "%s: wrong response type\n", __func__);
@@ -355,7 +373,6 @@ out:
 	return ret;
 }
 
-
 static struct rpmsg_remotedev_display_ops disp_ops = {
 	.ready = rpmsg_kdrv_display_ready,
 	.get_res_info = rpmsg_kdrv_display_get_res,
@@ -369,8 +386,6 @@ static void rpmsg_kdrv_display_device_init(struct rpmsg_kdrv_device *kddev, void
 static int rpmsg_kdrv_display_probe(struct rpmsg_kdrv_device *dev)
 {
 	struct rpmsg_kdrv_display_private *priv;
-
-	dev_dbg(&dev->dev, "%s\n", __func__);
 
 	priv = devm_kzalloc(&dev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -393,10 +408,10 @@ static int rpmsg_kdrv_display_probe(struct rpmsg_kdrv_device *dev)
 
 static void rpmsg_kdrv_display_remove(struct rpmsg_kdrv_device *dev)
 {
-	dev_dbg(&dev->dev, "%s\n", __func__);
 }
 
-static void rpmsg_kdrv_display_handle_commit(struct rpmsg_kdrv_device *dev, struct rpmsg_kdrv_display_commit_done_message *msg)
+static void rpmsg_kdrv_display_handle_commit(struct rpmsg_kdrv_device *dev,
+					     struct rpmsg_kdrv_display_commit_done_message *msg)
 {
 	struct rpmsg_kdrv_display_private *priv = dev->driver_private;
 	struct rpmsg_remotedev *rdev = &priv->rdev;
@@ -416,7 +431,8 @@ static void rpmsg_kdrv_display_handle_commit(struct rpmsg_kdrv_device *dev, stru
 		rdev->device.display.cb_ops->commit_done(commit, rdev->cb_data);
 }
 
-static void rpmsg_kdrv_display_handle_buffer(struct rpmsg_kdrv_device *dev, struct rpmsg_kdrv_display_buffer_done_message *msg)
+static void rpmsg_kdrv_display_handle_buffer(struct rpmsg_kdrv_device *dev,
+					     struct rpmsg_kdrv_display_buffer_done_message *msg)
 {
 	struct rpmsg_kdrv_display_private *priv = dev->driver_private;
 	struct rpmsg_remotedev *rdev = &priv->rdev;
@@ -448,7 +464,6 @@ static int rpmsg_kdrv_display_callback(struct rpmsg_kdrv_device *dev, void *msg,
 	return 0;
 }
 
-
 static struct rpmsg_kdrv_driver rpmsg_kdrv_display = {
 	.drv.name = "rpmsg-kdrv-display",
 	.device_type = RPMSG_KDRV_TP_DEVICE_TYPE_DISPLAY,
@@ -470,4 +485,4 @@ module_exit(rpmsg_kdrv_display_driver_fini);
 
 MODULE_AUTHOR("Subhajit Paul <subhajit_paul@ti.com>");
 MODULE_DESCRIPTION("TI Remote-device Virtual Display Driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

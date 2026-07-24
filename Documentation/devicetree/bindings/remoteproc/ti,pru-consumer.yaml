@@ -24,9 +24,15 @@ properties:
   ti,prus:
     $ref: /schemas/types.yaml#/definitions/phandle-array
     description: phandles to the PRU, RTU or Tx_PRU nodes used
+    minItems: 1
+    maxItems: 6
+    items:
+      maxItems: 1
 
   firmware-name:
     $ref: /schemas/types.yaml#/definitions/string-array
+    minItems: 1
+    maxItems: 6
     description: |
       firmwares for the PRU cores, the default firmware for the core from
       the PRU node will be used if not provided. The firmware names should
@@ -34,7 +40,10 @@ properties:
 
   ti,pruss-gp-mux-sel:
     $ref: /schemas/types.yaml#/definitions/uint32-array
-    enum: [0, 1, 2, 3, 4]
+    minItems: 1
+    maxItems: 6
+    items:
+      enum: [0, 1, 2, 3, 4]
     description: |
       array of values for the GP_MUX_SEL under PRUSS_GPCFG register for a PRU.
       This selects the internal muxing scheme for the PRU instance. Values
@@ -48,17 +57,4 @@ properties:
 required:
   - ti,prus
 
-dependencies:
-  firmware-name: [ 'ti,prus' ]
-  ti,pruss-gp-mux-sel: [ 'ti,prus' ]
-
 additionalProperties: true
-
-examples:
-  - |
-    /* PRU application node example */
-    pru-app {
-        ti,prus = <&pru0>, <&rtu0>, <&pru1>, <&rtu1>;
-        firmware-name = "pruss-app-fw0", "pruss-app-fw1", "pruss-app-fw2", "pruss-app-fw3";
-        ti,pruss-gp-mux-sel = <2>, <1>, <2>, <1>;
-    };

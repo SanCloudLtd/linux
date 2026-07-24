@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
+ *
+ * J721E SK URL: https://www.ti.com/tool/SK-TDA4VM
  */
 
 /dts-v1/;
@@ -200,42 +202,6 @@
 			 <3300000 0x1>;
 	};
 
-	transceiver1: can-phy0 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&mcu_mcan0_gpio_pins_default>;
-		standby-gpios = <&wkup_gpio0 3 GPIO_ACTIVE_HIGH>;
-	};
-
-	transceiver2: can-phy1 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&main_mcan0_gpio_pins_default>;
-		standby-gpios = <&main_gpio0 65 GPIO_ACTIVE_HIGH>;
-	};
-
-	transceiver3: can-phy2 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&main_mcan5_gpio_pins_default>;
-		standby-gpios = <&main_gpio0 66 GPIO_ACTIVE_HIGH>;
-	};
-
-	transceiver4: can-phy3 {
-		compatible = "ti,tcan1042";
-		#phy-cells = <0>;
-		max-bitrate = <5000000>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&main_mcan9_gpio_pins_default>;
-		standby-gpios = <&main_gpio0 67 GPIO_ACTIVE_HIGH>;
-	};
-
 	dp_pwr_3v3: fixedregulator-dp-prw {
 		compatible = "regulator-fixed";
 		regulator-name = "dp-pwr";
@@ -269,7 +235,6 @@
 		pinctrl-0 = <&hdmi_hpd_pins_default>;
 
 		ddc-i2c-bus = <&main_i2c1>;
-		digital;
 
 		/* HDMI_HPD */
 		hpd-gpios = <&main_gpio1 0 GPIO_ACTIVE_HIGH>;
@@ -282,31 +247,34 @@
 	};
 
 	dvi-bridge {
-		#address-cells = <1>;
-		#size-cells = <0>;
 		compatible = "ti,tfp410";
 
 		pinctrl-names = "default";
 		pinctrl-0 = <&hdmi_pdn_pins_default>;
 
-		/* HDMI_PDn */
 		powerdown-gpios = <&main_gpio0 127 GPIO_ACTIVE_LOW>;
+		ti,deskew = <0>;
 
-		port@0 {
-			reg = <0>;
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-			tfp410_in: endpoint {
-				remote-endpoint = <&dpi_out0>;
-				pclk-sample = <1>;
+			port@0 {
+				reg = <0>;
+
+				tfp410_in: endpoint {
+					remote-endpoint = <&dpi1_out>;
+					pclk-sample = <1>;
+				};
 			};
-		};
 
-		port@1 {
-			reg = <1>;
+			port@1 {
+				reg = <1>;
 
-			tfp410_out: endpoint {
-				remote-endpoint =
-					<&hdmi_connector_in>;
+				tfp410_out: endpoint {
+					remote-endpoint =
+						<&hdmi_connector_in>;
+				};
 			};
 		};
 	};
@@ -366,45 +334,6 @@
 	main_usbss1_pins_default: main-usbss1-pins-default {
 		pinctrl-single,pins = <
 			J721E_IOPAD(0x214, PIN_OUTPUT, 4) /* (V4) MCAN1_TX.USB1_DRVVBUS */
-		>;
-	};
-
-	main_mcan0_pins_default: main-mcan0-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x208, PIN_INPUT, 0) /* (W5) MCAN0_RX */
-			J721E_IOPAD(0x20c, PIN_OUTPUT, 0) /* (W6) MCAN0_TX */
-		>;
-	};
-
-	main_mcan0_gpio_pins_default: main-mcan0-gpio-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x108, PIN_INPUT, 7) /* (AD27) PRG0_PRU1_GPO2.GPIO0_65 */
-		>;
-	};
-
-	main_mcan5_pins_default: main-mcan5-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x50, PIN_INPUT, 6) /* (AE21) PRG1_PRU0_GPO18.MCAN5_RX */
-			J721E_IOPAD(0x4c, PIN_OUTPUT, 6) /* (AJ21) PRG1_PRU0_GPO17.MCAN5_TX */
-		>;
-	};
-
-	main_mcan5_gpio_pins_default: main-mcan5-gpio-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x10c, PIN_INPUT, 7) /* (AC25) PRG0_PRU1_GPO3.GPIO0_66 */
-		>;
-	};
-
-	main_mcan9_pins_default: main-mcan9-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0xd0, PIN_INPUT, 6) /* (AC27) PRG0_PRU0_GPO8.MCAN9_RX */
-			J721E_IOPAD(0xcc, PIN_OUTPUT, 6) /* (AC28) PRG0_PRU0_GPO7.MCAN9_TX */
-		>;
-	};
-
-	main_mcan9_gpio_pins_default: main-mcan9-gpio-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x110, PIN_INPUT, 7) /* (AD29) PRG0_PRU1_GPO4.GPIO0_67 */
 		>;
 	};
 
@@ -471,47 +400,6 @@
 			J721E_IOPAD(0x124, PIN_INPUT, 7) /* (Y24) PRG0_PRU1_GPO9.GPIO0_72 */
 		>;
 	};
-
-	main_i2c5_pins_default: main-i2c5-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x150, PIN_INPUT_PULLUP, 2) /* (Y26) PRG0_MDIO0_MDIO.I2C5_SCL */
-			J721E_IOPAD(0x154, PIN_INPUT_PULLUP, 2) /* (AA27) PRG0_MDIO0_MDC.I2C5_SDA */
-		>;
-	};
-
-	rpi_header_gpio0_pins_default: rpi-header-gpio0-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x01C, PIN_INPUT, 7) /* (AD22) PRG1_PRU0_GPO6.GPIO0_7 */
-			J721E_IOPAD(0x120, PIN_INPUT, 7) /* (AA28) PRG0_PRU1_GPO8.GPIO0_71 */
-			J721E_IOPAD(0x14C, PIN_INPUT, 7) /* (AA29) PRG0_PRU1_GPO19.GPIO0_82 */
-			J721E_IOPAD(0x02C, PIN_INPUT, 7) /* (AD21) PRG1_PRU0_GPO10.GPIO0_11 */
-			J721E_IOPAD(0x198, PIN_INPUT, 7) /* (V25) RGMII6_TD1.GPIO0_101 */
-			J721E_IOPAD(0x1B0, PIN_INPUT, 7) /* (W24) RGMII6_RD1.GPIO0_107 */
-			J721E_IOPAD(0x1A0, PIN_INPUT, 7) /* (W29) RGMII6_TXC.GPIO0_103 */
-			J721E_IOPAD(0x008, PIN_INPUT, 7) /* (AG22) PRG1_PRU0_GPO1.GPIO0_2 */
-			J721E_IOPAD(0x1D0, PIN_INPUT, 7) /* (AA3) SPI0_D1.GPIO0_115 */
-			J721E_IOPAD(0x11C, PIN_INPUT, 7) /* (AA24) PRG0_PRU1_GPO7.GPIO0_70 */
-			J721E_IOPAD(0x148, PIN_INPUT, 7) /* (AA26) PRG0_PRU1_GPO18.GPIO0_81 */
-			J721E_IOPAD(0x004, PIN_INPUT, 7) /* (AC23) PRG1_PRU0_GPO0.GPIO0_1 */
-			J721E_IOPAD(0x014, PIN_INPUT, 7) /* (AH23) PRG1_PRU0_GPO4.GPIO0_5 */
-			J721E_IOPAD(0x020, PIN_INPUT, 7) /* (AE20) PRG1_PRU0_GPO7.GPIO0_8 */
-			J721E_IOPAD(0x19C, PIN_INPUT, 7) /* (W27) RGMII6_TD0.GPIO0_102 */
-			J721E_IOPAD(0x1B4, PIN_INPUT, 7) /* (W25) RGMII6_RD0.GPIO0_108 */
-			J721E_IOPAD(0x188, PIN_INPUT, 7) /* (Y28) RGMII6_TX_CTL.GPIO0_97 */
-			J721E_IOPAD(0x00C, PIN_INPUT, 7) /* (AF22) PRG1_PRU0_GPO2.GPIO0_3 */
-			J721E_IOPAD(0x010, PIN_INPUT, 7) /* (AJ23) PRG1_PRU0_GPO3.GPIO0_4 */
-			J721E_IOPAD(0x178, PIN_INPUT, 7) /* (U27) RGMII5_RD3.GPIO0_93 */
-			J721E_IOPAD(0x17C, PIN_INPUT, 7) /* (U24) RGMII5_RD2.GPIO0_94 */
-			J721E_IOPAD(0x190, PIN_INPUT, 7) /* (W23) RGMII6_TD3.GPIO0_99 */
-			J721E_IOPAD(0x18C, PIN_INPUT, 7) /* (V23) RGMII6_RX_CTL.GPIO0_98 */
-		>;
-	};
-
-	rpi_header_gpio1_pins_default: rpi-header-gpio1-pins-default {
-		pinctrl-single,pins = <
-			J721E_IOPAD(0x234, PIN_INPUT, 7) /* (U3) EXT_REFCLK1.GPIO1_12 */
-		>;
-	};
 };
 
 &wkup_pmx0 {
@@ -574,19 +462,6 @@
 		>;
 	};
 
-	mcu_mcan0_pins_default: mcu-mcan0-pins-default {
-		pinctrl-single,pins = <
-			J721E_WKUP_IOPAD(0xac, PIN_INPUT, 0) /* (C29) MCU_MCAN0_RX */
-			J721E_WKUP_IOPAD(0xa8, PIN_OUTPUT, 0) /* (D29) MCU_MCAN0_TX */
-		>;
-	};
-
-	mcu_mcan0_gpio_pins_default: mcu-mcan0-gpio-pins-default {
-		pinctrl-single,pins = <
-			J721E_WKUP_IOPAD(0xbc, PIN_INPUT, 7) /* (F27) WKUP_GPIO0_3 */
-		>;
-	};
-
 	/* Reset for M.2 M Key slot on PCIe1  */
 	mkey_reset_pins_default: mkey-reset-pns-pins-default {
 		pinctrl-single,pins = <
@@ -600,46 +475,22 @@
 	status = "reserved";
 };
 
+&mcu_uart0 {
+	status = "okay";
+	/* Default pinmux */
+};
+
 &main_uart0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_uart0_pins_default>;
 	/* Shared with ATF on this platform */
 	power-domains = <&k3_pds 146 TI_SCI_PD_SHARED>;
 };
 
-&main_uart2 {
-	/* Brought out on RPi header */
-	status = "disabled";
-};
-
-&main_uart3 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart5 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart6 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart7 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart8 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart9 {
-	/* Brought out on M.2 E Key */
-	status = "disabled";
+&main_uart1 {
+	status = "okay";
+	/* Default pinmux */
 };
 
 &main_sdhci0 {
@@ -677,8 +528,6 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <4>;
-		#address-cells = <1>;
-		#size-cells = <1>;
 
 		partitions {
 			compatible = "fixed-partitions";
@@ -734,25 +583,26 @@
 };
 
 &main_i2c0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
 
-	i2c-switch@71 {
+	i2c-mux@71 {
 		compatible = "nxp,pca9543";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0x71>;
 
 		/* PCIe1 M.2 M Key I2C */
-		pcie1_m2_i2c: i2c@0 {
+		i2c@0 {
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0>;
 		};
 
 		/* PCIe0 M.2 E Key I2C */
-		pcie0_m2_i2c: i2c@1 {
+		i2c@1 {
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <1>;
@@ -761,59 +611,39 @@
 };
 
 &main_i2c1 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c1_pins_default>;
 	/* i2c1 is used for DVI DDC, so we need to use 100kHz */
 	clock-frequency = <100000>;
 };
 
-&main_i2c2 {
-	/* Unused */
-	status = "disabled";
-};
-
 &main_i2c3 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c3_pins_default>;
 	clock-frequency = <400000>;
 
-	i2c-switch@70 {
+	i2c-mux@70 {
 		compatible = "nxp,pca9543";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0x70>;
 
-		/* CAM0 I2C */
-		ti_cam0_i2c: i2c@0 {
+		/* CSI0 I2C */
+		i2c@0 {
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0>;
 		};
 
-		/* CAM1 I2C */
-		rpi_cam0_i2c: i2c@1 {
+		/* CSI1 I2C */
+		i2c@1 {
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <1>;
 		};
 	};
-};
-
-&main_i2c4 {
-	/* Unused */
-	status = "disabled";
-};
-
-&main_i2c5 {
-	/* Brought out on RPi Header */
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_i2c5_pins_default>;
-	clock-frequency = <400000>;
-};
-
-&main_i2c6 {
-	/* Unused */
-	status = "disabled";
 };
 
 &main_gpio2 {
@@ -844,6 +674,10 @@
 	status = "disabled";
 };
 
+&main_r5fss0_core0{
+	firmware-name = "pdk-ipc/ipc_echo_test_mcu2_0_release_strip.xer5f";
+};
+
 &usb_serdes_mux {
 	idle-states = <1>, <1>; /* USB0 to SERDES3, USB1 to SERDES2 */
 };
@@ -870,6 +704,24 @@
 		cdns,phy-type = <PHY_TYPE_USB3>;
 		resets = <&serdes_wiz3 1>, <&serdes_wiz3 2>;
 	};
+};
+
+&serdes4 {
+	torrent_phy_dp: phy@0 {
+		reg = <0>;
+		resets = <&serdes_wiz4 1>;
+		cdns,phy-type = <PHY_TYPE_DP>;
+		cdns,num-lanes = <4>;
+		cdns,max-bit-rate = <5400>;
+		#phy-cells = <0>;
+	};
+};
+
+&mhdp {
+	phys = <&torrent_phy_dp>;
+	phy-names = "dpphy";
+	pinctrl-names = "default";
+	pinctrl-0 = <&dp0_pins_default>;
 };
 
 &usbss0 {
@@ -936,6 +788,24 @@
 	phy-handle = <&phy0>;
 };
 
+&ti_csi2rx0 {
+	status = "okay";
+	/* MIPI-CSI Connector */
+};
+
+&ti_csi2rx1 {
+	status = "okay";
+	/* MIPI-CSI Connector */
+};
+
+&dphy0 {
+	status = "okay";
+};
+
+&dphy1 {
+	status = "okay";
+};
+
 &dss {
 	pinctrl-names = "default";
 	pinctrl-0 = <&dss_vout0_pins_default>;
@@ -954,8 +824,7 @@
 	#address-cells = <1>;
 	#size-cells = <0>;
 
-	/* DP */
-	port@0 {
+	port@0  {
 		reg = <0>;
 
 		dpi0_out: endpoint {
@@ -963,19 +832,13 @@
 		};
 	};
 
-	/* HDMI */
 	port@1 {
 		reg = <1>;
 
-		dpi_out0: endpoint {
+		dpi1_out: endpoint {
 			remote-endpoint = <&tfp410_in>;
 		};
 	};
-};
-
-&mhdp {
-	pinctrl-names = "default";
-	pinctrl-0 = <&dp0_pins_default>;
 };
 
 &dp0_ports {
@@ -995,66 +858,6 @@
 			remote-endpoint = <&dp_connector_in>;
 		};
 	};
-};
-
-&mcasp0 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp1 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp2 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp3 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp4 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp5 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp6 {
-	/* Brought out on RPi header */
-	status = "disabled";
-};
-
-&mcasp7 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp8 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp9 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp10 {
-	/* Unused */
-	status = "disabled";
-};
-
-&mcasp11 {
-	/* Brought out on M.2 E Key */
-	status = "disabled";
 };
 
 &serdes0 {
@@ -1131,75 +934,11 @@
 	status = "disabled";
 };
 
-&mcu_mcan0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mcu_mcan0_pins_default>;
-	phys = <&transceiver1>;
-};
-
-&mcu_mcan1 {
+&icssg0_mdio {
 	status = "disabled";
 };
 
-&main_mcan0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mcan0_pins_default>;
-	phys = <&transceiver2>;
-};
-
-&main_mcan1 {
-	status = "disabled";
-};
-
-&main_mcan2 {
-	status = "disabled";
-};
-
-&main_mcan3 {
-	status = "disabled";
-};
-
-&main_mcan4 {
-	status = "disabled";
-};
-
-&main_mcan5 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mcan5_pins_default>;
-	phys = <&transceiver3>;
-};
-
-&main_mcan6 {
-	status = "disabled";
-};
-
-&main_mcan7 {
-	status = "disabled";
-};
-
-&main_mcan8 {
-	status = "disabled";
-};
-
-&main_mcan9 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&main_mcan9_pins_default>;
-	phys = <&transceiver4>;
-};
-
-&main_mcan10 {
-	status = "disabled";
-};
-
-&main_mcan11 {
-	status = "disabled";
-};
-
-&main_mcan12 {
-	status = "disabled";
-};
-
-&main_mcan13 {
+&icssg1_mdio {
 	status = "disabled";
 };
 
@@ -1207,11 +946,8 @@
 	status = "disabled";
 };
 
-&main_r5fss0_core0{
-	firmware-name = "pdk-ipc/ipc_echo_test_mcu2_0_release_strip.xer5f";
-};
-
 &mailbox0_cluster0 {
+	status = "okay";
 	interrupts = <436>;
 
 	mbox_mcu_r5fss0_core0: mbox-mcu-r5fss0-core0 {
@@ -1226,6 +962,7 @@
 };
 
 &mailbox0_cluster1 {
+	status = "okay";
 	interrupts = <432>;
 
 	mbox_main_r5fss0_core0: mbox-main-r5fss0-core0 {
@@ -1240,6 +977,7 @@
 };
 
 &mailbox0_cluster2 {
+	status = "okay";
 	interrupts = <428>;
 
 	mbox_main_r5fss1_core0: mbox-main-r5fss1-core0 {
@@ -1254,6 +992,7 @@
 };
 
 &mailbox0_cluster3 {
+	status = "okay";
 	interrupts = <424>;
 
 	mbox_c66_0: mbox-c66-0 {
@@ -1268,40 +1007,13 @@
 };
 
 &mailbox0_cluster4 {
+	status = "okay";
 	interrupts = <420>;
 
 	mbox_c71_0: mbox-c71-0 {
 		ti,mbox-rx = <0 0 0>;
 		ti,mbox-tx = <1 0 0>;
 	};
-};
-
-&mailbox0_cluster5 {
-	status = "disabled";
-};
-
-&mailbox0_cluster6 {
-	status = "disabled";
-};
-
-&mailbox0_cluster7 {
-	status = "disabled";
-};
-
-&mailbox0_cluster8 {
-	status = "disabled";
-};
-
-&mailbox0_cluster9 {
-	status = "disabled";
-};
-
-&mailbox0_cluster10 {
-	status = "disabled";
-};
-
-&mailbox0_cluster11 {
-	status = "disabled";
 };
 
 &mcu_r5fss0_core0 {
@@ -1356,38 +1068,4 @@
 	mboxes = <&mailbox0_cluster4 &mbox_c71_0>;
 	memory-region = <&c71_0_dma_memory_region>,
 			<&c71_0_memory_region>;
-};
-
-&main_ehrpwm0 {
-	status = "disabled";
-};
-
-&main_ehrpwm1 {
-	status = "disabled";
-};
-
-&main_ehrpwm2 {
-	status = "disabled";
-};
-
-&main_ehrpwm3 {
-	status = "disabled";
-};
-
-&main_ehrpwm4 {
-	status = "disabled";
-};
-
-&main_ehrpwm5 {
-	status = "disabled";
-};
-
-&main_gpio0 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&rpi_header_gpio0_pins_default>;
-};
-
-&main_gpio1 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&rpi_header_gpio1_pins_default>;
 };

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * Endpoint Function Driver to implement Non-Transparent Bridge functionality
  *
  * Copyright (C) 2020 Texas Instruments
@@ -703,7 +703,8 @@ reset_handler:
 
 /**
  * epf_ntb_peer_spad_bar_clear() - Clear Peer Scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  *+-----------------+------->+------------------+        +-----------------+
  *|       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -748,6 +749,7 @@ static void epf_ntb_peer_spad_bar_clear(struct epf_ntb_epc *ntb_epc)
 /**
  * epf_ntb_peer_spad_bar_set() - Set peer scratchpad BAR
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @type: PRIMARY interface or SECONDARY interface
  *
  *+-----------------+------->+------------------+        +-----------------+
  *|       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -817,7 +819,8 @@ static int epf_ntb_peer_spad_bar_set(struct epf_ntb *ntb,
 
 /**
  * epf_ntb_config_sspad_bar_clear() - Clear Config + Self scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  * +-----------------+------->+------------------+        +-----------------+
  * |       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -861,7 +864,8 @@ static void epf_ntb_config_sspad_bar_clear(struct epf_ntb_epc *ntb_epc)
 
 /**
  * epf_ntb_config_sspad_bar_set() - Set Config + Self scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  * +-----------------+------->+------------------+        +-----------------+
  * |       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -1258,7 +1262,7 @@ static void epf_ntb_db_mw_bar_cleanup(struct epf_ntb *ntb,
 }
 
 /**
- * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capaiblity
+ * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capability
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
  * @type: PRIMARY interface or SECONDARY interface
  *
@@ -1325,6 +1329,7 @@ static int epf_ntb_configure_interrupt(struct epf_ntb *ntb,
 
 /**
  * epf_ntb_alloc_peer_mem() - Allocate memory in peer's outbound address space
+ * @dev: The PCI device.
  * @ntb_epc: EPC associated with one of the HOST whose BAR holds peer's outbound
  *   address
  * @bar: BAR of @ntb_epc in for which memory has to be allocated (could be
@@ -1676,7 +1681,6 @@ static int epf_ntb_init_epc_bar_interface(struct epf_ntb *ntb,
  * epf_ntb_init_epc_bar() - Identify BARs to be used for each of the NTB
  * constructs (scratchpad region, doorbell, memorywindow)
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
- * @type: PRIMARY interface or SECONDARY interface
  *
  * Wrapper to epf_ntb_init_epc_bar_interface() to identify the free BARs
  * to be used for each of BAR_CONFIG, BAR_PEER_SPAD, BAR_DB_MW1, BAR_MW2,
@@ -1755,11 +1759,13 @@ static int epf_ntb_epc_init_interface(struct epf_ntb *ntb,
 		goto err_db_mw_bar_init;
 	}
 
-	ret = pci_epc_write_header(epc, func_no, vfunc_no, epf->header);
-	if (ret) {
-		dev_err(dev, "%s intf: Configuration header write failed\n",
-			pci_epc_interface_string(type));
-		goto err_write_header;
+	if (vfunc_no <= 1) {
+		ret = pci_epc_write_header(epc, func_no, vfunc_no, epf->header);
+		if (ret) {
+			dev_err(dev, "%s intf: Configuration header write failed\n",
+				pci_epc_interface_string(type));
+			goto err_write_header;
+		}
 	}
 
 	INIT_DELAYED_WORK(&ntb->epc[type]->cmd_handler, epf_ntb_cmd_handler);
@@ -1931,7 +1937,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 									\
-	return sprintf(page, "%d\n", ntb->_name);			\
+	return sysfs_emit(page, "%d\n", ntb->_name);			\
 }
 
 #define EPF_NTB_W(_name)						\
@@ -1941,11 +1947,9 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 	u32 val;							\
-	int ret;							\
 									\
-	ret = kstrtou32(page, 0, &val);					\
-	if (ret)							\
-		return ret;						\
+	if (kstrtou32(page, 0, &val) < 0)				\
+		return -EINVAL;						\
 									\
 	ntb->_name = val;						\
 									\
@@ -1962,7 +1966,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 									\
 	sscanf(#_name, "mw%d", &win_no);				\
 									\
-	return sprintf(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
+	return sysfs_emit(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
 }
 
 #define EPF_NTB_MW_W(_name)						\
@@ -1974,11 +1978,9 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct device *dev = &ntb->epf->dev;				\
 	int win_no;							\
 	u64 val;							\
-	int ret;							\
 									\
-	ret = kstrtou64(page, 0, &val);					\
-	if (ret)							\
-		return ret;						\
+	if (kstrtou64(page, 0, &val) < 0)				\
+		return -EINVAL;						\
 									\
 	if (sscanf(#_name, "mw%d", &win_no) != 1)			\
 		return -EINVAL;						\
@@ -1999,11 +2001,9 @@ static ssize_t epf_ntb_num_mws_store(struct config_item *item,
 	struct config_group *group = to_config_group(item);
 	struct epf_ntb *ntb = to_epf_ntb(group);
 	u32 val;
-	int ret;
 
-	ret = kstrtou32(page, 0, &val);
-	if (ret)
-		return ret;
+	if (kstrtou32(page, 0, &val) < 0)
+		return -EINVAL;
 
 	if (val > MAX_MW)
 		return -EINVAL;
@@ -2054,6 +2054,8 @@ static const struct config_item_type ntb_group_type = {
 /**
  * epf_ntb_add_cfs() - Add configfs directory specific to NTB
  * @epf: NTB endpoint function device
+ * @group: A pointer to the config_group structure referencing a group of
+ *	   config_items of a specific type that belong to a specific sub-system.
  *
  * Add configfs directory specific to NTB. This directory will hold
  * NTB specific properties like db_count, spad_count, num_mws etc.,

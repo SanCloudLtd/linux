@@ -205,9 +205,9 @@ static void tbl_mask_array_reset_counters(struct mask_array *ma)
 
 			stats = per_cpu_ptr(ma->masks_usage_stats, cpu);
 			do {
-				start = u64_stats_fetch_begin_irq(&stats->syncp);
+				start = u64_stats_fetch_begin(&stats->syncp);
 				counter = stats->usage_cntrs[i];
-			} while (u64_stats_fetch_retry_irq(&stats->syncp, start));
+			} while (u64_stats_fetch_retry(&stats->syncp, start));
 
 			ma->masks_usage_zero_cntr[i] += counter;
 		}
@@ -670,13 +670,13 @@ static bool cmp_key(const struct sw_flow_key *key1,
 {
 	const long *cp1 = (const long *)((const u8 *)key1 + key_start);
 	const long *cp2 = (const long *)((const u8 *)key2 + key_start);
-	long diffs = 0;
 	int i;
 
 	for (i = key_start; i < key_end; i += sizeof(long))
-		diffs |= *cp1++ ^ *cp2++;
+		if (*cp1++ ^ *cp2++)
+			return false;
 
-	return diffs == 0;
+	return true;
 }
 
 static bool flow_cmp_masked_key(const struct sw_flow *flow,
@@ -1136,10 +1136,9 @@ void ovs_flow_masks_rebalance(struct flow_table *table)
 
 			stats = per_cpu_ptr(ma->masks_usage_stats, cpu);
 			do {
-				start = u64_stats_fetch_begin_irq(&stats->syncp);
+				start = u64_stats_fetch_begin(&stats->syncp);
 				counter = stats->usage_cntrs[i];
-			} while (u64_stats_fetch_retry_irq(&stats->syncp,
-							   start));
+			} while (u64_stats_fetch_retry(&stats->syncp, start));
 
 			masks_and_count[i].counter += counter;
 		}

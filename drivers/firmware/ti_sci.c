@@ -1941,7 +1941,6 @@ static int ti_sci_cmd_core_reboot(const struct ti_sci_handle *handle)
 		return ret;
 	}
 	req = (struct ti_sci_msg_req_reboot *)xfer->xfer_buf;
-	req->domain = 0;
 
 	ret = ti_sci_do_xfer(info, xfer);
 	if (ret) {
@@ -3350,7 +3349,7 @@ u16 ti_sci_get_free_resource(struct ti_sci_resource *res)
 
 		free_bit = find_first_zero_bit(desc->res_map, res_count);
 		if (free_bit != res_count) {
-			__set_bit(free_bit, desc->res_map);
+			set_bit(free_bit, desc->res_map);
 			raw_spin_unlock_irqrestore(&res->lock, flags);
 
 			if (desc->num && free_bit < desc->num)
@@ -3381,10 +3380,10 @@ void ti_sci_release_resource(struct ti_sci_resource *res, u16 id)
 
 		if (desc->num && desc->start <= id &&
 		    (desc->start + desc->num) > id)
-			__clear_bit(id - desc->start, desc->res_map);
+			clear_bit(id - desc->start, desc->res_map);
 		else if (desc->num_sec && desc->start_sec <= id &&
 			 (desc->start_sec + desc->num_sec) > id)
-			__clear_bit(id - desc->start_sec, desc->res_map);
+			clear_bit(id - desc->start_sec, desc->res_map);
 	}
 	raw_spin_unlock_irqrestore(&res->lock, flags);
 }
@@ -3455,8 +3454,9 @@ devm_ti_sci_get_resource_sets(const struct ti_sci_handle *handle,
 
 		valid_set = true;
 		res_count = res->desc[i].num + res->desc[i].num_sec;
-		res->desc[i].res_map = devm_bitmap_zalloc(dev, res_count,
-							  GFP_KERNEL);
+		res->desc[i].res_map =
+			devm_kzalloc(dev, BITS_TO_LONGS(res_count) *
+				     sizeof(*res->desc[i].res_map), GFP_KERNEL);
 		if (!res->desc[i].res_map)
 			return ERR_PTR(-ENOMEM);
 	}
@@ -3562,13 +3562,12 @@ static int ti_sci_load_lpm_firmware(struct device *dev, struct ti_sci_info *info
 
 	return ret;
 }
-
 static void ti_sci_set_is_suspending(struct ti_sci_info *info, bool is_suspending)
 {
 	info->is_suspending = is_suspending;
 }
 
-static int __maybe_unused ti_sci_prepare_system_suspend(struct ti_sci_info *info)
+static int ti_sci_prepare_system_suspend(struct ti_sci_info *info)
 {
 #if IS_ENABLED(CONFIG_SUSPEND)
 	u8 mode;
@@ -3600,7 +3599,7 @@ static int __maybe_unused ti_sci_prepare_system_suspend(struct ti_sci_info *info
 #endif
 }
 
-static int __maybe_unused ti_sci_suspend(struct device *dev)
+static int ti_sci_suspend(struct device *dev)
 {
 	struct ti_sci_info *info = dev_get_drvdata(dev);
 	int ret;
@@ -3618,7 +3617,7 @@ static int __maybe_unused ti_sci_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused ti_sci_resume(struct device *dev)
+static int ti_sci_resume(struct device *dev)
 {
 	struct ti_sci_info *info = dev_get_drvdata(dev);
 
@@ -3627,7 +3626,7 @@ static int __maybe_unused ti_sci_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(ti_sci_pm_ops, ti_sci_suspend, ti_sci_resume);
+static DEFINE_SIMPLE_DEV_PM_OPS(ti_sci_pm_ops, ti_sci_suspend, ti_sci_resume);
 
 static int tisci_pm_handler(struct notifier_block *nb, unsigned long pm_event,
 			    void *unused)
@@ -3658,9 +3657,11 @@ static int ti_sci_init_suspend(struct platform_device *pdev,
 	int ret;
 
 	dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64));
-	info->ctx_mem_buf = dma_alloc_coherent(info->dev, LPM_CTX_MEM_SIZE,
-					       &info->ctx_mem_addr,
-					       GFP_KERNEL);
+	info->ctx_mem_buf = dma_alloc_attrs(info->dev, LPM_CTX_MEM_SIZE,
+					    &info->ctx_mem_addr,
+					    GFP_KERNEL,
+					    DMA_ATTR_NO_KERNEL_MAPPING |
+					    DMA_ATTR_FORCE_CONTIGUOUS);
 	if (!info->ctx_mem_buf) {
 		dev_err(info->dev, "Failed to allocate LPM context memory\n");
 		return -ENOMEM;
@@ -3794,11 +3795,13 @@ static int ti_sci_probe(struct platform_device *pdev)
 	if (!minfo->xfer_block)
 		return -ENOMEM;
 
-	minfo->xfer_alloc_table = devm_bitmap_zalloc(dev,
-						     desc->max_msgs,
-						     GFP_KERNEL);
+	minfo->xfer_alloc_table = devm_kcalloc(dev,
+					       BITS_TO_LONGS(desc->max_msgs),
+					       sizeof(unsigned long),
+					       GFP_KERNEL);
 	if (!minfo->xfer_alloc_table)
 		return -ENOMEM;
+	bitmap_zero(minfo->xfer_alloc_table, desc->max_msgs);
 
 	/* Pre-initialize the buffer pointer to pre-allocated buffers */
 	for (i = 0, xfer = minfo->xfer_block; i < desc->max_msgs; i++, xfer++) {

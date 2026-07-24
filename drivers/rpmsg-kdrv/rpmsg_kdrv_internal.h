@@ -33,16 +33,13 @@ struct rpmsg_kdrv_driver {
 
 typedef int (*request_cb_t)(void *data, void *req, int req_sz, void *resp, int resp_sz);
 
-extern int rpmsg_kdrv_register_driver(struct rpmsg_kdrv_driver *drv);
+int rpmsg_kdrv_register_driver(struct rpmsg_kdrv_driver *drv);
 
-extern int rpmsg_kdrv_send_request_with_callback(struct rpmsg_device *rpdev,
-		uint32_t device_id, void *message, uint32_t message_size, void *cb_data,
-		request_cb_t callback);
-extern int rpmsg_kdrv_send_request_with_response(struct rpmsg_device *rpdev,
-		uint32_t device_id, void *message, uint32_t message_size,
-		void *response, uint32_t response_size);
-extern int rpmsg_kdrv_send_message(struct rpmsg_device *rpdev,
-		uint32_t device_id, void *message, uint32_t message_size);
-
+int rpmsg_kdrv_send_request_with_callback(struct rpmsg_device *rpdev, u32 device_id, void *message,
+					  u32 message_size, void *cb_data, request_cb_t callback);
+int rpmsg_kdrv_send_request_with_response(struct rpmsg_device *rpdev, u32 device_id, void *message,
+					  u32 message_size, void *response, u32 response_size);
+int rpmsg_kdrv_send_message(struct rpmsg_device *rpdev, u32 device_id, void *message,
+			    u32 message_size);
 
 #endif

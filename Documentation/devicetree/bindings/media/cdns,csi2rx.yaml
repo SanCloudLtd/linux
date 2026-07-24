@@ -23,18 +23,23 @@ properties:
 
   clocks:
     minItems: 3
-    maxItems: 6
+    items:
+      - description: Main clock
+      - description: Register bank clock
+      - description: Pixel stream 0 output clock
+      - description: Pixel stream 1 output clock
+      - description: Pixel stream 2 output clock
+      - description: Pixel stream 3 output clock
 
   clock-names:
     minItems: 3
-    maxItems: 6
     items:
-      - const: sys_clk # main clock
-      - const: p_clk # register bank clock
-      - const: pixel_if0_clk # pixel stream 0 output clock
-      - const: pixel_if1_clk # pixel stream 1 output clock
-      - const: pixel_if2_clk # pixel stream 2 output clock
-      - const: pixel_if3_clk # pixel stream 3 output clock
+      - const: sys_clk
+      - const: p_clk
+      - const: pixel_if0_clk
+      - const: pixel_if1_clk
+      - const: pixel_if2_clk
+      - const: pixel_if3_clk
 
   phys:
     maxItems: 1
@@ -66,10 +71,8 @@ properties:
                 maxItems: 1
 
               data-lanes:
-                $ref: /schemas/types.yaml#/definitions/uint32-array
                 minItems: 1
                 maxItems: 4
-                uniqueItems: true
                 items:
                   maximum: 4
 
@@ -106,6 +109,7 @@ required:
   - reg
   - clocks
   - clock-names
+  - ports
 
 additionalProperties: false
 

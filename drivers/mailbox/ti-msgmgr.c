@@ -705,7 +705,7 @@ static int ti_msgmgr_queue_rx_set_polled_mode(struct ti_queue_inst *qinst, bool 
 	return 0;
 }
 
-static int __maybe_unused ti_msgmgr_suspend(struct device *dev)
+static int ti_msgmgr_suspend(struct device *dev)
 {
 	struct ti_msgmgr_inst *inst = dev_get_drvdata(dev);
 	struct ti_queue_inst *qinst;
@@ -724,7 +724,7 @@ static int __maybe_unused ti_msgmgr_suspend(struct device *dev)
 	return 0;
 }
 
-static int __maybe_unused ti_msgmgr_resume(struct device *dev)
+static int ti_msgmgr_resume(struct device *dev)
 {
 	struct ti_msgmgr_inst *inst = dev_get_drvdata(dev);
 	struct ti_queue_inst *qinst;
@@ -738,7 +738,7 @@ static int __maybe_unused ti_msgmgr_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(ti_msgmgr_pm_ops, ti_msgmgr_suspend, ti_msgmgr_resume);
+static DEFINE_SIMPLE_DEV_PM_OPS(ti_msgmgr_pm_ops, ti_msgmgr_suspend, ti_msgmgr_resume);
 
 /* Queue operations */
 static const struct mbox_chan_ops ti_msgmgr_chan_ops = {

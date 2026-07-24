@@ -13,17 +13,33 @@
 #include <asm/fpstate.h>
 #include <asm/page.h>
 
+#ifdef CONFIG_KASAN
+/*
+ * KASan uses a lot of extra stack space so the thread size order needs to
+ * be increased.
+ */
+#define THREAD_SIZE_ORDER	2
+#else
 #define THREAD_SIZE_ORDER	1
+#endif
 #define THREAD_SIZE		(PAGE_SIZE << THREAD_SIZE_ORDER)
 #define THREAD_START_SP		(THREAD_SIZE - 8)
+
+#ifdef CONFIG_VMAP_STACK
+#define THREAD_ALIGN		(2 * THREAD_SIZE)
+#else
+#define THREAD_ALIGN		THREAD_SIZE
+#endif
+
+#define OVERFLOW_STACK_SIZE	SZ_4K
 
 #ifndef __ASSEMBLY__
 
 struct task_struct;
 
-#include <asm/types.h>
+DECLARE_PER_CPU(struct task_struct *, __entry_task);
 
-typedef unsigned long mm_segment_t;
+#include <asm/types.h>
 
 struct cpu_context_save {
 	__u32	r4;
@@ -47,20 +63,12 @@ struct thread_info {
 	unsigned long		flags;		/* low level flags */
 	int			preempt_count;	/* 0 => preemptable, <0 => bug */
 	int			preempt_lazy_count; /* 0 => preemptable, <0 => bug */
-	mm_segment_t		addr_limit;	/* address limit */
-	struct task_struct	*task;		/* main task structure */
 	__u32			cpu;		/* cpu */
 	__u32			cpu_domain;	/* cpu domain */
-#ifdef CONFIG_STACKPROTECTOR_PER_TASK
-	unsigned long		stack_canary;
-#endif
 	struct cpu_context_save	cpu_context;	/* cpu context */
-	__u32			syscall;	/* syscall number */
+	__u32			abi_syscall;	/* ABI type and syscall nr */
 	__u8			used_cp[16];	/* thread used copro */
 	unsigned long		tp_value[2];	/* TLS registers */
-#ifdef CONFIG_CRUNCH
-	struct crunch_state	crunchstate;
-#endif
 	union fp_state		fpstate __attribute__((aligned(8)));
 	union vfp_state		vfpstate;
 #ifdef CONFIG_ARM_THUMBEE
@@ -70,21 +78,13 @@ struct thread_info {
 
 #define INIT_THREAD_INFO(tsk)						\
 {									\
-	.task		= &tsk,						\
 	.flags		= 0,						\
 	.preempt_count	= INIT_PREEMPT_COUNT,				\
-	.addr_limit	= KERNEL_DS,					\
 }
 
-/*
- * how to get the thread information struct from C
- */
-static inline struct thread_info *current_thread_info(void) __attribute_const__;
-
-static inline struct thread_info *current_thread_info(void)
+static inline struct task_struct *thread_task(struct thread_info* ti)
 {
-	return (struct thread_info *)
-		(current_stack_pointer & ~(THREAD_SIZE - 1));
+	return (struct task_struct *)ti;
 }
 
 #define thread_saved_pc(tsk)	\
@@ -99,11 +99,6 @@ static inline struct thread_info *current_thread_info(void)
 #define thread_saved_fp(tsk)	\
 	((unsigned long)(task_thread_info(tsk)->cpu_context.r7))
 #endif
-
-extern void crunch_task_disable(struct thread_info *);
-extern void crunch_task_copy(struct thread_info *, void *);
-extern void crunch_task_restore(struct thread_info *, void *);
-extern void crunch_task_release(struct thread_info *);
 
 extern void iwmmxt_task_disable(struct thread_info *);
 extern void iwmmxt_task_copy(struct thread_info *, void *);
@@ -145,16 +140,17 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 #define TIF_SYSCALL_TRACEPOINT	22	/* syscall tracepoint instrumentation */
 #define TIF_SECCOMP		23	/* seccomp syscall filtering active */
 
+
 #define _TIF_SIGPENDING		(1 << TIF_SIGPENDING)
 #define _TIF_NEED_RESCHED	(1 << TIF_NEED_RESCHED)
 #define _TIF_NOTIFY_RESUME	(1 << TIF_NOTIFY_RESUME)
-#define _TIF_NEED_RESCHED_LAZY	(1 << TIF_NEED_RESCHED_LAZY)
 #define _TIF_UPROBE		(1 << TIF_UPROBE)
 #define _TIF_SYSCALL_TRACE	(1 << TIF_SYSCALL_TRACE)
 #define _TIF_SYSCALL_AUDIT	(1 << TIF_SYSCALL_AUDIT)
 #define _TIF_SYSCALL_TRACEPOINT	(1 << TIF_SYSCALL_TRACEPOINT)
 #define _TIF_SECCOMP		(1 << TIF_SECCOMP)
 #define _TIF_NOTIFY_SIGNAL	(1 << TIF_NOTIFY_SIGNAL)
+#define _TIF_NEED_RESCHED_LAZY	(1 << TIF_NEED_RESCHED_LAZY)
 #define _TIF_USING_IWMMXT	(1 << TIF_USING_IWMMXT)
 
 /* Checks for any syscall work in entry-common.S */
@@ -164,9 +160,9 @@ extern int vfp_restore_user_hwstate(struct user_vfp *,
 /*
  * Change these and you break ASM code in entry-common.S
  */
-#define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_SIGPENDING | \
+#define _TIF_WORK_MASK		(_TIF_NEED_RESCHED | _TIF_NEED_RESCHED_LAZY | \
+				 _TIF_SIGPENDING | \
 				 _TIF_NOTIFY_RESUME | _TIF_UPROBE | \
-				 _TIF_NEED_RESCHED_LAZY | \
 				 _TIF_NOTIFY_SIGNAL)
 
 #endif /* __KERNEL__ */

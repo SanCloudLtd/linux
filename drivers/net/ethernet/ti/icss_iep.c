@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
+
 /* Texas Instruments ICSSG Industrial Ethernet Peripheral (IEP) Driver
  *
- * Copyright (C) 2018 Texas Instruments Incorporated - http://www.ti.com
+ * Copyright (C) 2023 Texas Instruments Incorporated - https://www.ti.com
  *
  */
 
@@ -123,7 +124,6 @@ struct icss_iep {
 	int cap_cmp_irq;
 	u64 period;
 	u32 latch_enable;
-	struct hrtimer sync_timer;
 };
 
 static u32 icss_iep_readl(struct icss_iep *iep, int reg)
@@ -211,7 +211,8 @@ static void icss_iep_settime(struct icss_iep *iep, u64 ns)
 	if (iep->pps_enabled || iep->perout_enabled) {
 		icss_iep_update_to_next_boundary(iep, ns);
 		icss_iep_writel(iep, ICSS_IEP_SYNC_CTRL_REG,
-			     IEP_SYNC_CTRL_SYNC_N_EN(0) | IEP_SYNC_CTRL_SYNC_EN);
+				IEP_SYNC_CTRL_SYNC_N_EN(0) |
+				IEP_SYNC_CTRL_SYNC_EN);
 	}
 	spin_unlock_irqrestore(&iep->irq_lock, flags);
 }
@@ -484,8 +485,8 @@ static int icss_iep_perout_enable_hw(struct icss_iep *iep,
 			regmap_write(iep->map, ICSS_IEP_CMP1_REG0, lower_32_bits(cmp));
 			if (iep->plat_data->flags & ICSS_IEP_64BIT_COUNTER_SUPPORT)
 				regmap_write(iep->map, ICSS_IEP_CMP1_REG1, upper_32_bits(cmp));
-			/* Configure SYNC */
-			regmap_write(iep->map, ICSS_IEP_SYNC_PWIDTH_REG, 1000000); /* 1ms pulse width */
+			/* Configure SYNC, 1ms pulse width */
+			regmap_write(iep->map, ICSS_IEP_SYNC_PWIDTH_REG, 1000000);
 			regmap_write(iep->map, ICSS_IEP_SYNC0_PERIOD_REG, 0);
 			regmap_write(iep->map, ICSS_IEP_SYNC_START_REG, 0);
 			regmap_write(iep->map, ICSS_IEP_SYNC_CTRL_REG, 0); /* one-shot mode */
@@ -553,8 +554,6 @@ static int icss_iep_perout_enable(struct icss_iep *iep,
 		goto exit;
 
 	spin_lock_irqsave(&iep->irq_lock, flags);
-	if (iep->cap_cmp_irq)
-		hrtimer_cancel(&iep->sync_timer);
 	ret = icss_iep_perout_enable_hw(iep, req, on);
 	if (!ret)
 		iep->perout_enabled = !!on;
@@ -563,78 +562,6 @@ static int icss_iep_perout_enable(struct icss_iep *iep,
 exit:
 	mutex_unlock(&iep->ptp_clk_mutex);
 
-	return ret;
-}
-
-static irqreturn_t icss_iep_cap_cmp_handler(int irq, void *dev_id)
-{
-	struct icss_iep *iep = (struct icss_iep *)dev_id;
-	unsigned int val, index = 0, i, sts;
-	struct ptp_clock_event pevent;
-	irqreturn_t ret = IRQ_NONE;
-	unsigned long flags;
-	u64 ns, ns_next;
-
-	spin_lock_irqsave(&iep->irq_lock, flags);
-
-	val = icss_iep_readl(iep, ICSS_IEP_CMP_STAT_REG);
-	if (val & BIT(CMP_INDEX(index))) {
-		icss_iep_writel(iep, ICSS_IEP_CMP_STAT_REG,
-				BIT(CMP_INDEX(index)));
-
-		if (!iep->pps_enabled && !iep->perout_enabled)
-			goto do_latch;
-
-		ns = icss_iep_readl(iep, ICSS_IEP_CMP1_REG0);
-		if (iep->plat_data->flags & ICSS_IEP_64BIT_COUNTER_SUPPORT) {
-			val = icss_iep_readl(iep, ICSS_IEP_CMP1_REG1);
-			ns |= (u64)val << 32;
-		}
-		/* set next event */
-		ns_next = ns + iep->period;
-		icss_iep_writel(iep, ICSS_IEP_CMP1_REG0,
-				lower_32_bits(ns_next));
-		if (iep->plat_data->flags & ICSS_IEP_64BIT_COUNTER_SUPPORT)
-			icss_iep_writel(iep, ICSS_IEP_CMP1_REG1,
-					upper_32_bits(ns_next));
-
-		pevent.pps_times.ts_real = ns_to_timespec64(ns);
-		pevent.type = PTP_CLOCK_PPSUSR;
-		pevent.index = index;
-		ptp_clock_event(iep->ptp_clock, &pevent);
-		dev_dbg(iep->dev, "IEP:pps ts: %llu next:%llu:\n", ns, ns_next);
-
-		hrtimer_start(&iep->sync_timer, ms_to_ktime(110), /* 100ms + buffer */
-			      HRTIMER_MODE_REL);
-
-		ret = IRQ_HANDLED;
-	}
-
-do_latch:
-	sts = icss_iep_readl(iep, ICSS_IEP_CAPTURE_STAT_REG);
-	if (!sts)
-		goto cap_cmp_exit;
-
-	for (i = 0; i < iep->ptp_info.n_ext_ts; i++) {
-		if (sts & IEP_CAP_CFG_CAPNR_1ST_EVENT_EN(i * 2)) {
-			ns = icss_iep_readl(iep,
-					    ICSS_IEP_CAP6_RISE_REG0 + (i * 2));
-			if (iep->plat_data->flags & ICSS_IEP_64BIT_COUNTER_SUPPORT) {
-				val = icss_iep_readl(iep,
-						     ICSS_IEP_CAP6_RISE_REG0 + (i * 2) + 1);
-				ns |= (u64)val << 32;
-			}
-			pevent.timestamp = ns;
-			pevent.type = PTP_CLOCK_EXTTS;
-			pevent.index = i;
-			ptp_clock_event(iep->ptp_clock, &pevent);
-			dev_dbg(iep->dev, "IEP:extts index=%d ts: %llu\n", i, ns);
-			ret = IRQ_HANDLED;
-		}
-	}
-
-cap_cmp_exit:
-	spin_unlock_irqrestore(&iep->irq_lock, flags);
 	return ret;
 }
 
@@ -668,8 +595,6 @@ static int icss_iep_pps_enable(struct icss_iep *iep, int on)
 		rq.perout.start.nsec = 0;
 		ret = icss_iep_perout_enable_hw(iep, &rq.perout, on);
 	} else {
-		if (iep->cap_cmp_irq)
-			hrtimer_cancel(&iep->sync_timer);
 		ret = icss_iep_perout_enable_hw(iep, &rq.perout, on);
 	}
 
@@ -745,18 +670,6 @@ static struct ptp_clock_info icss_iep_ptp_info = {
 	.enable		= icss_iep_ptp_enable,
 };
 
-static enum hrtimer_restart icss_iep_sync0_work(struct hrtimer *timer)
-{
-	struct icss_iep *iep = container_of(timer, struct icss_iep, sync_timer);
-
-	icss_iep_writel(iep, ICSS_IEP_SYNC_CTRL_REG, 0);
-	icss_iep_writel(iep, ICSS_IEP_SYNC_CTRL_REG,
-			IEP_SYNC_CTRL_SYNC_N_EN(0) | IEP_SYNC_CTRL_SYNC_EN);
-	icss_iep_writel(iep, ICSS_IEP_SYNC0_STAT_REG, 1);
-
-	return HRTIMER_NORESTART;
-}
-
 struct icss_iep *icss_iep_get_idx(struct device_node *np, int idx)
 {
 	struct platform_device *pdev;
@@ -805,8 +718,6 @@ void icss_iep_put(struct icss_iep *iep)
 	iep->client_np = NULL;
 	device_unlock(iep->dev);
 	put_device(iep->dev);
-	if (iep->cap_cmp_irq)
-		hrtimer_cancel(&iep->sync_timer);
 }
 EXPORT_SYMBOL_GPL(icss_iep_put);
 
@@ -857,12 +768,12 @@ int icss_iep_init(struct icss_iep *iep, const struct icss_iep_clockops *clkops,
 	    !(iep->plat_data->flags & ICSS_IEP_SLOW_COMPEN_REG_SUPPORT))
 		goto skip_perout;
 
-	if (iep->cap_cmp_irq || (iep->ops && iep->ops->perout_enable)) {
+	if (iep->ops && iep->ops->perout_enable) {
 		iep->ptp_info.n_per_out = 1;
 		iep->ptp_info.pps = 1;
 	}
 
-	if (iep->cap_cmp_irq || (iep->ops && iep->ops->extts_enable))
+	if (iep->ops && iep->ops->extts_enable)
 		iep->ptp_info.n_ext_ts = 2;
 
 skip_perout:
@@ -902,7 +813,6 @@ static int icss_iep_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct icss_iep *iep;
 	struct clk *iep_clk;
-	int ret;
 
 	iep = devm_kzalloc(dev, sizeof(*iep), GFP_KERNEL);
 	if (!iep)
@@ -912,23 +822,6 @@ static int icss_iep_probe(struct platform_device *pdev)
 	iep->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(iep->base))
 		return -ENODEV;
-
-	iep->cap_cmp_irq = platform_get_irq_byname_optional(pdev, "iep_cap_cmp");
-	if (iep->cap_cmp_irq < 0) {
-		if (iep->cap_cmp_irq == -EPROBE_DEFER)
-			return iep->cap_cmp_irq;
-		iep->cap_cmp_irq = 0;
-	} else {
-		ret = devm_request_irq(dev, iep->cap_cmp_irq,
-				       icss_iep_cap_cmp_handler, IRQF_TRIGGER_HIGH,
-				       "iep_cap_cmp", iep);
-		if (ret) {
-			dev_err(iep->dev, "Request irq failed for cap_cmp %d\n", ret);
-			return ret;
-		}
-		hrtimer_init(&iep->sync_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-		iep->sync_timer.function = icss_iep_sync0_work;
-	}
 
 	iep_clk = devm_clk_get(dev, NULL);
 	if (IS_ERR(iep_clk))
@@ -1044,109 +937,10 @@ static const struct icss_iep_plat_data am654_icss_iep_plat_data = {
 	.config = &am654_icss_iep_regmap_config,
 };
 
-static const struct icss_iep_plat_data am57xx_icss_iep_plat_data = {
-	.flags = ICSS_IEP_64BIT_COUNTER_SUPPORT |
-		 ICSS_IEP_SLOW_COMPEN_REG_SUPPORT,
-	.reg_offs = {
-		[ICSS_IEP_GLOBAL_CFG_REG] = 0x00,
-		[ICSS_IEP_COMPEN_REG] = 0x08,
-		[ICSS_IEP_SLOW_COMPEN_REG] = 0x0C,
-		[ICSS_IEP_COUNT_REG0] = 0x10,
-		[ICSS_IEP_COUNT_REG1] = 0x14,
-		[ICSS_IEP_CAPTURE_CFG_REG] = 0x18,
-		[ICSS_IEP_CAPTURE_STAT_REG] = 0x1c,
-
-		[ICSS_IEP_CAP6_RISE_REG0] = 0x50,
-		[ICSS_IEP_CAP6_RISE_REG1] = 0x54,
-
-		[ICSS_IEP_CAP7_RISE_REG0] = 0x60,
-		[ICSS_IEP_CAP7_RISE_REG1] = 0x64,
-
-		[ICSS_IEP_CMP_CFG_REG] = 0x70,
-		[ICSS_IEP_CMP_STAT_REG] = 0x74,
-		[ICSS_IEP_CMP0_REG0] = 0x78,
-		[ICSS_IEP_CMP0_REG1] = 0x7c,
-		[ICSS_IEP_CMP1_REG0] = 0x80,
-		[ICSS_IEP_CMP1_REG1] = 0x84,
-
-		[ICSS_IEP_CMP8_REG0] = 0xc0,
-		[ICSS_IEP_CMP8_REG1] = 0xc4,
-		[ICSS_IEP_SYNC_CTRL_REG] = 0x180,
-		[ICSS_IEP_SYNC0_STAT_REG] = 0x188,
-		[ICSS_IEP_SYNC1_STAT_REG] = 0x18c,
-		[ICSS_IEP_SYNC_PWIDTH_REG] = 0x190,
-		[ICSS_IEP_SYNC0_PERIOD_REG] = 0x194,
-		[ICSS_IEP_SYNC1_DELAY_REG] = 0x198,
-		[ICSS_IEP_SYNC_START_REG] = 0x19c,
-	},
-	.config = &am654_icss_iep_regmap_config,
-};
-
-static bool am335x_icss_iep_valid_reg(struct device *dev, unsigned int reg)
-{
-	switch (reg) {
-	case ICSS_IEP_GLOBAL_CFG_REG ... ICSS_IEP_CAPTURE_STAT_REG:
-	case ICSS_IEP_CAP6_RISE_REG0:
-	case ICSS_IEP_CMP_CFG_REG ... ICSS_IEP_CMP0_REG0:
-	case ICSS_IEP_CMP8_REG0 ... ICSS_IEP_SYNC_START_REG:
-		return true;
-	default:
-		return false;
-	}
-
-	return false;
-}
-
-static struct regmap_config am335x_icss_iep_regmap_config = {
-	.name = "icss iep",
-	.reg_stride = 1,
-	.reg_write = icss_iep_regmap_write,
-	.reg_read = icss_iep_regmap_read,
-	.writeable_reg = am335x_icss_iep_valid_reg,
-	.readable_reg = am335x_icss_iep_valid_reg,
-};
-
-static const struct icss_iep_plat_data am335x_icss_iep_plat_data = {
-	.flags = 0,
-	.reg_offs = {
-		[ICSS_IEP_GLOBAL_CFG_REG] = 0x00,
-		[ICSS_IEP_COMPEN_REG] = 0x08,
-		[ICSS_IEP_COUNT_REG0] = 0x0C,
-		[ICSS_IEP_CAPTURE_CFG_REG] = 0x10,
-		[ICSS_IEP_CAPTURE_STAT_REG] = 0x14,
-
-		[ICSS_IEP_CAP6_RISE_REG0] = 0x30,
-
-		[ICSS_IEP_CAP7_RISE_REG0] = 0x38,
-
-		[ICSS_IEP_CMP_CFG_REG] = 0x40,
-		[ICSS_IEP_CMP_STAT_REG] = 0x44,
-		[ICSS_IEP_CMP0_REG0] = 0x48,
-
-		[ICSS_IEP_CMP8_REG0] = 0x88,
-		[ICSS_IEP_SYNC_CTRL_REG] = 0x100,
-		[ICSS_IEP_SYNC0_STAT_REG] = 0x108,
-		[ICSS_IEP_SYNC1_STAT_REG] = 0x10C,
-		[ICSS_IEP_SYNC_PWIDTH_REG] = 0x110,
-		[ICSS_IEP_SYNC0_PERIOD_REG] = 0x114,
-		[ICSS_IEP_SYNC1_DELAY_REG] = 0x118,
-		[ICSS_IEP_SYNC_START_REG] = 0x11C,
-	},
-	.config = &am335x_icss_iep_regmap_config,
-};
-
 static const struct of_device_id icss_iep_of_match[] = {
 	{
 		.compatible = "ti,am654-icss-iep",
 		.data = &am654_icss_iep_plat_data,
-	},
-	{
-		.compatible = "ti,am5728-icss-iep",
-		.data = &am57xx_icss_iep_plat_data,
-	},
-	{
-		.compatible = "ti,am3356-icss-iep",
-		.data = &am335x_icss_iep_plat_data,
 	},
 	{},
 };
@@ -1161,6 +955,7 @@ static struct platform_driver icss_iep_driver = {
 };
 module_platform_driver(icss_iep_driver);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("TI ICSS IEP driver");
 MODULE_AUTHOR("Roger Quadros <rogerq@ti.com>");
+MODULE_AUTHOR("Md Danish Anwar <danishanwar@ti.com>");

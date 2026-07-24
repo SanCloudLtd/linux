@@ -87,7 +87,7 @@ static void imx390_init_formats(struct v4l2_subdev_state *state)
 {
 	struct v4l2_mbus_framefmt *format;
 
-	format = v4l2_state_get_stream_format(state, 0, 0);
+	format = v4l2_subdev_state_get_stream_format(state, 0, 0);
 	format->code = imx390_mbus_formats[0];
 	format->width = imx390_framesizes[0].width;
 	format->height = imx390_framesizes[0].height;
@@ -102,15 +102,11 @@ static int _imx390_set_routing(struct v4l2_subdev *sd,
 		{
 			.source_pad = 0,
 			.source_stream = 0,
-			.flags = V4L2_SUBDEV_ROUTE_FL_IMMUTABLE |
-				 V4L2_SUBDEV_ROUTE_FL_SOURCE |
-				 V4L2_SUBDEV_ROUTE_FL_ACTIVE,
+			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
 		},
 		{
 			.source_pad = 0,
 			.source_stream = 1,
-			.flags = V4L2_SUBDEV_ROUTE_FL_IMMUTABLE |
-				 V4L2_SUBDEV_ROUTE_FL_SOURCE,
 		}
 	};
 
@@ -135,11 +131,7 @@ static int imx390_init_cfg(struct v4l2_subdev *sd,
 {
 	int ret;
 
-	v4l2_subdev_lock_state(state);
-
 	ret = _imx390_set_routing(sd, state);
-
-	v4l2_subdev_unlock_state(state);
 
 	return ret;
 }
@@ -221,7 +213,7 @@ static int imx390_set_fmt(struct v4l2_subdev *sd,
 	v4l2_subdev_lock_state(state);
 
 	/* Update the stored format and return it. */
-	format = v4l2_state_get_stream_format(state, fmt->pad, fmt->stream);
+	format = v4l2_subdev_state_get_stream_format(state, fmt->pad, fmt->stream);
 
 	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && imx390->streaming) {
 		ret = -EBUSY;
@@ -251,9 +243,9 @@ static int imx390_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 	if (pad != 0)
 		return -EINVAL;
 
-	state = v4l2_subdev_lock_active_state(sd);
+	state = v4l2_subdev_lock_and_get_active_state(sd);
 
-	fmt = v4l2_state_get_stream_format(state, 0, 0);
+	fmt = v4l2_subdev_state_get_stream_format(state, 0, 0);
 	if (!fmt) {
 		ret = -EPIPE;
 		goto out;
@@ -293,11 +285,7 @@ static int imx390_set_routing(struct v4l2_subdev *sd,
 	if (routing->num_routes == 0 || routing->num_routes > 1)
 		return -EINVAL;
 
-	v4l2_subdev_lock_state(state);
-
 	ret = _imx390_set_routing(sd, state);
-
-	v4l2_subdev_unlock_state(state);
 
 	return ret;
 }
@@ -442,7 +430,7 @@ static void imx390_power_off(struct imx390 *imx390)
 {
 	if (imx390->xclr_gpio) {
 		gpiod_set_value_cansleep(imx390->xclr_gpio, 1);
-		/* Wait for the XCLR pin to be Low for atleast 1 us */
+		/* Wait for the XCLR pin to be Low for at least 1 us */
 		usleep_range(1, 10);
 	}
 
@@ -671,7 +659,7 @@ static int imx390_probe(struct i2c_client *client)
 
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
 		     V4L2_SUBDEV_FL_HAS_EVENTS |
-		     V4L2_SUBDEV_FL_MULTIPLEXED;
+		     V4L2_SUBDEV_FL_STREAMS;
 
 	/* Initialize the media entity. */
 	imx390->pad.flags = MEDIA_PAD_FL_SOURCE;
@@ -851,7 +839,7 @@ static int __maybe_unused imx390_resume(struct device *dev)
 	return 0;
 }
 
-static int imx390_remove(struct i2c_client *client)
+static void imx390_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct imx390 *imx390 = to_imx390(sd);
@@ -865,8 +853,6 @@ static int imx390_remove(struct i2c_client *client)
 	pm_runtime_disable(imx390->dev);
 	pm_runtime_dont_use_autosuspend(imx390->dev);
 	pm_runtime_set_suspended(imx390->dev);
-
-	return 0;
 }
 
 static const struct dev_pm_ops imx390_pm_ops = {
@@ -897,4 +883,4 @@ module_i2c_driver(imx390_i2c_driver);
 MODULE_DESCRIPTION("Camera Sensor Driver for Sony IMX390");
 MODULE_AUTHOR("Apurva Nandan <a-nandan@ti.com>");
 MODULE_AUTHOR("Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

@@ -101,7 +101,6 @@ static int fec_ptp_enable_pps(struct fec_enet_private *fep, uint enable)
 	u32 val, tempval;
 	struct timespec64 ts;
 	u64 ns;
-	val = 0;
 
 	if (fep->pps_enable == enable)
 		return 0;
@@ -264,18 +263,21 @@ void fec_ptp_start_cyclecounter(struct net_device *ndev)
 }
 
 /**
- * fec_ptp_adjfreq - adjust ptp cycle frequency
+ * fec_ptp_adjfine - adjust ptp cycle frequency
  * @ptp: the ptp clock structure
- * @ppb: parts per billion adjustment from base
+ * @scaled_ppm: scaled parts per million adjustment from base
  *
  * Adjust the frequency of the ptp cycle counter by the
- * indicated ppb from the base frequency.
+ * indicated amount from the base frequency.
+ *
+ * Scaled parts per million is ppm with a 16-bit binary fractional field.
  *
  * Because ENET hardware frequency adjust is complex,
  * using software method to do that.
  */
-static int fec_ptp_adjfreq(struct ptp_clock_info *ptp, s32 ppb)
+static int fec_ptp_adjfine(struct ptp_clock_info *ptp, long scaled_ppm)
 {
+	s32 ppb = scaled_ppm_to_ppb(scaled_ppm);
 	unsigned long flags;
 	int neg_adj = 0;
 	u32 i, tmp;
@@ -469,10 +471,6 @@ int fec_ptp_set(struct net_device *ndev, struct ifreq *ifr)
 	if (copy_from_user(&config, ifr->ifr_data, sizeof(config)))
 		return -EFAULT;
 
-	/* reserved for future extensions */
-	if (config.flags)
-		return -EINVAL;
-
 	switch (config.tx_type) {
 	case HWTSTAMP_TX_OFF:
 		fep->hwts_tx_en = 0;
@@ -583,7 +581,7 @@ void fec_ptp_init(struct platform_device *pdev, int irq_idx)
 	int ret;
 
 	fep->ptp_caps.owner = THIS_MODULE;
-	strlcpy(fep->ptp_caps.name, "fec ptp", sizeof(fep->ptp_caps.name));
+	strscpy(fep->ptp_caps.name, "fec ptp", sizeof(fep->ptp_caps.name));
 
 	fep->ptp_caps.max_adj = 250000000;
 	fep->ptp_caps.n_alarm = 0;
@@ -591,7 +589,7 @@ void fec_ptp_init(struct platform_device *pdev, int irq_idx)
 	fep->ptp_caps.n_per_out = 0;
 	fep->ptp_caps.n_pins = 0;
 	fep->ptp_caps.pps = 1;
-	fep->ptp_caps.adjfreq = fec_ptp_adjfreq;
+	fep->ptp_caps.adjfine = fec_ptp_adjfine;
 	fep->ptp_caps.adjtime = fec_ptp_adjtime;
 	fep->ptp_caps.gettime64 = fec_ptp_gettime;
 	fep->ptp_caps.settime64 = fec_ptp_settime;

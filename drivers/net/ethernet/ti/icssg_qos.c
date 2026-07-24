@@ -297,11 +297,6 @@ static int emac_setup_taprio(struct net_device *ndev, struct tc_taprio_qopt_offl
 int icssg_qos_ndo_setup_tc(struct net_device *ndev, enum tc_setup_type type,
 			   void *type_data)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (emac->prueth->is_sr1)
-		return -EOPNOTSUPP;
-
 	switch (type) {
 	case TC_SETUP_QDISC_TAPRIO:
 		return emac_setup_taprio(ndev, type_data);
@@ -315,9 +310,6 @@ static void icssg_qos_tas_init(struct net_device *ndev)
 	struct prueth_emac *emac = netdev_priv(ndev);
 	struct tas_config *tas = &emac->qos.tas.config;
 	bool need_setup = false;
-
-	if (emac->prueth->is_sr1)
-		return;
 
 	if (tas->state == TAS_STATE_ENABLE)
 		need_setup = true;

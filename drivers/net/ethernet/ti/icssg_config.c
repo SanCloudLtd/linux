@@ -1,24 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 /* ICSSG Ethernet driver
  *
- * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com
+ * Copyright (C) 2022 Texas Instruments Incorporated - https://www.ti.com
  */
 
+#include <linux/iopoll.h>
 #include <linux/regmap.h>
 #include <uapi/linux/if_ether.h>
 #include "icssg_config.h"
 #include "icssg_prueth.h"
 #include "icssg_switch_map.h"
-#include "icss_mii_rt.h"
+#include "icssg_mii_rt.h"
 
-/* TX IPG Values to be set for 100M and 1G link speeds.  These values are
+/* TX IPG Values to be set for 100M link speed. These values are
  * in ocp_clk cycles. So need change if ocp_clk is changed for a specific
  * h/w design.
  */
 
 /* IPG is in core_clk cycles */
-#define MII_RT_TX_IPG_100M_SR1	0x166
-#define MII_RT_TX_IPG_1G_SR1	0x1a
 #define MII_RT_TX_IPG_100M	0x17
 #define MII_RT_TX_IPG_1G	0xb
 
@@ -59,7 +58,7 @@
 
 #define ICSSG_CFG_DEFAULT	(ICSSG_CFG_TX_L1_EN | \
 				 ICSSG_CFG_TX_L2_EN | ICSSG_CFG_RX_L2_G_EN | \
-				 ICSSG_CFG_TX_PRU_EN | /* SR2.0 only */ \
+				 ICSSG_CFG_TX_PRU_EN | \
 				 ICSSG_CFG_SGMII_MODE)
 
 #define FDB_GEN_CFG1		0x60
@@ -74,6 +73,13 @@
 #define FDB_EN_ALL		(FDB_PRU0_EN | FDB_PRU1_EN | \
 				 FDB_HOST_EN | FDB_VLAN_EN)
 
+/**
+ * struct map - ICSSG Queue Map
+ * @queue: Queue number
+ * @pd_addr_start: Packet descriptor queue reserved memory
+ * @flags: Flags
+ * @special: Indicates whether this queue is a special queue or not
+ */
 struct map {
 	int queue;
 	u32 pd_addr_start;
@@ -81,7 +87,8 @@ struct map {
 	bool special;
 };
 
-struct map hwq_map[2][ICSSG_NUM_OTHER_QUEUES] = {
+/* Hardware queue map for ICSSG */
+const struct map hwq_map[2][ICSSG_NUM_OTHER_QUEUES] = {
 	{
 		{ PORT_HI_Q_SLICE0, PORT_DESC0_HI, 0x200000, 0 },
 		{ PORT_LO_Q_SLICE0, PORT_DESC0_LO, 0, 0 },
@@ -127,10 +134,11 @@ static void icssg_config_mii_init_switch(struct prueth_emac *emac)
 static void icssg_config_mii_init(struct prueth_emac *emac)
 {
 	struct prueth *prueth = emac->prueth;
-	struct regmap *mii_rt = prueth->mii_rt;
 	int slice = prueth_emac_slice(emac);
-	u32 txcfg_reg, pcnt_reg;
-	u32 txcfg;
+	u32 txcfg, txcfg_reg, pcnt_reg;
+	struct regmap *mii_rt;
+
+	mii_rt = prueth->mii_rt;
 
 	txcfg_reg = (slice == ICSS_MII0) ? PRUSS_MII_RT_TXCFG0 :
 				       PRUSS_MII_RT_TXCFG1;
@@ -140,7 +148,7 @@ static void icssg_config_mii_init(struct prueth_emac *emac)
 	txcfg = MII_TXCFG_DEFAULT;
 
 	/* In MII mode TX lines swapped inside ICSSG, so TX_MUX_SEL cfg need
-	 * to be swapped also comparing to RGMII mode. TODO: errata?
+	 * to be swapped also comparing to RGMII mode.
 	 */
 	if (emac->phy_if == PHY_INTERFACE_MODE_MII && slice == ICSS_MII0)
 		txcfg |= PRUSS_MII_RT_TXCFG_TX_MUX_SEL;
@@ -181,7 +189,7 @@ static void icssg_miig_queues_init(struct prueth *prueth, int slice)
 
 	pdword = (u32 *)pd;
 	for (j = 0; j < ICSSG_NUM_OTHER_QUEUES; j++) {
-		struct map *mp;
+		const struct map *mp;
 		int pd_size, num_pds;
 		u32 pdaddr;
 
@@ -216,80 +224,25 @@ void icssg_config_ipg(struct prueth_emac *emac)
 
 	switch (emac->speed) {
 	case SPEED_1000:
-		icssg_mii_update_ipg(prueth->mii_rt, slice, prueth->is_sr1 ?
-				     MII_RT_TX_IPG_1G_SR1 : MII_RT_TX_IPG_1G);
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_1G);
 		break;
 	case SPEED_100:
-		icssg_mii_update_ipg(prueth->mii_rt, slice, prueth->is_sr1 ?
-				     MII_RT_TX_IPG_100M_SR1 : MII_RT_TX_IPG_100M);
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_100M);
 		break;
 	case SPEED_10:
-		/* Firmware hardcodes IPG  for PG1. PG2 same as 100M */
-		if (!prueth->is_sr1)
-			icssg_mii_update_ipg(prueth->mii_rt, slice,
-					     MII_RT_TX_IPG_100M);
+		icssg_mii_update_ipg(prueth->mii_rt, slice, MII_RT_TX_IPG_100M);
 		break;
 	default:
 		/* Other links speeds not supported */
-		pr_err("Unsupported link speed\n");
+		netdev_err(emac->ndev, "Unsupported link speed\n");
 		return;
 	}
 }
 
-/* SR1: Set buffer sizes for the pools. There are 8 internal queues
- * implemented in firmware, but only 4 tx channels/threads in the Egress
- * direction to firmware. Need a high priority queue for management
- * messages since they shouldn't be blocked even during high traffic
- * situation. So use Q0-Q2 as data queues and Q3 as management queue
- * in the max case. However for ease of configuration, use the max
- * data queue + 1 for management message if we are not using max
- * case.
- *
- * Allocate 4 MTU buffers per data queue.  Firmware requires
- * pool sizes to be set for internal queues. Set the upper 5 queue
- * pool size to min size of 128 bytes since there are only 3 tx
- * data channels and management queue requires only minimum buffer.
- * i.e lower queues are used by driver and highest priority queue
- * from that is used for management message.
- */
-
-static int emac_egress_buf_pool_size[] = {
-	PRUETH_EMAC_BUF_POOL_SIZE_SR1, PRUETH_EMAC_BUF_POOL_SIZE_SR1,
-	PRUETH_EMAC_BUF_POOL_SIZE_SR1, PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1,
-	PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1, PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1,
-	PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1, PRUETH_EMAC_BUF_POOL_MIN_SIZE_SR1};
-
-void icssg_config_sr1(struct prueth *prueth, struct prueth_emac *emac,
-		      int slice)
-{
-	void __iomem *va;
-	struct icssg_config_sr1 *config;
-	int i, index;
-
-	va = prueth->shram.va + slice * ICSSG_CONFIG_OFFSET_SLICE1;
-	config = &prueth->config[slice];
-	memset(config, 0, sizeof(*config));
-	config->addr_lo = cpu_to_le32(lower_32_bits(prueth->msmcram.pa));
-	config->addr_hi = cpu_to_le32(upper_32_bits(prueth->msmcram.pa));
-	config->num_tx_threads = 0;
-	config->rx_flow_id = emac->rx_flow_id_base; /* flow id for host port */
-	config->rx_mgr_flow_id = emac->rx_mgm_flow_id_base; /* for mgm ch */
-	config->rand_seed = get_random_int();
-
-	for (i = PRUETH_EMAC_BUF_POOL_START_SR1; i < PRUETH_NUM_BUF_POOLS_SR1;
-	     i++) {
-		index =  i - PRUETH_EMAC_BUF_POOL_START_SR1;
-		config->tx_buf_sz[i] =
-			cpu_to_le32(emac_egress_buf_pool_size[index]);
-	}
-
-	memcpy_toio(va, &prueth->config[slice], sizeof(prueth->config[slice]));
-}
-
 static void emac_r30_cmd_init(struct prueth_emac *emac)
 {
-	int i;
 	struct icssg_r30_cmd *p;
+	int i;
 
 	p = emac->dram.va + MGR_R30_CMD_OFFSET;
 
@@ -300,8 +253,8 @@ static void emac_r30_cmd_init(struct prueth_emac *emac)
 static int emac_r30_is_done(struct prueth_emac *emac)
 {
 	const struct icssg_r30_cmd *p;
-	int i;
 	u32 cmd;
+	int i;
 
 	p = emac->dram.va + MGR_R30_CMD_OFFSET;
 
@@ -325,7 +278,7 @@ static int prueth_switch_buffer_setup(struct prueth_emac *emac)
 
 	addr = lower_32_bits(prueth->msmcram.pa);
 	if (slice)
-		addr += PRUETH_NUM_BUF_POOLS_SR2 * PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		addr += PRUETH_NUM_BUF_POOLS * PRUETH_EMAC_BUF_POOL_SIZE;
 
 	if (addr % SZ_64K) {
 		dev_warn(prueth->dev, "buffer pool needs to be 64KB aligned\n");
@@ -335,28 +288,28 @@ static int prueth_switch_buffer_setup(struct prueth_emac *emac)
 	bpool_cfg = emac->dram.va + BUFFER_POOL_0_ADDR_OFFSET;
 	/* workaround for f/w bug. bpool 0 needs to be initilalized */
 	for (i = 0;
-	     i <  PRUETH_NUM_BUF_POOLS_SR2;
+	     i <  PRUETH_NUM_BUF_POOLS;
 	     i++) {
 		bpool_cfg[i].addr = cpu_to_le32(addr);
-		bpool_cfg[i].len = cpu_to_le32(PRUETH_EMAC_BUF_POOL_SIZE_SR2);
-		addr += PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		bpool_cfg[i].len = cpu_to_le32(PRUETH_EMAC_BUF_POOL_SIZE);
+		addr += PRUETH_EMAC_BUF_POOL_SIZE;
 	}
 
 	if (!slice)
-		addr += PRUETH_NUM_BUF_POOLS_SR2 * PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		addr += PRUETH_NUM_BUF_POOLS * PRUETH_EMAC_BUF_POOL_SIZE;
 	else
-		addr += PRUETH_SW_NUM_BUF_POOLS_HOST_SR2 * PRUETH_SW_BUF_POOL_SIZE_HOST_SR2;
+		addr += PRUETH_SW_NUM_BUF_POOLS_HOST * PRUETH_SW_BUF_POOL_SIZE_HOST;
 
-	for (i = PRUETH_NUM_BUF_POOLS_SR2;
-	     i <  PRUETH_SW_NUM_BUF_POOLS_HOST_SR2 + PRUETH_NUM_BUF_POOLS_SR2;
+	for (i = PRUETH_NUM_BUF_POOLS;
+	     i <  PRUETH_SW_NUM_BUF_POOLS_HOST + PRUETH_NUM_BUF_POOLS;
 	     i++) {
 		bpool_cfg[i].addr = cpu_to_le32(addr);
-		bpool_cfg[i].len = cpu_to_le32(PRUETH_SW_BUF_POOL_SIZE_HOST_SR2);
-		addr += PRUETH_SW_BUF_POOL_SIZE_HOST_SR2;
+		bpool_cfg[i].len = cpu_to_le32(PRUETH_SW_BUF_POOL_SIZE_HOST);
+		addr += PRUETH_SW_BUF_POOL_SIZE_HOST;
 	}
 
 	if (!slice)
-		addr += PRUETH_SW_NUM_BUF_POOLS_HOST_SR2 * PRUETH_SW_BUF_POOL_SIZE_HOST_SR2;
+		addr += PRUETH_SW_NUM_BUF_POOLS_HOST * PRUETH_SW_BUF_POOL_SIZE_HOST;
 	else
 		addr += PRUETH_EMAC_RX_CTX_BUF_SIZE * 2;
 
@@ -394,7 +347,7 @@ static int prueth_emac_buffer_setup(struct prueth_emac *emac)
 
 	addr = lower_32_bits(prueth->msmcram.pa);
 	if (slice)
-		addr += PRUETH_NUM_BUF_POOLS_SR2 * PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		addr += PRUETH_NUM_BUF_POOLS * PRUETH_EMAC_BUF_POOL_SIZE;
 
 	if (addr % SZ_64K) {
 		dev_warn(prueth->dev, "buffer pool needs to be 64KB aligned\n");
@@ -406,16 +359,16 @@ static int prueth_emac_buffer_setup(struct prueth_emac *emac)
 	bpool_cfg[0].addr = cpu_to_le32(addr);
 	bpool_cfg[0].len = 0;
 
-	for (i = PRUETH_EMAC_BUF_POOL_START_SR2;
-	     i < (PRUETH_EMAC_BUF_POOL_START_SR2 + PRUETH_NUM_BUF_POOLS_SR2);
+	for (i = PRUETH_EMAC_BUF_POOL_START;
+	     i < PRUETH_EMAC_BUF_POOL_START + PRUETH_NUM_BUF_POOLS;
 	     i++) {
 		bpool_cfg[i].addr = cpu_to_le32(addr);
-		bpool_cfg[i].len = cpu_to_le32(PRUETH_EMAC_BUF_POOL_SIZE_SR2);
-		addr += PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		bpool_cfg[i].len = cpu_to_le32(PRUETH_EMAC_BUF_POOL_SIZE);
+		addr += PRUETH_EMAC_BUF_POOL_SIZE;
 	}
 
 	if (!slice)
-		addr += PRUETH_NUM_BUF_POOLS_SR2 * PRUETH_EMAC_BUF_POOL_SIZE_SR2;
+		addr += PRUETH_NUM_BUF_POOLS * PRUETH_EMAC_BUF_POOL_SIZE;
 	else
 		addr += PRUETH_EMAC_RX_CTX_BUF_SIZE * 2;
 
@@ -440,6 +393,9 @@ static int prueth_emac_buffer_setup(struct prueth_emac *emac)
 
 static void icssg_init_emac_mode(struct prueth *prueth)
 {
+	/* When the device is configured as a bridge and it is being brought back
+	 * to the emac mode, the host mac address has to be set as 0.
+	 */
 	u8 mac[ETH_ALEN] = { 0 };
 
 	if (prueth->emacs_initialized)
@@ -474,12 +430,11 @@ static void icssg_init_switch_mode(struct prueth *prueth)
 	icssg_set_pvid(prueth, prueth->default_vlan, PRUETH_PORT_HOST);
 }
 
-int icssg_config_sr2(struct prueth *prueth, struct prueth_emac *emac, int slice)
+int icssg_config(struct prueth *prueth, struct prueth_emac *emac, int slice)
 {
 	void *config = emac->dram.va + ICSSG_CONFIG_OFFSET;
-	u8 *cfg_byte_ptr = config;
 	struct icssg_flow_cfg *flow_cfg;
-	u32 mask;
+	u8 *cfg_byte_ptr = config;
 	int ret;
 
 	if (prueth->is_switch_mode)
@@ -510,8 +465,8 @@ int icssg_config_sr2(struct prueth *prueth, struct prueth_emac *emac, int slice)
 			  PRUSS_GPI_MODE_MII);
 
 	/* enable XFR shift for PRU and RTU */
-	mask = PRUSS_SPP_XFER_SHIFT_EN | PRUSS_SPP_RTU_XFR_SHIFT_EN;
-	pruss_cfg_update(prueth->pruss, PRUSS_CFG_SPP, mask, mask);
+	pruss_cfg_xfr_enable(prueth->pruss, PRU_TYPE_PRU, true);
+	pruss_cfg_xfr_enable(prueth->pruss, PRU_TYPE_RTU, true);
 
 	/* set C28 to 0x100 */
 	pru_rproc_set_ctable(prueth->pru[slice], PRU_C28, 0x100 << 8);
@@ -536,9 +491,8 @@ int icssg_config_sr2(struct prueth *prueth, struct prueth_emac *emac, int slice)
 	return 0;
 }
 
-/* commands to program ICSSG R30 registers */
-/* FIXME: fix hex magic numbers with macros */
-static struct icssg_r30_cmd emac_r32_bitmask[] = {
+/* Bitmask for ICSSG r30 commands */
+static const struct icssg_r30_cmd emac_r32_bitmask[] = {
 	{{0xffff0004, 0xffff0100, 0xffff0100, EMAC_NONE}},	/* EMAC_PORT_DISABLE */
 	{{0xfffb0040, 0xfeff0200, 0xfeff0200, EMAC_NONE}},	/* EMAC_PORT_BLOCK */
 	{{0xffbb0000, 0xfcff0000, 0xdcff0000, EMAC_NONE}},	/* EMAC_PORT_FORWARD */
@@ -565,7 +519,7 @@ int emac_set_port_state(struct prueth_emac *emac,
 {
 	struct icssg_r30_cmd *p;
 	int ret = -ETIMEDOUT;
-	int timeout = 10;
+	int done = 0;
 	int i;
 
 	p = emac->dram.va + MGR_R30_CMD_OFFSET;
@@ -582,15 +536,8 @@ int emac_set_port_state(struct prueth_emac *emac,
 		writel(emac_r32_bitmask[cmd].cmd[i], &p->cmd[i]);
 
 	/* wait for done */
-	while (timeout) {
-		if (emac_r30_is_done(emac)) {
-			ret = 0;
-			break;
-		}
-
-		usleep_range(1000, 2000);
-		timeout--;
-	}
+	ret = read_poll_timeout(emac_r30_is_done, done, done == 1,
+				1000, 10000, false, emac);
 
 	if (ret == -ETIMEDOUT)
 		netdev_err(emac->ndev, "timeout waiting for command done\n");
@@ -604,9 +551,6 @@ void icssg_config_set_speed(struct prueth_emac *emac)
 {
 	u8 fw_speed;
 
-	if (emac->is_sr1)
-		return;
-
 	switch (emac->speed) {
 	case SPEED_1000:
 		fw_speed = FW_LINK_SPEED_1G;
@@ -619,7 +563,7 @@ void icssg_config_set_speed(struct prueth_emac *emac)
 		break;
 	default:
 		/* Other links speeds not supported */
-		pr_err("Unsupported link speed\n");
+		netdev_err(emac->ndev, "Unsupported link speed\n");
 		return;
 	}
 
@@ -629,27 +573,14 @@ void icssg_config_set_speed(struct prueth_emac *emac)
 	writeb(fw_speed, emac->dram.va + PORT_LINK_SPEED_OFFSET);
 }
 
-static void icssg_config_half_duplex_sr1(struct prueth_emac *emac)
-{
-	int slice = prueth_emac_slice(emac);
-	struct icssg_config_sr1 *config;
-	u32 val = get_random_int();
-	void __iomem *va;
-
-	va = emac->prueth->shram.va + slice * ICSSG_CONFIG_OFFSET_SLICE1;
-	config = (struct icssg_config_sr1 *)va;
-
-	writel(val, &config->rand_seed);
-}
-
 void icssg_config_half_duplex(struct prueth_emac *emac)
 {
 	u32 val;
 
-	if (emac->is_sr1)
-		icssg_config_half_duplex_sr1(emac);
+	if (!emac->half_duplex)
+		return;
 
-	val = get_random_int();
+	val = get_random_u32();
 	writel(val, emac->dram.va + HD_RAND_SEED_OFFSET);
 }
 

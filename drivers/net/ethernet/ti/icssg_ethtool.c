@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Texas Instruments ICSSG Ethernet driver
  *
- * Copyright (C) 2018-2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2018-2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  */
 
 #include "icssg_prueth.h"
 #include <linux/regmap.h>
 
-#define STATS_TIME_LIMIT_MS 25000000
-
-static u32 stats_base[] = {	0x54c,	/* Slice 0 stats start */
-				0xb18,	/* Slice 1 stats start */
+#define STATS_TIME_LIMIT_1G_MS    25000    /* 25 seconds @ 1G */
+static const u32 stats_base[] = {	0x54c,	/* Slice 0 stats start */
+					0xb18,	/* Slice 1 stats start */
 };
 
+/* ICSSG MIIG_STATS registers */
 struct miig_stats_regs {
 	/* Rx */
 	u32 rx_good_frames;
@@ -85,6 +85,11 @@ struct miig_stats_regs {
 	offsetof(struct miig_stats_regs, field),	\
 }
 
+/**
+ * struct icssg_stats - ICSSG Stats structure
+ * @name: Stats name
+ * @offset: ICSSG stats register offset
+ */
 struct icssg_stats {
 	char name[ETH_GSTRING_LEN];
 	u32 offset;
@@ -161,10 +166,9 @@ static void emac_get_drvinfo(struct net_device *ndev,
 	struct prueth_emac *emac = netdev_priv(ndev);
 	struct prueth *prueth = emac->prueth;
 
-	strlcpy(info->driver, dev_driver_string(prueth->dev),
+	strscpy(info->driver, dev_driver_string(prueth->dev),
 		sizeof(info->driver));
-	/* TODO: info->fw_version */
-	strlcpy(info->bus_info, dev_name(prueth->dev), sizeof(info->bus_info));
+	strscpy(info->bus_info, dev_name(prueth->dev), sizeof(info->bus_info));
 }
 
 static u32 emac_get_msglevel(struct net_device *ndev)
@@ -184,79 +188,51 @@ static void emac_set_msglevel(struct net_device *ndev, u32 value)
 static int emac_get_link_ksettings(struct net_device *ndev,
 				   struct ethtool_link_ksettings *ecmd)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (!emac->phydev)
-		return -EOPNOTSUPP;
-
-	phy_ethtool_ksettings_get(emac->phydev, ecmd);
-	return 0;
+	return phy_ethtool_get_link_ksettings(ndev, ecmd);
 }
 
 static int emac_set_link_ksettings(struct net_device *ndev,
 				   const struct ethtool_link_ksettings *ecmd)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (!emac->phydev || phy_is_pseudo_fixed_link(emac->phydev))
-		return -EOPNOTSUPP;
-
-	return phy_ethtool_ksettings_set(emac->phydev, ecmd);
+	return phy_ethtool_set_link_ksettings(ndev, ecmd);
 }
 
 static int emac_get_eee(struct net_device *ndev, struct ethtool_eee *edata)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (!emac->phydev || phy_is_pseudo_fixed_link(emac->phydev))
+	if (!ndev->phydev)
 		return -EOPNOTSUPP;
 
-	return phy_ethtool_get_eee(emac->phydev, edata);
+	return phy_ethtool_get_eee(ndev->phydev, edata);
 }
 
 static int emac_set_eee(struct net_device *ndev, struct ethtool_eee *edata)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (!emac->phydev || phy_is_pseudo_fixed_link(emac->phydev))
+	if (!ndev->phydev)
 		return -EOPNOTSUPP;
 
-	return phy_ethtool_set_eee(emac->phydev, edata);
+	return phy_ethtool_set_eee(ndev->phydev, edata);
 }
 
 static int emac_nway_reset(struct net_device *ndev)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	if (!emac->phydev || phy_is_pseudo_fixed_link(emac->phydev))
-		return -EOPNOTSUPP;
-
-	return genphy_restart_aneg(emac->phydev);
+	return phy_ethtool_nway_reset(ndev);
 }
 
-/* Ethtool priv_flags for IET/Frame Preemption configuration.
- * TODO: This is a temporary solution until upstream interface
- * is available.
- */
+#define EMAC_PRIV_IET_FRAME_PREEMPTION  BIT(0)
+#define EMAC_PRIV_IET_MAC_VERIFY        BIT(1)
+
 static const char emac_ethtool_priv_flags[][ETH_GSTRING_LEN] = {
-#define EMAC_PRIV_IET_FRAME_PREEMPTION	BIT(0)
 	"iet-frame-preemption",
-#define EMAC_PRIV_IET_MAC_VERIFY		BIT(1)
 	"iet-mac-verify",
 };
 
 static int emac_get_sset_count(struct net_device *ndev, int stringset)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-	struct prueth *prueth = emac->prueth;
-
 	switch (stringset) {
 	case ETH_SS_STATS:
 		return ARRAY_SIZE(icssg_ethtool_stats);
 	case ETH_SS_PRIV_FLAGS:
-		if (!prueth->is_sr1)
-			return ARRAY_SIZE(emac_ethtool_priv_flags);
-		return -EOPNOTSUPP;
+		return ARRAY_SIZE(emac_ethtool_priv_flags);
 	default:
 		return -EOPNOTSUPP;
 	}
@@ -264,8 +240,6 @@ static int emac_get_sset_count(struct net_device *ndev, int stringset)
 
 static void emac_get_strings(struct net_device *ndev, u32 stringset, u8 *data)
 {
-	struct prueth_emac *emac = netdev_priv(ndev);
-	struct prueth *prueth = emac->prueth;
 	u8 *p = data;
 	int i;
 
@@ -278,9 +252,6 @@ static void emac_get_strings(struct net_device *ndev, u32 stringset, u8 *data)
 		}
 		break;
 	case ETH_SS_PRIV_FLAGS:
-		if (prueth->is_sr1)
-			return;
-
 		for (i = 0; i < ARRAY_SIZE(emac_ethtool_priv_flags); i++) {
 			memcpy(p, emac_ethtool_priv_flags[i],
 			       ETH_GSTRING_LEN);
@@ -319,17 +290,7 @@ void emac_stats_work_handler(struct work_struct *work)
 	emac_update_hardware_stats(emac);
 
 	queue_delayed_work(system_long_wq, &emac->stats_work,
-			   msecs_to_jiffies(STATS_TIME_LIMIT_MS / emac->speed));
-}
-
-void emac_ethtool_stats_init(struct prueth_emac *emac)
-{
-	if (!emac->stats) {
-		struct device *dev = emac->prueth->dev;
-
-		emac->stats = devm_kzalloc(dev, ARRAY_SIZE(icssg_ethtool_stats) *
-					   sizeof(*emac->stats), GFP_KERNEL);
-	}
+			   msecs_to_jiffies((STATS_TIME_LIMIT_1G_MS * 1000) / emac->speed));
 }
 
 static void emac_get_ethtool_stats(struct net_device *ndev,
@@ -364,29 +325,10 @@ static int emac_get_ts_info(struct net_device *ndev,
 	return 0;
 }
 
-static void emac_get_channels(struct net_device *ndev,
-			      struct ethtool_channels *ch)
-{
-	struct prueth_emac *emac = netdev_priv(ndev);
-
-	ch->max_rx = 1;
-	/* SR1 use high priority channel for management messages */
-	ch->max_tx = emac->is_sr1 ? PRUETH_MAX_TX_QUEUES - 1 :
-				    PRUETH_MAX_TX_QUEUES;
-	ch->rx_count = 1;
-	ch->tx_count = emac->is_sr1 ? emac->tx_ch_num - 1 :
-				      emac->tx_ch_num;
-}
-
 static int emac_set_channels(struct net_device *ndev,
 			     struct ethtool_channels *ch)
 {
 	struct prueth_emac *emac = netdev_priv(ndev);
-
-	/* verify we have at least one channel in each direction */
-	/* TODO: remove below check before sending to LKML */
-	if (!ch->rx_count || !ch->tx_count)
-		return -EINVAL;
 
 	/* Check if interface is up. Can change the num queues when
 	 * the interface is down.
@@ -395,11 +337,19 @@ static int emac_set_channels(struct net_device *ndev,
 		return -EBUSY;
 
 	emac->tx_ch_num = ch->tx_count;
-	/* highest channel number for management messaging on SR1 */
-	if (emac->is_sr1)
-		emac->tx_ch_num++;
 
 	return 0;
+}
+
+static void emac_get_channels(struct net_device *ndev,
+			      struct ethtool_channels *ch)
+{
+	struct prueth_emac *emac = netdev_priv(ndev);
+
+	ch->max_rx = 1;
+	ch->max_tx = PRUETH_MAX_TX_QUEUES;
+	ch->rx_count = 1;
+	ch->tx_count = emac->tx_ch_num;
 }
 
 /* TODO : This is temporary until a formal ethtool interface become available
@@ -410,9 +360,6 @@ static u32 emac_get_ethtool_priv_flags(struct net_device *ndev)
 	struct prueth_emac *emac = netdev_priv(ndev);
 	struct prueth_qos_iet *iet = &emac->qos.iet;
 	u32 priv_flags = 0;
-
-	if (emac->is_sr1)
-		return priv_flags;
 
 	/* Port specific flags */
 	if (iet->fpe_configured)
@@ -428,9 +375,6 @@ static int emac_set_ethtool_priv_flags(struct net_device *ndev, u32 flags)
 	struct prueth_emac *emac = netdev_priv(ndev);
 	struct prueth_qos_iet *iet = &emac->qos.iet;
 	int iet_fpe, mac_verify;
-
-	if (emac->is_sr1)
-		return -EOPNOTSUPP;
 
 	iet_fpe = !!(flags & EMAC_PRIV_IET_FRAME_PREEMPTION);
 	mac_verify = !!(flags & EMAC_PRIV_IET_MAC_VERIFY);
@@ -459,12 +403,11 @@ const struct ethtool_ops icssg_ethtool_ops = {
 	.get_msglevel = emac_get_msglevel,
 	.set_msglevel = emac_set_msglevel,
 	.get_sset_count = emac_get_sset_count,
-	.get_strings = emac_get_strings,
 	.get_ethtool_stats = emac_get_ethtool_stats,
+	.get_strings = emac_get_strings,
 	.get_ts_info = emac_get_ts_info,
 	.get_priv_flags = emac_get_ethtool_priv_flags,
 	.set_priv_flags = emac_set_ethtool_priv_flags,
-
 	.get_channels = emac_get_channels,
 	.set_channels = emac_set_channels,
 	.get_link_ksettings = emac_get_link_ksettings,

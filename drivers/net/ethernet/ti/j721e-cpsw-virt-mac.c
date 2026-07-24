@@ -270,7 +270,7 @@ static int virt_cpsw_nuss_ndo_stop(struct net_device *ndev)
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
-	ret = rdev_ops->unregister_mac(common->rdev, ndev->dev_addr,
+	ret = rdev_ops->unregister_mac(common->rdev, (void *)ndev->dev_addr,
 				       common->rdev_rx_flow_id);
 	if (ret)
 		dev_err(dev, "unregister_mac rpmsg - fail %d\n", ret);
@@ -298,7 +298,7 @@ static int virt_cpsw_nuss_ndo_open(struct net_device *ndev)
 		return ret;
 
 	ret = rdev_ops->register_mac(common->rdev,
-				     ndev->dev_addr,
+				     (void *)ndev->dev_addr,
 				     common->rdev_rx_flow_id);
 	if (ret) {
 		dev_err(dev, "register_mac rpmsg - fail %d\n", ret);
@@ -848,12 +848,12 @@ static void virt_cpsw_nuss_ndo_get_stats(struct net_device *dev,
 
 		cpu_stats = per_cpu_ptr(ndev_priv->stats, cpu);
 		do {
-			start = u64_stats_fetch_begin_irq(&cpu_stats->syncp);
+			start = u64_stats_fetch_begin(&cpu_stats->syncp);
 			rx_packets = cpu_stats->rx_packets;
 			rx_bytes   = cpu_stats->rx_bytes;
 			tx_packets = cpu_stats->tx_packets;
 			tx_bytes   = cpu_stats->tx_bytes;
-		} while (u64_stats_fetch_retry_irq(&cpu_stats->syncp, start));
+		} while (u64_stats_fetch_retry(&cpu_stats->syncp, start));
 
 		stats->rx_packets += rx_packets;
 		stats->rx_bytes   += rx_bytes;
@@ -964,13 +964,13 @@ static void virt_cpsw_nuss_get_drvinfo(struct net_device *ndev,
 
 	rdev_ops = common->rdev_switch_ops;
 
-	strlcpy(info->driver, dev_driver_string(common->dev),
+	strscpy(info->driver, dev_driver_string(common->dev),
 		sizeof(info->driver));
-	strlcpy(info->version, VIRT_CPSW_DRV_VER, sizeof(info->version));
-	strlcpy(info->bus_info, dev_name(common->dev), sizeof(info->bus_info));
+	strscpy(info->version, VIRT_CPSW_DRV_VER, sizeof(info->version));
+	strscpy(info->bus_info, dev_name(common->dev), sizeof(info->bus_info));
 
 	rdev_ops->get_fw_ver(common->rdev, fw_version, ETHTOOL_FWVERS_LEN);
-	strlcpy(info->fw_version, fw_version, ETHTOOL_FWVERS_LEN);
+	strscpy(info->fw_version, fw_version, ETHTOOL_FWVERS_LEN);
 }
 
 static const char virt_cpsw_nuss_ethtool_priv_flags[][ETH_GSTRING_LEN] = {
@@ -1052,7 +1052,9 @@ static void virt_cpsw_nuss_self_test(struct net_device *ndev,
 	}
 }
 
-static int virt_cpsw_nuss_get_coalesce(struct net_device *ndev, struct ethtool_coalesce *coal)
+static int virt_cpsw_nuss_get_coalesce(struct net_device *ndev, struct ethtool_coalesce *coal,
+				       struct kernel_ethtool_coalesce *kernel_coal,
+				       struct netlink_ext_ack *extack)
 {
 	struct virt_cpsw_common *common = virt_ndev_to_common(ndev);
 
@@ -1061,7 +1063,9 @@ static int virt_cpsw_nuss_get_coalesce(struct net_device *ndev, struct ethtool_c
 	return 0;
 }
 
-static int virt_cpsw_nuss_set_coalesce(struct net_device *ndev, struct ethtool_coalesce *coal)
+static int virt_cpsw_nuss_set_coalesce(struct net_device *ndev, struct ethtool_coalesce *coal,
+				       struct kernel_ethtool_coalesce *kernel_coal,
+				       struct netlink_ext_ack *extack)
 {
 	struct virt_cpsw_common *common = virt_ndev_to_common(ndev);
 
@@ -1267,7 +1271,7 @@ static int virt_cpsw_nuss_of(struct virt_cpsw_common *common)
 	struct device *dev = common->dev;
 	struct device_node *port_np;
 	struct virt_cpsw_port *port;
-	const void *mac_addr;
+	u8 *mac_addr;
 	int ret;
 
 	ret = of_property_read_u32(dev->of_node, "ti,psil-base",
@@ -1277,7 +1281,7 @@ static int virt_cpsw_nuss_of(struct virt_cpsw_common *common)
 		return ret;
 	}
 
-	port_np = of_get_child_by_name(dev->of_node, "virt_emac_port");
+	port_np = of_get_child_by_name(dev->of_node, "virt-emac-port");
 	if (!port_np)
 		return -ENOENT;
 
@@ -1285,8 +1289,8 @@ static int virt_cpsw_nuss_of(struct virt_cpsw_common *common)
 	port->common = common;
 	port->name = of_get_property(port_np, "ti,label", NULL);
 
-	mac_addr = of_get_mac_address(port_np);
-	if (!IS_ERR(mac_addr))
+	ret = of_get_mac_address(port_np, mac_addr);
+	if (!ret)
 		ether_addr_copy(port->local_mac_addr, mac_addr);
 
 	of_node_put(port_np);
@@ -1355,9 +1359,9 @@ static int virt_cpsw_nuss_init_ndev(struct virt_cpsw_common *common)
 	SET_NETDEV_DEV(port->ndev, dev);
 
 	if (is_valid_ether_addr(port->local_mac_addr))
-		ether_addr_copy(port->ndev->dev_addr, port->local_mac_addr);
+		eth_hw_addr_set(port->ndev, port->local_mac_addr);
 	else if (is_valid_ether_addr(common->rdev_mac_addr))
-		ether_addr_copy(port->ndev->dev_addr, common->rdev_mac_addr);
+		eth_hw_addr_set(port->ndev, common->rdev_mac_addr);
 
 	port->ndev->min_mtu = VIRT_CPSW_MIN_PACKET_SIZE;
 	port->ndev->max_mtu = VIRT_CPSW_MAX_PACKET_SIZE;
@@ -1383,10 +1387,10 @@ static int virt_cpsw_nuss_init_ndev(struct virt_cpsw_common *common)
 		return ret;
 	}
 
-	netif_tx_napi_add(port->ndev, &common->napi_tx,
-			  virt_cpsw_nuss_tx_poll, NAPI_POLL_WEIGHT);
+	netif_napi_add_tx(port->ndev, &common->napi_tx,
+			  virt_cpsw_nuss_tx_poll);
 	netif_napi_add(port->ndev, &common->napi_rx,
-		       virt_cpsw_nuss_rx_poll, NAPI_POLL_WEIGHT);
+		       virt_cpsw_nuss_rx_poll);
 
 	hrtimer_init(&common->tx_hrtimer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_PINNED);
 	common->tx_hrtimer.function = &virt_cpsw_nuss_tx_timer_callback;
@@ -1434,7 +1438,7 @@ static int virt_cpsw_inetaddr_event(struct notifier_block *unused,
 	switch (event) {
 	case NETDEV_UP:
 		ret = rdev_ops->register_ipv4(common->rdev,
-					      ndev->dev_addr,
+					      (void *)ndev->dev_addr,
 					      ifa->ifa_address);
 		if (ret)
 			dev_err(common->dev, "register_ipv4 rpmsg - fail %d\n",
@@ -1609,6 +1613,6 @@ static struct platform_driver virt_cpsw_nuss_driver = {
 
 module_platform_driver(virt_cpsw_nuss_driver);
 
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Grygorii Strashko <grygorii.strashko@ti.com>");
 MODULE_DESCRIPTION("TI J721E VIRT CPSW Ethernet mac driver");

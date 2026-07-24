@@ -240,7 +240,7 @@ static void wave5_vpu_dec_start_decode(struct vpu_instance *inst)
 	memset(&pic_param, 0, sizeof(struct dec_param));
 
 	if (inst->state == VPU_INST_STATE_INIT_SEQ) {
-		u32 non_linear_num = inst->dst_buf_count;
+		u32 non_linear_num = inst->min_dst_buf_count;
 		u32 linear_num = inst->dst_buf_count;
 		u32 stride = inst->dst_fmt.width;
 
@@ -877,7 +877,7 @@ static int wave5_vpu_dec_queue_setup(struct vb2_queue *q, unsigned int *num_buff
 			inst->dst_buf_count = *num_buffers;
 
 		*num_buffers = inst->dst_buf_count;
-		non_linear_num = inst->dst_buf_count;
+		non_linear_num = inst->min_dst_buf_count;
 
 		for (i = 0; i < non_linear_num; i++) {
 			struct frame_buffer *frame = &inst->frame_buf[i];
@@ -1080,7 +1080,7 @@ static void wave5_vpu_dec_buf_queue_dst(struct vb2_buffer *vb)
 	if (inst->state == VPU_INST_STATE_INIT_SEQ) {
 		dma_addr_t buf_addr_y = 0, buf_addr_cb = 0, buf_addr_cr = 0;
 		u32 buf_size = 0;
-		u32 non_linear_num = inst->dst_buf_count;
+		u32 non_linear_num = inst->min_dst_buf_count;
 		u32 fb_stride = inst->dst_fmt.width;
 		u32 luma_size = fb_stride * inst->dst_fmt.height;
 		u32 chroma_size = (fb_stride / 2) * (inst->dst_fmt.height / 2);
@@ -1323,7 +1323,6 @@ static int wave5_vpu_open_dec(struct file *filp)
 	v4l2_fh_add(&inst->v4l2_fh);
 
 	INIT_LIST_HEAD(&inst->list);
-	list_add_tail(&inst->list, &dev->instances);
 
 	inst->v4l2_m2m_dev = v4l2_m2m_init(&wave5_vpu_dec_m2m_ops);
 	if (IS_ERR(inst->v4l2_m2m_dev)) {
@@ -1360,18 +1359,6 @@ static int wave5_vpu_open_dec(struct file *filp)
 	inst->xfer_func = V4L2_XFER_FUNC_DEFAULT;
 
 	init_completion(&inst->irq_done);
-
-	if (inst->dev->irq < 0) {
-		ret = mutex_lock_interruptible(&inst->dev->dev_lock);
-		if (ret)
-			return ret;
-
-		if (!hrtimer_active(&inst->dev->hrtimer))
-			hrtimer_start(&inst->dev->hrtimer, ns_to_ktime(0), HRTIMER_MODE_REL_PINNED);
-
-		mutex_unlock(&inst->dev->dev_lock);
-	}
-
 	ret = kfifo_alloc(&inst->irq_status, 16 * sizeof(int), GFP_KERNEL);
 	if (ret) {
 		dev_err(inst->dev->dev, "failed to allocate fifo\n");
@@ -1384,6 +1371,18 @@ static int wave5_vpu_open_dec(struct file *filp)
 		ret = inst->id;
 		goto cleanup_inst;
 	}
+
+	ret = mutex_lock_interruptible(&dev->dev_lock);
+	if (ret)
+		goto cleanup_inst;
+
+	if (dev->irq < 0 && !hrtimer_active(&dev->hrtimer) && list_empty(&dev->instances))
+		hrtimer_start(&dev->hrtimer, ns_to_ktime(dev->vpu_poll_interval * NSEC_PER_MSEC),
+			      HRTIMER_MODE_REL_PINNED);
+
+	list_add_tail(&inst->list, &dev->instances);
+
+	mutex_unlock(&dev->dev_lock);
 
 	return 0;
 

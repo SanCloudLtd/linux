@@ -16,7 +16,7 @@
 
 #include <linux/atomic.h>
 #include <linux/types.h>
-#include <linux/printk.h>
+#include <linux/mutex.h>
 
 struct vc_data;
 struct console_font_op;
@@ -63,7 +63,6 @@ struct consw {
 	int	(*con_font_get)(struct vc_data *vc, struct console_font *font);
 	int	(*con_font_default)(struct vc_data *vc,
 			struct console_font *font, char *name);
-	int	(*con_font_copy)(struct vc_data *vc, int con);
 	int     (*con_resize)(struct vc_data *vc, unsigned int width,
 			unsigned int height, unsigned int user);
 	void	(*con_set_palette)(struct vc_data *vc,
@@ -138,12 +137,20 @@ static inline int con_debug_leave(void)
 #define CON_ANYTIME	(16) /* Safe to call when cpu is offline */
 #define CON_BRL		(32) /* Used for a braille device */
 #define CON_EXTENDED	(64) /* Use the extended output format a la /dev/kmsg */
-#define CON_HANDOVER	(128) /* Device was previously a boot console. */
+
+#ifdef CONFIG_HAVE_ATOMIC_CONSOLE
+struct console_atomic_data {
+	u64	seq;
+	char	*text;
+	char	*ext_text;
+	char	*dropped_text;
+};
+#endif
 
 struct console {
 	char	name[16];
 	void	(*write)(struct console *, const char *, unsigned);
-	void	(*write_atomic)(struct console *co, const char *s, unsigned int count);
+	void	(*write_atomic)(struct console *, const char *, unsigned);
 	int	(*read)(struct console *, char *, unsigned);
 	struct tty_driver *(*device)(struct console *, int *);
 	void	(*unblank)(void);
@@ -153,13 +160,29 @@ struct console {
 	short	flags;
 	short	index;
 	int	cflag;
-#ifdef CONFIG_PRINTK
-	char	sync_buf[CONSOLE_LOG_MAX];
-#endif
-	atomic64_t printk_seq;
-	struct task_struct *thread;
 	uint	ispeed;
 	uint	ospeed;
+	u64	seq;
+	atomic_long_t dropped;
+#ifdef CONFIG_HAVE_ATOMIC_CONSOLE
+	struct console_atomic_data *atomic_data;
+#endif
+	struct task_struct *thread;
+	bool	blocked;
+
+	/*
+	 * The per-console lock is used by printing kthreads to synchronize
+	 * this console with callers of console_lock(). This is necessary in
+	 * order to allow printing kthreads to run in parallel to each other,
+	 * while each safely accessing the @blocked field and synchronizing
+	 * against direct printing via console_lock/console_unlock.
+	 *
+	 * Note: For synchronizing against direct printing via
+	 *       console_trylock/console_unlock, see the static global
+	 *       variable @console_kthreads_active.
+	 */
+	struct mutex lock;
+
 	void	*data;
 	struct	 console *next;
 };
@@ -174,6 +197,7 @@ extern int console_set_on_cmdline;
 extern struct console *early_console;
 
 enum con_flush_mode {
+	CONSOLE_ATOMIC_FLUSH_PENDING,
 	CONSOLE_FLUSH_PENDING,
 	CONSOLE_REPLAY_ALL,
 };
@@ -228,19 +252,10 @@ extern atomic_t ignore_console_lock_warning;
 #define VESA_HSYNC_SUSPEND      2
 #define VESA_POWERDOWN          3
 
-#ifdef CONFIG_VGA_CONSOLE
-extern bool vgacon_text_force(void);
-#else
-static inline bool vgacon_text_force(void) { return false; }
-#endif
-
 extern void console_init(void);
 
 /* For deferred console takeover */
 void dummycon_register_output_notifier(struct notifier_block *nb);
 void dummycon_unregister_output_notifier(struct notifier_block *nb);
-
-extern void console_atomic_lock(unsigned int *flags);
-extern void console_atomic_unlock(unsigned int flags);
 
 #endif /* _LINUX_CONSOLE_H */

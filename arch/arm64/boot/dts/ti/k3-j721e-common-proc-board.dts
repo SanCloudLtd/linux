@@ -12,6 +12,9 @@
 #include <dt-bindings/phy/phy-cadence.h>
 
 / {
+	compatible = "ti,j721e-evm", "ti,j721e";
+	model = "Texas Instruments J721e EVM";
+
 	chosen {
 		stdout-path = "serial2:115200n8";
 		bootargs = "console=ttyS2,115200n8 earlycon=ns16550a,mmio32,0x02800000";
@@ -23,13 +26,13 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&sw10_button_pins_default &sw11_button_pins_default>;
 
-		sw10: sw10 {
+		sw10: switch-10 {
 			label = "GPIO Key USER1";
 			linux,code = <BTN_0>;
 			gpios = <&main_gpio0 0 GPIO_ACTIVE_LOW>;
 		};
 
-		sw11: sw11 {
+		sw11: switch-11 {
 			label = "GPIO Key USER2";
 			linux,code = <BTN_1>;
 			gpios = <&wkup_gpio0 7 GPIO_ACTIVE_LOW>;
@@ -93,7 +96,7 @@
 			 <3300000 0x1>;
 	};
 
-	sound0: sound@0 {
+	sound0: sound-0 {
 		compatible = "ti,j721e-cpb-audio";
 		model = "j721e-cpb";
 
@@ -108,56 +111,6 @@
 			      "cpb-mcasp-auxclk-48000", "cpb-mcasp-auxclk-44100",
 			      "cpb-codec-scki",
 			      "cpb-codec-scki-48000", "cpb-codec-scki-44100";
-	};
-
-	cpsw9g_virt_mac: main_r5fss_cpsw9g_virt_mac0 {
-		compatible = "ti,j721e-cpsw-virt-mac";
-		dma-coherent;
-		ti,psil-base = <0x4a00>;
-		ti,remote-name = "mpu_1_0_ethswitch-device-0";
-
-		dmas = <&main_udmap 0xca00>,
-		       <&main_udmap 0xca01>,
-		       <&main_udmap 0xca02>,
-		       <&main_udmap 0xca03>,
-		       <&main_udmap 0xca04>,
-		       <&main_udmap 0xca05>,
-		       <&main_udmap 0xca06>,
-		       <&main_udmap 0xca07>,
-		       <&main_udmap 0x4a00>;
-		dma-names = "tx0", "tx1", "tx2", "tx3",
-			    "tx4", "tx5", "tx6", "tx7",
-			    "rx";
-
-		virt_emac_port {
-			ti,label = "virt-port";
-			/* local-mac-address = [0 0 0 0 0 0]; */
-		};
-	};
-
-	cpsw9g_virt_maconly: main-r5fss-cpsw9g-virt-mac1 {
-		compatible = "ti,j721e-cpsw-virt-mac";
-		dma-coherent;
-		ti,psil-base = <0x4a00>;
-		ti,remote-name = "mpu_1_0_ethmac-device-1";
-
-		dmas = <&main_udmap 0xca00>,
-		       <&main_udmap 0xca01>,
-		       <&main_udmap 0xca02>,
-		       <&main_udmap 0xca03>,
-		       <&main_udmap 0xca04>,
-		       <&main_udmap 0xca05>,
-		       <&main_udmap 0xca06>,
-		       <&main_udmap 0xca07>,
-		       <&main_udmap 0x4a00>;
-		dma-names = "tx0", "tx1", "tx2", "tx3",
-			    "tx4", "tx5", "tx6", "tx7",
-			    "rx";
-
-		virt_emac_port {
-			ti,label = "virt-port";
-			/* local-mac-address = [0 0 0 0 0 0]; */
-		};
 	};
 
 	transceiver1: can-phy0 {
@@ -196,16 +149,13 @@
 		standby-gpios = <&main_gpio0 127 GPIO_ACTIVE_HIGH>;
 	};
 
-	dp_pwr_3v3: fixedregulator-dp-prw {
+	dp_pwr_3v3: regulator-dp-pwr {
 		compatible = "regulator-fixed";
 		regulator-name = "dp-pwr";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		gpio = <&exp4 0 0>;	/* P0 - DP0_PWR_SW_EN */
+		gpio = <&exp4 0 GPIO_ACTIVE_HIGH>; /* P0 - DP0_PWR_SW_EN */
 		enable-active-high;
-
-		/* Always on for now, until dp-connector driver can handle this */
-		regulator-always-on;
 	};
 
 	dp0: connector {
@@ -420,38 +370,30 @@
 	status = "reserved";
 };
 
+&mcu_uart0 {
+	status = "okay";
+	/* Default pinmux */
+};
+
 &main_uart0 {
+	status = "okay";
+	/* Shared with ATF on this platform */
 	power-domains = <&k3_pds 146 TI_SCI_PD_SHARED>;
 };
 
-&main_uart3 {
-	/* UART not brought out */
-	status = "disabled";
+&main_uart1 {
+	status = "okay";
+	/* Default pinmux */
 };
 
-&main_uart5 {
-	/* UART not brought out */
-	status = "disabled";
+&main_uart2 {
+	status = "okay";
+	/* Default pinmux */
 };
 
-&main_uart6 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart7 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart8 {
-	/* UART not brought out */
-	status = "disabled";
-};
-
-&main_uart9 {
-	/* UART not brought out */
-	status = "disabled";
+&main_uart4 {
+	status = "okay";
+	/* Default pinmux */
 };
 
 &main_gpio2 {
@@ -509,7 +451,7 @@
 };
 
 &serdes_ln_ctrl {
-	idle-states = <J721E_SERDES0_LANE0_PCIE0_LANE0>, <J721E_SERDES0_LANE1_QSGMII_LANE2>,
+	idle-states = <J721E_SERDES0_LANE0_PCIE0_LANE0>, <J721E_SERDES0_LANE1_PCIE0_LANE1>,
 		      <J721E_SERDES1_LANE0_PCIE1_LANE0>, <J721E_SERDES1_LANE1_PCIE1_LANE1>,
 		      <J721E_SERDES2_LANE0_PCIE2_LANE0>, <J721E_SERDES2_LANE1_PCIE2_LANE1>,
 		      <J721E_SERDES3_LANE0_USB3_0_SWAP>, <J721E_SERDES3_LANE1_USB3_0>,
@@ -560,7 +502,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_fss0_ospi1_pins_default>;
 
-	flash@0{
+	flash@0 {
 		compatible = "jedec,spi-nor";
 		reg = <0x0>;
 		spi-tx-bus-width = <1>;
@@ -571,8 +513,52 @@
 		cdns,tchsh-ns = <60>;
 		cdns,tslch-ns = <60>;
 		cdns,read-delay = <2>;
-		#address-cells = <1>;
-		#size-cells = <1>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "qspi.tiboot3";
+				reg = <0x0 0x80000>;
+			};
+
+			partition@80000 {
+				label = "qspi.tispl";
+				reg = <0x80000 0x200000>;
+			};
+
+			partition@280000 {
+				label = "qspi.u-boot";
+				reg = <0x280000 0x400000>;
+			};
+
+			partition@680000 {
+				label = "qspi.env";
+				reg = <0x680000 0x20000>;
+			};
+
+			partition@6a0000 {
+				label = "qspi.env.backup";
+				reg = <0x6a0000 0x20000>;
+			};
+
+			partition@6c0000 {
+				label = "qspi.sysfw";
+				reg = <0x6c0000 0x100000>;
+			};
+
+			partition@800000 {
+				label = "qspi.rootfs";
+				reg = <0x800000 0x37c0000>;
+			};
+
+			partition@3fe0000 {
+				label = "qspi.phypattern";
+				reg = <0x3fe0000 0x20000>;
+			};
+		};
 	};
 };
 
@@ -589,6 +575,7 @@
 };
 
 &main_i2c0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c0_pins_default>;
 	clock-frequency = <400000>;
@@ -625,6 +612,7 @@
 };
 
 &main_i2c1 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c1_pins_default>;
 	clock-frequency = <400000>;
@@ -650,6 +638,7 @@
 };
 
 &main_i2c3 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c3_pins_default>;
 	clock-frequency = <400000>;
@@ -688,6 +677,7 @@
 };
 
 &main_i2c6 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_i2c6_pins_default>;
 	clock-frequency = <400000>;
@@ -739,18 +729,11 @@
 };
 
 &dss_ports {
-	port@0 {
-		reg = <0>;
-
+	port {
 		dpi0_out: endpoint {
 			remote-endpoint = <&dp0_in>;
 		};
 	};
-};
-
-&mhdp {
-	pinctrl-names = "default";
-	pinctrl-0 = <&dp0_pins_default>;
 };
 
 &dp0_ports {
@@ -772,47 +755,8 @@
 	};
 };
 
-&mcasp0 {
-	status = "disabled";
-};
-
-&mcasp1 {
-	status = "disabled";
-};
-
-&mcasp2 {
-	status = "disabled";
-};
-
-&mcasp3 {
-	status = "disabled";
-};
-
-&mcasp4 {
-	status = "disabled";
-};
-
-&mcasp5 {
-	status = "disabled";
-};
-
-&mcasp6 {
-	status = "disabled";
-};
-
-&mcasp7 {
-	status = "disabled";
-};
-
-&mcasp8 {
-	status = "disabled";
-};
-
-&mcasp9 {
-	status = "disabled";
-};
-
 &mcasp10 {
+	status = "okay";
 	#sound-dai-cells = <0>;
 
 	pinctrl-names = "default";
@@ -828,10 +772,6 @@
 	>;
 	tx-num-evt = <0>;
 	rx-num-evt = <0>;
-};
-
-&mcasp11 {
-	status = "disabled";
 };
 
 &cmn_refclk1 {
@@ -868,13 +808,9 @@
 	assigned-clock-parents = <&cmn_refclk1>;
 };
 
-&cmn_refclk1 {
-	clock-frequency = <100000000>;
-};
-
 &serdes0 {
-	assigned-clocks = <&serdes0 CDNS_SIERRA_PLL_CMNLC>, <&serdes0 CDNS_SIERRA_PLL_CMNLC1>;
-	assigned-clock-parents = <&wiz0_pll1_refclk>, <&wiz0_pll1_refclk>;
+	assigned-clocks = <&serdes0 CDNS_SIERRA_PLL_CMNLC>;
+	assigned-clock-parents = <&wiz0_pll1_refclk>;
 
 	serdes0_pcie_link: phy@0 {
 		reg = <0>;
@@ -883,15 +819,6 @@
 		cdns,phy-type = <PHY_TYPE_PCIE>;
 		resets = <&serdes_wiz0 1>;
 	};
-
-	serdes0_qsgmii_link: phy@1 {
-		reg = <1>;
-		cdns,num-lanes = <1>;
-		#phy-cells = <0>;
-		cdns,phy-type = <PHY_TYPE_QSGMII>;
-		resets = <&serdes_wiz0 2>;
-	};
-
 };
 
 &serdes1 {
@@ -920,13 +847,22 @@
 	};
 };
 
-&cpsw0 {
-	/*
-	 * Disable cpsw0 since cpsw9g_virt_mac is the default Ethernet
-	 * controller. cpsw0 is enabled with overlay for native
-	 * Ethernet driver support.
-	 */
-	status = "disabled";
+&serdes4 {
+	torrent_phy_dp: phy@0 {
+		reg = <0>;
+		resets = <&serdes_wiz4 1>;
+		cdns,phy-type = <PHY_TYPE_DP>;
+		cdns,num-lanes = <4>;
+		cdns,max-bit-rate = <5400>;
+		#phy-cells = <0>;
+	};
+};
+
+&mhdp {
+	phys = <&torrent_phy_dp>;
+	phy-names = "dpphy";
+	pinctrl-names = "default";
+	pinctrl-0 = <&dp0_pins_default>;
 };
 
 &pcie0_rc {
@@ -979,156 +915,56 @@
 	status = "disabled";
 };
 
-/* uart2 assigned to cpsw9g eth-switch fw running on remote CPU core */
-&main_uart2 {
+&icssg0_mdio {
+	status = "disabled";
+};
+
+&icssg1_mdio {
 	status = "disabled";
 };
 
 &mcu_mcan0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_mcan0_pins_default>;
 	phys = <&transceiver1>;
 };
 
 &mcu_mcan1 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&mcu_mcan1_pins_default>;
 	phys = <&transceiver2>;
 };
 
 &main_mcan0 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mcan0_pins_default>;
 	phys = <&transceiver3>;
 };
 
-&main_mcan1 {
-	status = "disabled";
-};
-
 &main_mcan2 {
+	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&main_mcan2_pins_default>;
 	phys = <&transceiver4>;
 };
 
-&main_mcan3 {
-	status = "disabled";
-};
-
-&main_mcan4 {
-	status = "disabled";
-};
-
-&main_mcan5 {
-	status = "disabled";
-};
-
-&main_mcan6 {
-	status = "disabled";
-};
-
-&main_mcan7 {
-	status = "disabled";
-};
-
-&main_mcan8 {
-	status = "disabled";
-};
-
-&main_mcan9 {
-	status = "disabled";
-};
-
-&main_mcan10 {
-	status = "disabled";
-};
-
-&main_mcan11 {
-	status = "disabled";
-};
-
-&main_mcan12 {
-	status = "disabled";
-};
-
-&main_mcan13 {
-	status = "disabled";
-};
-
-&csi0_port0 {
-	status = "disabled";
-};
-
-&csi0_port1 {
-	status = "disabled";
-};
-
-&csi0_port2 {
-	status = "disabled";
-};
-
-&csi0_port3 {
-	status = "disabled";
-};
-
-&csi0_port4 {
-	status = "disabled";
-};
-
-&main_spi4 {
-	status = "disabled";
-};
-
-&mcu_spi0 {
-	status = "disabled";
-};
-
-&mcu_spi1 {
-	status = "disabled";
-};
-
-&mcu_spi2 {
-	status = "disabled";
-};
-
-&main_ehrpwm0 {
-	status = "disabled";
-};
-
-&main_ehrpwm1 {
-	status = "disabled";
-};
-
-&main_ehrpwm2 {
-	status = "disabled";
-};
-
-&main_ehrpwm3 {
-	status = "disabled";
-};
-
-&main_ehrpwm4 {
-	status = "disabled";
-};
-
-&main_ehrpwm5 {
-	status = "disabled";
-};
-
-&wkup_i2c0 {
+&ti_csi2rx0 {
 	status = "okay";
-	tps6594x: tps6594x@48 {
-		compatible = "ti,tps6594x";
-		reg = <0x48>;
-		ti,system-power-controller;
+	/* MIPI-CSI Connector */
+};
 
-		rtc {
-			compatible = "ti,tps6594x-rtc";
-		};
+&ti_csi2rx1 {
+	status = "okay";
+	/* MIPI-CSI Connector */
+};
 
-		gpio {
-			compatible = "ti,tps6594x-gpio";
-		};
-	};
+&dphy0 {
+	status = "okay";
+};
+
+&dphy1 {
+	status = "okay";
 };

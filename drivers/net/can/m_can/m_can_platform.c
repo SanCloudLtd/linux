@@ -11,38 +11,58 @@
 #include "m_can.h"
 
 struct m_can_plat_priv {
+	struct m_can_classdev cdev;
+
 	void __iomem *base;
 	void __iomem *mram_base;
 };
 
+static inline struct m_can_plat_priv *cdev_to_priv(struct m_can_classdev *cdev)
+{
+	return container_of(cdev, struct m_can_plat_priv, cdev);
+}
+
 static u32 iomap_read_reg(struct m_can_classdev *cdev, int reg)
 {
-	struct m_can_plat_priv *priv = cdev->device_data;
+	struct m_can_plat_priv *priv = cdev_to_priv(cdev);
 
 	return readl(priv->base + reg);
 }
 
-static u32 iomap_read_fifo(struct m_can_classdev *cdev, int offset)
+static int iomap_read_fifo(struct m_can_classdev *cdev, int offset, void *val, size_t val_count)
 {
-	struct m_can_plat_priv *priv = cdev->device_data;
+	struct m_can_plat_priv *priv = cdev_to_priv(cdev);
+	void __iomem *src = priv->mram_base + offset;
 
-	return readl(priv->mram_base + offset);
+	while (val_count--) {
+		*(unsigned int *)val = ioread32(src);
+		val += 4;
+		src += 4;
+	}
+
+	return 0;
 }
 
 static int iomap_write_reg(struct m_can_classdev *cdev, int reg, int val)
 {
-	struct m_can_plat_priv *priv = cdev->device_data;
+	struct m_can_plat_priv *priv = cdev_to_priv(cdev);
 
 	writel(val, priv->base + reg);
 
 	return 0;
 }
 
-static int iomap_write_fifo(struct m_can_classdev *cdev, int offset, int val)
+static int iomap_write_fifo(struct m_can_classdev *cdev, int offset,
+			    const void *val, size_t val_count)
 {
-	struct m_can_plat_priv *priv = cdev->device_data;
+	struct m_can_plat_priv *priv = cdev_to_priv(cdev);
+	void __iomem *dst = priv->mram_base + offset;
 
-	writel(val, priv->mram_base + offset);
+	while (val_count--) {
+		iowrite32(*(unsigned int *)val, dst);
+		val += 4;
+		dst += 4;
+	}
 
 	return 0;
 }
@@ -64,24 +84,18 @@ static int m_can_plat_probe(struct platform_device *pdev)
 	struct phy *transceiver;
 	int irq, ret = 0;
 
-	mcan_class = m_can_class_allocate_dev(&pdev->dev);
+	mcan_class = m_can_class_allocate_dev(&pdev->dev,
+					      sizeof(struct m_can_plat_priv));
 	if (!mcan_class)
 		return -ENOMEM;
 
-	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv) {
-		ret = -ENOMEM;
-		goto probe_fail;
-	}
-
-	mcan_class->device_data = priv;
+	priv = cdev_to_priv(mcan_class);
 
 	ret = m_can_class_get_clocks(mcan_class);
 	if (ret)
 		goto probe_fail;
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "m_can");
-	addr = devm_ioremap_resource(&pdev->dev, res);
+	addr = devm_platform_ioremap_resource_byname(pdev, "m_can");
 	irq = platform_get_irq_byname(pdev, "int0");
 	if (IS_ERR(addr) || irq < 0) {
 		ret = -EINVAL;
@@ -105,7 +119,7 @@ static int m_can_plat_probe(struct platform_device *pdev)
 	if (IS_ERR(transceiver)) {
 		ret = PTR_ERR(transceiver);
 		dev_err_probe(&pdev->dev, ret, "failed to get phy\n");
-		return ret;
+		goto probe_fail;
 	}
 
 	if (transceiver)
@@ -124,12 +138,17 @@ static int m_can_plat_probe(struct platform_device *pdev)
 
 	mcan_class->is_peripheral = false;
 
-	platform_set_drvdata(pdev, mcan_class->net);
+	platform_set_drvdata(pdev, mcan_class);
 
-	m_can_init_ram(mcan_class);
+	pm_runtime_enable(mcan_class->dev);
+	ret = m_can_class_register(mcan_class);
+	if (ret)
+		goto out_runtime_disable;
 
-	return m_can_class_register(mcan_class);
+	return ret;
 
+out_runtime_disable:
+	pm_runtime_disable(mcan_class->dev);
 probe_fail:
 	m_can_class_free_dev(mcan_class->net);
 	return ret;
@@ -147,22 +166,20 @@ static __maybe_unused int m_can_resume(struct device *dev)
 
 static int m_can_plat_remove(struct platform_device *pdev)
 {
-	struct net_device *dev = platform_get_drvdata(pdev);
-	struct m_can_classdev *mcan_class = netdev_priv(dev);
+	struct m_can_plat_priv *priv = platform_get_drvdata(pdev);
+	struct m_can_classdev *mcan_class = &priv->cdev;
 
 	m_can_class_unregister(mcan_class);
 
 	m_can_class_free_dev(mcan_class->net);
-
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
 
 static int __maybe_unused m_can_runtime_suspend(struct device *dev)
 {
-	struct net_device *ndev = dev_get_drvdata(dev);
-	struct m_can_classdev *mcan_class = netdev_priv(ndev);
+	struct m_can_plat_priv *priv = dev_get_drvdata(dev);
+	struct m_can_classdev *mcan_class = &priv->cdev;
 
 	clk_disable_unprepare(mcan_class->cclk);
 	clk_disable_unprepare(mcan_class->hclk);
@@ -172,8 +189,8 @@ static int __maybe_unused m_can_runtime_suspend(struct device *dev)
 
 static int __maybe_unused m_can_runtime_resume(struct device *dev)
 {
-	struct net_device *ndev = dev_get_drvdata(dev);
-	struct m_can_classdev *mcan_class = netdev_priv(ndev);
+	struct m_can_plat_priv *priv = dev_get_drvdata(dev);
+	struct m_can_classdev *mcan_class = &priv->cdev;
 	int err;
 
 	err = clk_prepare_enable(mcan_class->hclk);

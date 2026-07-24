@@ -314,8 +314,6 @@ rpmsg_kdrv_switch_get_tx_info(struct rpmsg_remotedev *rdev,
 
 	info->tx_cpsw_psil_dst_id = resp->tx_cpsw_psil_dst_id;
 
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
-
 out:
 	devm_kfree(&kddev->dev, resp);
 	devm_kfree(&kddev->dev, req);
@@ -354,18 +352,14 @@ rpmsg_kdrv_switch_get_rx_info(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
 	if (ret)
 		goto out;
 
 	info->flow_idx = resp->alloc_flow_idx;
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -404,18 +398,14 @@ static int rpmsg_kdrv_switch_get_mac(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
 	if (ret)
 		goto out;
 
 	ether_addr_copy(mac_addr, resp->mac_address);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -456,14 +446,10 @@ static int rpmsg_kdrv_switch_register_mac(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -505,14 +491,10 @@ rpmsg_kdrv_switch_unregister_mac(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -553,14 +535,10 @@ static int rpmsg_kdrv_switch_reg_ipv4(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -600,14 +578,10 @@ static int rpmsg_kdrv_switch_unreg_ipv4(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -645,17 +619,14 @@ static int rpmsg_kdrv_switch_reg_read(struct rpmsg_remotedev *rdev,
 	ret = rpmsg_kdrv_send_request_with_response(rpdev, kddev->device_id,
 						    req, sizeof(*req),
 						    resp, sizeof(*resp));
-	if (ret) {
-		dev_dbg(&kddev->dev, "%s: send: %d\n", __func__, ret);
+	if (ret)
 		goto out;
-	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
 	if (ret)
 		goto out;
 
 	*val = resp->regval;
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -687,7 +658,6 @@ static int rpmsg_kdrv_switch_c2s_dbg_dump_stats(struct rpmsg_remotedev *rdev)
 	ret = rpmsg_kdrv_send_message(rpdev, kddev->device_id,
 				      req, sizeof(*req));
 
-	dev_dbg(&kddev->dev, "%s: done ret:%d\n", __func__, ret);
 	devm_kfree(&kddev->dev, req);
 	return ret;
 }
@@ -728,8 +698,6 @@ static int rpmsg_kdrv_switch_set_promisc(struct rpmsg_remotedev *rdev, u32 enabl
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
 	if (ret)
 		goto out;
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -778,8 +746,6 @@ static int rpmsg_kdrv_switch_filter_add_mc(struct rpmsg_remotedev *rdev,
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
 
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
-
 out:
 	devm_kfree(&kddev->dev, resp);
 	devm_kfree(&kddev->dev, req);
@@ -826,8 +792,6 @@ static int rpmsg_kdrv_switch_filter_del_mc(struct rpmsg_remotedev *rdev,
 	}
 
 	ret = rpmsg_kdrv_switch_check_resp_status(&resp->info);
-
-	dev_dbg(&kddev->dev, "%s: done\n", __func__);
 
 out:
 	devm_kfree(&kddev->dev, resp);
@@ -922,8 +886,6 @@ static int rpmsg_kdrv_switch_probe(struct rpmsg_kdrv_device *dev)
 	struct rpmsg_kdrv_switch_private *priv;
 	int ret;
 
-	dev_dbg(&dev->dev, "%s\n", __func__);
-
 	priv = devm_kzalloc(&dev->dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
@@ -948,8 +910,6 @@ static void rpmsg_kdrv_switch_remove(struct rpmsg_kdrv_device *dev)
 {
 	dev->driver_private = NULL;
 	dev->remotedev = NULL;
-
-	dev_dbg(&dev->dev, "%s\n", __func__);
 }
 
 static struct rpmsg_kdrv_driver rpmsg_kdrv_switch = {
@@ -972,6 +932,6 @@ static void rpmsg_kdrv_display_driver_fini(void)
 {
 }
 module_exit(rpmsg_kdrv_display_driver_fini);
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Grygorii Strashko <grygorii.strashko@ti.com>");
 MODULE_DESCRIPTION("TI J721E RPMSG KDRV Ethernet switch driver");

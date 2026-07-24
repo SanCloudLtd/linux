@@ -510,7 +510,7 @@ static void s5k5baf_write_arr_seq(struct s5k5baf *state, u16 addr,
 
 #define s5k5baf_write_seq(state, addr, seq...) \
 	s5k5baf_write_arr_seq(state, addr, sizeof((char[]){ seq }), \
-			      (const u16 []){ seq });
+			      (const u16 []){ seq })
 
 /* add items count at the beginning of the list */
 #define NSEQ(seq...) sizeof((char[]){ seq }), seq
@@ -2018,7 +2018,7 @@ err_me:
 	return ret;
 }
 
-static int s5k5baf_remove(struct i2c_client *c)
+static void s5k5baf_remove(struct i2c_client *c)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(c);
 	struct s5k5baf *state = to_s5k5baf(sd);
@@ -2030,8 +2030,6 @@ static int s5k5baf_remove(struct i2c_client *c)
 	sd = &state->cis_sd;
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
-
-	return 0;
 }
 
 static const struct i2c_device_id s5k5baf_id[] = {

@@ -10,11 +10,13 @@ maintainers:
   - Hari Nagalla <hnagalla@ti.com>
 
 description: |
-  Some K3 family SoCs have  Arm Cortex M4F cores. AM64x is a SoC in K3
+  Some K3 family SoCs have Arm Cortex M4F cores. AM64x is a SoC in K3
   family with a M4F core. Typically safety oriented applications may use
-  the M4F core in isolation with out an IPC. Where as some Industrial and
+  the M4F core in isolation without an IPC. Where as some industrial and
   home automation applications, may use the M4F core as a remote processor
   with IPC communications.
+
+$ref: /schemas/arm/keystone/ti,k3-sci-common.yaml#
 
 properties:
   $nodename:
@@ -70,23 +72,17 @@ properties:
       remoteproc device. There should be at least two reserved memory nodes
       defined. The reserved memory nodes should be carveout nodes, and
       should be defined with a "no-map" property as per the bindings in
-      Documentation/devicetree/bindings/reserved-memory/reserved-memory.txt
+      Documentation/devicetree/bindings/reserved-memory/reserved-memory.yaml
     minItems: 2
     maxItems: 8
-#    items:
-#      - description: region used for dynamic DMA allocations like vrings and
-#                         vring buffers
-#      - description: region reserved for firmware image sections
+    items:
+      - description: region used for dynamic DMA allocations like vrings and
+                     vring buffers
+      - description: region reserved for firmware image sections
     additionalItems: true
-
-    unevaluatedProperties: false
-
 
 required:
   - compatible
-  - power-domains
-  - "#address-cells"
-  - "#size-cells"
   - reg
   - reg-names
   - ti,sci
@@ -94,28 +90,69 @@ required:
   - ti,sci-proc-ids
   - resets
   - firmware-name
+  - mboxes
+  - memory-region
 
-additionalProperties: false
+unevaluatedProperties: false
 
 examples:
   - |
-    cbass_main:  bus@f4000 {
-      #address-cells = <2>;
-      #size-cells = <2>;
-      mcu_m4fss: m4fss@5000000 {
-        compatible = "ti,am64-m4fss";
-        reg = <0x00 0x5000000 0x00 0x30000>,
-              <0x00 0x5040000 0x00 0x10000>;
-        reg-names = "iram", "dram";
-        ti,sci = <&dmsc>;
-        ti,sci-dev-id = <9>;
-        ti,sci-proc-ids = <0x18 0xff>;
-        resets = <&k3_reset 9 1>;
-        firmware-name = "am64-mcu-m4f0_0-fw";
-        mboxes = <&mailbox0_cluster6 &mbox_m4_0>;
-        memory-region = <&mcu_m4fss_dma_memory_region>,
-                        <&mcu_m4fss_memory_region>;
-      };
+    reserved-memory {
+        #address-cells = <2>;
+        #size-cells = <2>;
+
+        mcu_m4fss_dma_memory_region: m4f-dma-memory@9cb00000 {
+            compatible = "shared-dma-pool";
+            reg = <0x00 0x9cb00000 0x00 0x100000>;
+            no-map;
+        };
+
+        mcu_m4fss_memory_region: m4f-memory@9cc00000 {
+            compatible = "shared-dma-pool";
+            reg = <0x00 0x9cc00000 0x00 0xe00000>;
+            no-map;
+        };
     };
 
-...
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+
+        mailbox0_cluster0: mailbox-0 {
+            #mbox-cells = <1>;
+
+            mbox_m4_0: mbox-m4-0 {
+                ti,mbox-rx = <0 0 0>;
+                ti,mbox-tx = <1 0 0>;
+            };
+        };
+
+        bus@f0000 {
+            compatible = "simple-bus";
+            #address-cells = <2>;
+            #size-cells = <2>;
+            ranges = <0x00 0x04000000 0x00 0x04000000 0x00 0x01ff1400>;
+
+            bus@4000000 {
+                compatible = "simple-bus";
+                #address-cells = <2>;
+                #size-cells = <2>;
+                ranges = <0x00 0x04000000 0x00 0x04000000 0x00 0x01ff1400>;
+
+                mcu_m4fss: m4fss@5000000 {
+                    compatible = "ti,am64-m4fss";
+                    reg = <0x00 0x5000000 0x00 0x30000>,
+                          <0x00 0x5040000 0x00 0x10000>;
+                    reg-names = "iram", "dram";
+                    ti,sci = <&dmsc>;
+                    ti,sci-dev-id = <9>;
+                    ti,sci-proc-ids = <0x18 0xff>;
+                    resets = <&k3_reset 9 1>;
+                    firmware-name = "am62-mcu-m4f0_0-fw";
+                    mboxes = <&mailbox0_cluster0 &mbox_m4_0>;
+                    memory-region = <&mcu_m4fss_dma_memory_region>,
+                                    <&mcu_m4fss_memory_region>;
+                };
+            };
+        };
+    };

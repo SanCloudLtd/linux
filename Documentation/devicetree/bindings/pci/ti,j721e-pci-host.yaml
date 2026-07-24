@@ -10,13 +10,11 @@ title: TI J721E PCI Host (PCIe Wrapper)
 maintainers:
   - Kishon Vijay Abraham I <kishon@ti.com>
 
-allOf:
-  - $ref: "cdns-pcie-host.yaml#"
-
 properties:
   compatible:
     oneOf:
       - const: ti,j721e-pcie-host
+      - const: ti,j784s4-pcie-host
       - description: PCIe controller in AM64
         items:
           - const: ti,am64-pcie-host
@@ -50,7 +48,8 @@ properties:
   clocks:
     minItems: 1
     maxItems: 2
-    description: clock-specifier to represent input to the PCIe for 1 item.
+    description: |+
+      clock-specifier to represent input to the PCIe for 1 item.
       2nd item if present represents reference clock to the connector.
 
   clock-names:
@@ -58,6 +57,8 @@ properties:
     items:
       - const: fck
       - const: pcie_refclk
+
+  dma-coherent: true
 
   vendor-id:
     const: 0x104c
@@ -75,10 +76,60 @@ properties:
 
   msi-map: true
 
-patternProperties:
-  "interrupt-controller":
+  interrupts:
+    maxItems: 1
+
+  interrupt-names:
+    items:
+      - const: link_state
+
+  interrupt-controller:
     type: object
-    description: interrupt controller to handle legacy interrupts.
+    additionalProperties: false
+
+    properties:
+      interrupt-controller: true
+
+      '#interrupt-cells':
+        const: 1
+
+      interrupts:
+        maxItems: 1
+
+allOf:
+  - $ref: cdns-pcie-host.yaml#
+  - if:
+      properties:
+        compatible:
+          enum:
+            - ti,am64-pcie-host
+    then:
+      properties:
+        num-lanes:
+          const: 1
+
+  - if:
+      properties:
+        compatible:
+          enum:
+            - ti,j7200-pcie-host
+            - ti,j721e-pcie-host
+    then:
+      properties:
+        num-lanes:
+          minimum: 1
+          maximum: 2
+
+  - if:
+      properties:
+        compatible:
+          enum:
+            - ti,j784s4-pcie-host
+    then:
+      properties:
+        num-lanes:
+          minimum: 1
+          maximum: 4
 
 required:
   - compatible
@@ -103,8 +154,6 @@ unevaluatedProperties: false
 
 examples:
   - |
-    #include <dt-bindings/interrupt-controller/arm-gic.h>
-    #include <dt-bindings/interrupt-controller/irq.h>
     #include <dt-bindings/soc/ti,sci_pm_domain.h>
     #include <dt-bindings/gpio/gpio.h>
 
@@ -139,13 +188,5 @@ examples:
             ranges = <0x01000000 0x0 0x10001000  0x00 0x10001000  0x0 0x0010000>,
                      <0x02000000 0x0 0x10011000  0x00 0x10011000  0x0 0x7fef000>;
             dma-ranges = <0x02000000 0x0 0x0 0x0 0x0 0x10000 0x0>;
-
-
-            pcie0_intc: interrupt-controller {
-                    interrupt-controller;
-                    #interrupt-cells = <1>;
-                    interrupt-parent = <&gic500>;
-                    interrupts = <GIC_SPI 312 IRQ_TYPE_EDGE_RISING>;
-            };
         };
     };

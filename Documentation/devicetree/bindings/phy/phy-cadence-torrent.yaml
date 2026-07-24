@@ -20,8 +20,8 @@ properties:
   compatible:
     enum:
       - cdns,torrent-phy
-      - ti,j721e-serdes-10g
       - ti,j7200-serdes-10g
+      - ti,j721e-serdes-10g
 
   '#address-cells':
     const: 1
@@ -34,7 +34,7 @@ properties:
 
   clocks:
     minItems: 1
-    maxItems: 3
+    maxItems: 2
     description:
       PHY reference clock for 1 item. Must contain an entry in clock-names.
       Optional Parent to enable output reference clock.
@@ -43,7 +43,6 @@ properties:
     minItems: 1
     items:
       - const: refclk
-      - const: refclk1
       - const: phy_en_refclk
 
   assigned-clocks:
@@ -54,28 +53,24 @@ properties:
 
   reg:
     minItems: 1
-    maxItems: 2
     items:
       - description: Offset of the Torrent PHY configuration registers.
       - description: Offset of the DPTX PHY configuration registers.
 
   reg-names:
     minItems: 1
-    maxItems: 2
     items:
       - const: torrent_phy
       - const: dptx_phy
 
   resets:
     minItems: 1
-    maxItems: 2
     items:
       - description: Torrent PHY reset.
       - description: Torrent APB reset. This is optional.
 
   reset-names:
     minItems: 1
-    maxItems: 2
     items:
       - const: torrent_reset
       - const: torrent_apb
@@ -120,7 +115,7 @@ patternProperties:
         description:
           Specifies the Spread Spectrum Clocking mode used. It can be NO_SSC,
           EXTERNAL_SSC or INTERNAL_SSC.
-          Refer include/dt-bindings/phy/phy-cadence-torrent.h for the constants to be used.
+          Refer include/dt-bindings/phy/phy-cadence.h for the constants to be used.
         $ref: /schemas/types.yaml#/definitions/uint32
         enum: [0, 1, 2]
         default: 0
@@ -208,7 +203,7 @@ examples:
                 #phy-cells = <0>;
                 cdns,phy-type = <PHY_TYPE_PCIE>;
                 cdns,num-lanes = <2>;
-                cdns,ssc-mode = <TORRENT_SERDES_NO_SSC>;
+                cdns,ssc-mode = <CDNS_SERDES_NO_SSC>;
             };
 
             phy@2 {
@@ -217,7 +212,7 @@ examples:
                 #phy-cells = <0>;
                 cdns,phy-type = <PHY_TYPE_SGMII>;
                 cdns,num-lanes = <1>;
-                cdns,ssc-mode = <TORRENT_SERDES_NO_SSC>;
+                cdns,ssc-mode = <CDNS_SERDES_NO_SSC>;
             };
         };
     };

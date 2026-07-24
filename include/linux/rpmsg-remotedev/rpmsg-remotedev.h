@@ -23,60 +23,60 @@ struct rpmsg_remotedev;
 
 /* Struct definitions for display device */
 struct rpmsg_remotedev_display_buffer {
-	uint32_t width;
-	uint32_t height;
-	uint32_t format;
-	uint32_t num_planes;
+	u32 width;
+	u32 height;
+	u32 format;
+	u32 num_planes;
 	dma_addr_t planes[RPMSG_REMOTEDEV_DISPLAY_MAX_PLANES];
-	uint32_t pitches[RPMSG_REMOTEDEV_DISPLAY_MAX_PLANES];
+	u32 pitches[RPMSG_REMOTEDEV_DISPLAY_MAX_PLANES];
 	struct rpmsg_remotedev *rdev;
 	void *priv;
 };
 
 struct rpmsg_remotedev_display_pipe_update {
-	uint32_t pipe_id;
+	u32 pipe_id;
 	bool enabled;
-	uint32_t dst_w;
-	uint32_t dst_h;
-	uint32_t dst_x;
-	uint32_t dst_y;
+	u32 dst_w;
+	u32 dst_h;
+	u32 dst_x;
+	u32 dst_y;
 	struct rpmsg_remotedev_display_buffer *buffer;
 };
 
 struct rpmsg_remotedev_display_commit {
-	uint32_t disp_id;
-	uint32_t num_pipe_updates;
+	u32 disp_id;
+	u32 num_pipe_updates;
 	struct rpmsg_remotedev_display_pipe_update pipes[RPMSG_REMOTEDEV_DISPLAY_MAX_PIPES];
 	struct rpmsg_remotedev *rdev;
 	void *priv;
 };
 
 struct rpmsg_remotedev_display_pipe {
-	uint32_t pipe_id;
+	u32 pipe_id;
 	bool can_scale;
 	bool can_mod_win;
-	uint32_t fixed_win_x;
-	uint32_t fixed_win_y;
-	uint32_t fixed_win_w;
-	uint32_t fixed_win_h;
-	uint32_t initial_zorder;
-	uint32_t num_formats;
-	uint32_t formats[RPMSG_REMOTEDEV_DISPLAY_MAX_FORMATS];
-	uint32_t num_allowed_zorders;
-	uint32_t allowed_zorders[RPMSG_REMOTEDEV_DISPLAY_MAX_ZORDERS];
+	u32 fixed_win_x;
+	u32 fixed_win_y;
+	u32 fixed_win_w;
+	u32 fixed_win_h;
+	u32 initial_zorder;
+	u32 num_formats;
+	u32 formats[RPMSG_REMOTEDEV_DISPLAY_MAX_FORMATS];
+	u32 num_allowed_zorders;
+	u32 allowed_zorders[RPMSG_REMOTEDEV_DISPLAY_MAX_ZORDERS];
 };
 
 struct rpmsg_remotedev_display_disp {
-	uint32_t disp_id;
-	uint32_t width;
-	uint32_t height;
-	uint32_t refresh;
-	uint32_t num_pipes;
+	u32 disp_id;
+	u32 width;
+	u32 height;
+	u32 refresh;
+	u32 num_pipes;
 	struct rpmsg_remotedev_display_pipe pipes[RPMSG_REMOTEDEV_DISPLAY_MAX_PIPES];
 };
 
 struct rpmsg_remotedev_display_resinfo {
-	uint32_t num_disps;
+	u32 num_disps;
 	struct rpmsg_remotedev_display_disp disps[RPMSG_REMOTEDEV_DISPLAY_MAX_DISPS];
 };
 
@@ -101,7 +101,8 @@ struct rpmsg_remotedev_demo_ops {
 /* requests for display device */
 struct rpmsg_remotedev_display_ops {
 	bool (*ready)(struct rpmsg_remotedev *rdev);
-	int (*get_res_info)(struct rpmsg_remotedev *rdev, struct rpmsg_remotedev_display_resinfo *res);
+	int (*get_res_info)(struct rpmsg_remotedev *rdev,
+			    struct rpmsg_remotedev_display_resinfo *res);
 	int (*commit)(struct rpmsg_remotedev *rdev, struct rpmsg_remotedev_display_commit *commit);
 };
 
@@ -202,10 +203,11 @@ struct rpmsg_remotedev {
 };
 
 #if IS_REACHABLE(CONFIG_RPMSG_KDRV)
-extern struct rpmsg_remotedev *rpmsg_remotedev_get_named_device(const char *device_name);
-extern void rpmsg_remotedev_put_device(struct rpmsg_remotedev *rdev);
+struct rpmsg_remotedev *rpmsg_remotedev_get_named_device(const char *device_name);
+void rpmsg_remotedev_put_device(struct rpmsg_remotedev *rdev);
 #else
-static inline struct rpmsg_remotedev * __maybe_unused rpmsg_remotedev_get_named_device(const char *device_name)
+static inline struct rpmsg_remotedev * __maybe_unused rpmsg_remotedev_get_named_device(const char
+										       *device_name)
 {
 	return NULL;
 }

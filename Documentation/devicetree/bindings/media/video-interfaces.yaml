@@ -93,6 +93,7 @@ properties:
       - 4 # MIPI CSI-2 D-PHY
       - 5 # Parallel
       - 6 # BT.656
+      - 7 # DPI
     description:
       Data bus type.
 
@@ -158,6 +159,7 @@ properties:
     $ref: /schemas/types.yaml#/definitions/uint32-array
     minItems: 1
     maxItems: 8
+    uniqueItems: true
     items:
       # Assume up to 9 physical lane indices
       maximum: 8
