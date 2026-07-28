@@ -17,19 +17,27 @@
 #include <linux/if_vlan.h>
 
 #include <net/dst.h>
+#include <net/gso.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
 #include <net/ip6_fib.h>
 #include <net/checksum.h>
 #include <net/dsfield.h>
 #include <net/mpls.h>
+
+#if IS_ENABLED(CONFIG_PSAMPLE)
+#include <net/psample.h>
+#endif
+
 #include <net/sctp/checksum.h>
 
 #include "datapath.h"
+#include "drop.h"
 #include "flow.h"
 #include "conntrack.h"
 #include "vport.h"
 #include "flow_netlink.h"
+#include "openvswitch_trace.h"
 
 struct deferred_action {
 	struct sk_buff *skb;
@@ -229,14 +237,18 @@ static int pop_vlan(struct sk_buff *skb, struct sw_flow_key *key)
 static int push_vlan(struct sk_buff *skb, struct sw_flow_key *key,
 		     const struct ovs_action_push_vlan *vlan)
 {
+	int err;
+
 	if (skb_vlan_tag_present(skb)) {
 		invalidate_flow_key(key);
 	} else {
 		key->eth.vlan.tci = vlan->vlan_tci;
 		key->eth.vlan.tpid = vlan->vlan_tpid;
 	}
-	return skb_vlan_push(skb, vlan->vlan_tpid,
-			     ntohs(vlan->vlan_tci) & ~VLAN_CFI_MASK);
+	err = skb_vlan_push(skb, vlan->vlan_tpid,
+			    ntohs(vlan->vlan_tci) & ~VLAN_CFI_MASK);
+	skb_reset_mac_len(skb);
+	return err;
 }
 
 /* 'src' is already properly masked. */
@@ -308,10 +320,17 @@ static int push_eth(struct sk_buff *skb, struct sw_flow_key *key,
 	return 0;
 }
 
-static int push_nsh(struct sk_buff *skb, struct sw_flow_key *key,
-		    const struct nshhdr *nh)
+static noinline_for_stack int push_nsh(struct sk_buff *skb,
+				       struct sw_flow_key *key,
+				       const struct nlattr *a)
 {
+	u8 buffer[NSH_HDR_MAX_LEN];
+	struct nshhdr *nh = (struct nshhdr *)buffer;
 	int err;
+
+	err = nsh_hdr_from_nlattr(a, nh, NSH_HDR_MAX_LEN);
+	if (err)
+		return err;
 
 	err = nsh_push(skb, nh);
 	if (err)
@@ -779,7 +798,7 @@ static int ovs_vport_output(struct net *net, struct sock *sk,
 	struct vport *vport = data->vport;
 
 	if (skb_cow_head(skb, data->l2_len) < 0) {
-		kfree_skb(skb);
+		kfree_skb_reason(skb, SKB_DROP_REASON_NOMEM);
 		return -ENOMEM;
 	}
 
@@ -850,6 +869,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 			 struct sk_buff *skb, u16 mru,
 			 struct sw_flow_key *key)
 {
+	enum ovs_drop_reason reason;
 	u16 orig_network_offset = 0;
 
 	if (eth_p_mpls(skb->protocol)) {
@@ -859,6 +879,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 
 	if (skb_network_offset(skb) > MAX_L2_LEN) {
 		OVS_NLERR(1, "L2 header too long to fragment");
+		reason = OVS_DROP_FRAG_L2_TOO_LONG;
 		goto err;
 	}
 
@@ -868,7 +889,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 
 		prepare_frag(vport, skb, orig_network_offset,
 			     ovs_key_mac_proto(key));
-		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL, 1,
+		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL,
 			 DST_OBSOLETE_NONE, DST_NOCOUNT);
 		ovs_rt.dst.dev = vport->dev;
 
@@ -885,7 +906,7 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 		prepare_frag(vport, skb, orig_network_offset,
 			     ovs_key_mac_proto(key));
 		memset(&ovs_rt, 0, sizeof(ovs_rt));
-		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL, 1,
+		dst_init(&ovs_rt.dst, &ovs_dst_ops, NULL,
 			 DST_OBSOLETE_NONE, DST_NOCOUNT);
 		ovs_rt.dst.dev = vport->dev;
 
@@ -899,12 +920,13 @@ static void ovs_fragment(struct net *net, struct vport *vport,
 		WARN_ONCE(1, "Failed fragment ->%s: eth=%04x, MRU=%d, MTU=%d.",
 			  ovs_vport_name(vport), ntohs(key->eth.type), mru,
 			  vport->dev->mtu);
+		reason = OVS_DROP_FRAG_INVALID_PROTO;
 		goto err;
 	}
 
 	return;
 err:
-	kfree_skb(skb);
+	ovs_kfree_skb_reason(skb, reason);
 }
 
 static void do_output(struct datapath *dp, struct sk_buff *skb, int out_port,
@@ -912,7 +934,9 @@ static void do_output(struct datapath *dp, struct sk_buff *skb, int out_port,
 {
 	struct vport *vport = ovs_vport_rcu(dp, out_port);
 
-	if (likely(vport)) {
+	if (likely(vport &&
+		   netif_running(vport->dev) &&
+		   netif_carrier_ok(vport->dev))) {
 		u16 mru = OVS_CB(skb)->mru;
 		u32 cutlen = OVS_CB(skb)->cutlen;
 
@@ -931,10 +955,10 @@ static void do_output(struct datapath *dp, struct sk_buff *skb, int out_port,
 
 			ovs_fragment(net, vport, skb, mru, key);
 		} else {
-			kfree_skb(skb);
+			kfree_skb_reason(skb, SKB_DROP_REASON_PKT_TOO_BIG);
 		}
 	} else {
-		kfree_skb(skb);
+		kfree_skb_reason(skb, SKB_DROP_REASON_DEV_READY);
 	}
 }
 
@@ -951,15 +975,20 @@ static int output_userspace(struct datapath *dp, struct sk_buff *skb,
 	upcall.cmd = OVS_PACKET_CMD_ACTION;
 	upcall.mru = OVS_CB(skb)->mru;
 
-	for (a = nla_data(attr), rem = nla_len(attr); rem > 0;
-	     a = nla_next(a, &rem)) {
+	nla_for_each_nested(a, attr, rem) {
 		switch (nla_type(a)) {
 		case OVS_USERSPACE_ATTR_USERDATA:
 			upcall.userdata = a;
 			break;
 
 		case OVS_USERSPACE_ATTR_PID:
-			upcall.portid = nla_get_u32(a);
+			if (dp->user_features &
+			    OVS_DP_F_DISPATCH_UPCALL_PER_CPU)
+				upcall.portid =
+				  ovs_dp_get_upcall_portid(dp,
+							   smp_processor_id());
+			else
+				upcall.portid = nla_get_u32(a);
 			break;
 
 		case OVS_USERSPACE_ATTR_EGRESS_TUN_PORT: {
@@ -993,16 +1022,16 @@ static int output_userspace(struct datapath *dp, struct sk_buff *skb,
 
 static int dec_ttl_exception_handler(struct datapath *dp, struct sk_buff *skb,
 				     struct sw_flow_key *key,
-				     const struct nlattr *attr, bool last)
+				     const struct nlattr *attr)
 {
 	/* The first attribute is always 'OVS_DEC_TTL_ATTR_ACTION'. */
 	struct nlattr *actions = nla_data(attr);
 
 	if (nla_len(actions))
 		return clone_execute(dp, skb, key, 0, nla_data(actions),
-				     nla_len(actions), last, false);
+				     nla_len(actions), true, false);
 
-	consume_skb(skb);
+	ovs_kfree_skb_reason(skb, OVS_DROP_IP_TTL);
 	return 0;
 }
 
@@ -1018,23 +1047,33 @@ static int sample(struct datapath *dp, struct sk_buff *skb,
 	struct nlattr *sample_arg;
 	int rem = nla_len(attr);
 	const struct sample_arg *arg;
+	u32 init_probability;
 	bool clone_flow_key;
+	int err;
 
 	/* The first action is always 'OVS_SAMPLE_ATTR_ARG'. */
 	sample_arg = nla_data(attr);
 	arg = nla_data(sample_arg);
 	actions = nla_next(sample_arg, &rem);
+	init_probability = OVS_CB(skb)->probability;
 
 	if ((arg->probability != U32_MAX) &&
-	    (!arg->probability || prandom_u32() > arg->probability)) {
+	    (!arg->probability || get_random_u32() > arg->probability)) {
 		if (last)
-			consume_skb(skb);
+			ovs_kfree_skb_reason(skb, OVS_DROP_LAST_ACTION);
 		return 0;
 	}
 
+	OVS_CB(skb)->probability = arg->probability;
+
 	clone_flow_key = !arg->exec;
-	return clone_execute(dp, skb, key, 0, actions, rem, last,
-			     clone_flow_key);
+	err = clone_execute(dp, skb, key, 0, actions, rem, last,
+			    clone_flow_key);
+
+	if (!last)
+		OVS_CB(skb)->probability = init_probability;
+
+	return err;
 }
 
 /* When 'last' is true, clone() should always consume the 'skb'.
@@ -1065,8 +1104,16 @@ static void execute_hash(struct sk_buff *skb, struct sw_flow_key *key,
 	struct ovs_action_hash *hash_act = nla_data(attr);
 	u32 hash = 0;
 
-	/* OVS_HASH_ALG_L4 is the only possible hash algorithm.  */
-	hash = skb_get_hash(skb);
+	if (hash_act->hash_alg == OVS_HASH_ALG_L4) {
+		/* OVS_HASH_ALG_L4 hasing type. */
+		hash = skb_get_hash(skb);
+	} else if (hash_act->hash_alg == OVS_HASH_ALG_SYM_L4) {
+		/* OVS_HASH_ALG_SYM_L4 hashing type.  NOTE: this doesn't
+		 * extend past an encapsulated header.
+		 */
+		hash = __skb_get_hash_symmetric(skb);
+	}
+
 	hash = jhash_1word(hash, hash_act->hash_basis);
 	if (!hash)
 		hash = 0x1;
@@ -1266,6 +1313,44 @@ static int execute_dec_ttl(struct sk_buff *skb, struct sw_flow_key *key)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_PSAMPLE)
+static void execute_psample(struct datapath *dp, struct sk_buff *skb,
+			    const struct nlattr *attr)
+{
+	struct psample_group psample_group = {};
+	struct psample_metadata md = {};
+	const struct nlattr *a;
+	u32 rate;
+	int rem;
+
+	nla_for_each_attr(a, nla_data(attr), nla_len(attr), rem) {
+		switch (nla_type(a)) {
+		case OVS_PSAMPLE_ATTR_GROUP:
+			psample_group.group_num = nla_get_u32(a);
+			break;
+
+		case OVS_PSAMPLE_ATTR_COOKIE:
+			md.user_cookie = nla_data(a);
+			md.user_cookie_len = nla_len(a);
+			break;
+		}
+	}
+
+	psample_group.net = ovs_dp_get_net(dp);
+	md.in_ifindex = OVS_CB(skb)->input_vport->dev->ifindex;
+	md.trunc_size = skb->len - OVS_CB(skb)->cutlen;
+	md.rate_as_probability = 1;
+
+	rate = OVS_CB(skb)->probability ? OVS_CB(skb)->probability : U32_MAX;
+
+	psample_sample_packet(&psample_group, skb, rate, &md);
+}
+#else
+static void execute_psample(struct datapath *dp, struct sk_buff *skb,
+			    const struct nlattr *attr)
+{}
+#endif
+
 /* Execute a list of actions against 'skb'. */
 static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			      struct sw_flow_key *key,
@@ -1278,6 +1363,12 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 	     a = nla_next(a, &rem)) {
 		int err = 0;
 
+		if (trace_ovs_do_execute_action_enabled())
+			trace_ovs_do_execute_action(dp, skb, key, a, rem);
+
+		/* Actions that rightfully have to consume the skb should do it
+		 * and return directly.
+		 */
 		switch (nla_type(a)) {
 		case OVS_ACTION_ATTR_OUTPUT: {
 			int port = nla_get_u32(a);
@@ -1313,6 +1404,10 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			output_userspace(dp, skb, key, a, attr,
 						     len, OVS_CB(skb)->cutlen);
 			OVS_CB(skb)->cutlen = 0;
+			if (nla_is_last(a, rem)) {
+				consume_skb(skb);
+				return 0;
+			}
 			break;
 
 		case OVS_ACTION_ATTR_HASH:
@@ -1409,17 +1504,9 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 			err = pop_eth(skb, key);
 			break;
 
-		case OVS_ACTION_ATTR_PUSH_NSH: {
-			u8 buffer[NSH_HDR_MAX_LEN];
-			struct nshhdr *nh = (struct nshhdr *)buffer;
-
-			err = nsh_hdr_from_nlattr(nla_data(a), nh,
-						  NSH_HDR_MAX_LEN);
-			if (unlikely(err))
-				break;
-			err = push_nsh(skb, key, nh);
+		case OVS_ACTION_ATTR_PUSH_NSH:
+			err = push_nsh(skb, key, nla_data(a));
 			break;
-		}
 
 		case OVS_ACTION_ATTR_POP_NSH:
 			err = pop_nsh(skb, key);
@@ -1427,7 +1514,7 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 
 		case OVS_ACTION_ATTR_METER:
 			if (ovs_meter_execute(dp, skb, key, nla_get_u32(a))) {
-				consume_skb(skb);
+				ovs_kfree_skb_reason(skb, OVS_DROP_METER);
 				return 0;
 			}
 			break;
@@ -1454,21 +1541,37 @@ static int do_execute_actions(struct datapath *dp, struct sk_buff *skb,
 
 		case OVS_ACTION_ATTR_DEC_TTL:
 			err = execute_dec_ttl(skb, key);
-			if (err == -EHOSTUNREACH) {
-				err = dec_ttl_exception_handler(dp, skb, key,
-								a, true);
-				return err;
+			if (err == -EHOSTUNREACH)
+				return dec_ttl_exception_handler(dp, skb,
+								 key, a);
+			break;
+
+		case OVS_ACTION_ATTR_DROP: {
+			enum ovs_drop_reason reason = nla_get_u32(a)
+				? OVS_DROP_EXPLICIT_WITH_ERROR
+				: OVS_DROP_EXPLICIT;
+
+			ovs_kfree_skb_reason(skb, reason);
+			return 0;
+		}
+
+		case OVS_ACTION_ATTR_PSAMPLE:
+			execute_psample(dp, skb, a);
+			OVS_CB(skb)->cutlen = 0;
+			if (nla_is_last(a, rem)) {
+				consume_skb(skb);
+				return 0;
 			}
 			break;
 		}
 
 		if (unlikely(err)) {
-			kfree_skb(skb);
+			ovs_kfree_skb_reason(skb, OVS_DROP_ACTION_ERROR);
 			return err;
 		}
 	}
 
-	consume_skb(skb);
+	ovs_kfree_skb_reason(skb, OVS_DROP_LAST_ACTION);
 	return 0;
 }
 
@@ -1530,15 +1633,15 @@ static int clone_execute(struct datapath *dp, struct sk_buff *skb,
 		/* Out of per CPU action FIFO space. Drop the 'skb' and
 		 * log an error.
 		 */
-		kfree_skb(skb);
+		ovs_kfree_skb_reason(skb, OVS_DROP_DEFERRED_LIMIT);
 
 		if (net_ratelimit()) {
 			if (actions) { /* Sample action */
 				pr_warn("%s: deferred action limit reached, drop sample action\n",
 					ovs_dp_name(dp));
 			} else {  /* Recirc action */
-				pr_warn("%s: deferred action limit reached, drop recirc action\n",
-					ovs_dp_name(dp));
+				pr_warn("%s: deferred action limit reached, drop recirc action (recirc_id=%#x)\n",
+					ovs_dp_name(dp), recirc_id);
 			}
 		}
 	}
@@ -1582,7 +1685,7 @@ int ovs_execute_actions(struct datapath *dp, struct sk_buff *skb,
 	if (unlikely(level > OVS_RECURSION_LIMIT)) {
 		net_crit_ratelimited("ovs: recursion limit reached on datapath %s, probable configuration error\n",
 				     ovs_dp_name(dp));
-		kfree_skb(skb);
+		ovs_kfree_skb_reason(skb, OVS_DROP_RECURSION_LIMIT);
 		err = -ENETDOWN;
 		goto out;
 	}

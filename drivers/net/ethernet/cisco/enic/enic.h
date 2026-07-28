@@ -1,20 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright 2008-2010 Cisco Systems, Inc.  All rights reserved.
  * Copyright 2007 Nuova Systems, Inc.  All rights reserved.
- *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- *
  */
 
 #ifndef _ENIC_H_
@@ -141,6 +128,40 @@ struct vxlan_offload {
 	u8 flags;
 };
 
+struct enic_wq_stats {
+	u64 packets;		/* pkts queued for Tx */
+	u64 stopped;		/* Tx ring almost full, queue stopped */
+	u64 wake;		/* Tx ring no longer full, queue woken up*/
+	u64 tso;		/* non-encap tso pkt */
+	u64 encap_tso;		/* encap tso pkt */
+	u64 encap_csum;		/* encap HW csum */
+	u64 csum_partial;	/* skb->ip_summed = CHECKSUM_PARTIAL */
+	u64 csum_none;		/* HW csum not required */
+	u64 bytes;		/* bytes queued for Tx */
+	u64 add_vlan;		/* HW adds vlan tag */
+	u64 cq_work;		/* Tx completions processed */
+	u64 cq_bytes;		/* Tx bytes processed */
+	u64 null_pkt;		/* skb length <= 0 */
+	u64 skb_linear_fail;	/* linearize failures */
+	u64 desc_full_awake;	/* TX ring full while queue awake */
+};
+
+struct enic_rq_stats {
+	u64 packets;			/* pkts received */
+	u64 bytes;			/* bytes received */
+	u64 l4_rss_hash;		/* hashed on l4 */
+	u64 l3_rss_hash;		/* hashed on l3 */
+	u64 csum_unnecessary;		/* HW verified csum */
+	u64 csum_unnecessary_encap;	/* HW verified csum on encap packet */
+	u64 vlan_stripped;		/* HW stripped vlan */
+	u64 napi_complete;		/* napi complete intr reenabled */
+	u64 napi_repoll;		/* napi poll again */
+	u64 bad_fcs;			/* bad pkts */
+	u64 pkt_truncated;		/* truncated pkts */
+	u64 no_skb;			/* out of skbs */
+	u64 desc_skip;			/* Rx pkt went into later buffer */
+};
+
 /* Per-instance private data structure */
 struct enic {
 	struct net_device *netdev;
@@ -175,16 +196,16 @@ struct enic {
 	/* work queue cache line section */
 	____cacheline_aligned struct vnic_wq wq[ENIC_WQ_MAX];
 	spinlock_t wq_lock[ENIC_WQ_MAX];
+	struct enic_wq_stats wq_stats[ENIC_WQ_MAX];
 	unsigned int wq_count;
 	u16 loop_enable;
 	u16 loop_tag;
 
 	/* receive queue cache line section */
 	____cacheline_aligned struct vnic_rq rq[ENIC_RQ_MAX];
+	struct enic_rq_stats rq_stats[ENIC_RQ_MAX];
 	unsigned int rq_count;
 	struct vxlan_offload vxlan;
-	u64 rq_truncated_pkts;
-	u64 rq_bad_fcs;
 	struct napi_struct napi[ENIC_RQ_MAX + ENIC_WQ_MAX];
 
 	/* interrupt resource cache line section */
@@ -239,21 +260,6 @@ static inline unsigned int enic_cq_wq(struct enic *enic, unsigned int wq)
 	return enic->rq_count + wq;
 }
 
-static inline unsigned int enic_legacy_io_intr(void)
-{
-	return 0;
-}
-
-static inline unsigned int enic_legacy_err_intr(void)
-{
-	return 1;
-}
-
-static inline unsigned int enic_legacy_notify_intr(void)
-{
-	return 2;
-}
-
 static inline unsigned int enic_msix_rq_intr(struct enic *enic,
 	unsigned int rq)
 {
@@ -271,6 +277,10 @@ static inline unsigned int enic_msix_err_intr(struct enic *enic)
 	return enic->rq_count + enic->wq_count;
 }
 
+#define ENIC_LEGACY_IO_INTR	0
+#define ENIC_LEGACY_ERR_INTR	1
+#define ENIC_LEGACY_NOTIFY_INTR	2
+
 static inline unsigned int enic_msix_notify_intr(struct enic *enic)
 {
 	return enic->rq_count + enic->wq_count + 1;
@@ -280,7 +290,7 @@ static inline bool enic_is_err_intr(struct enic *enic, int intr)
 {
 	switch (vnic_dev_get_intr_mode(enic->vdev)) {
 	case VNIC_DEV_INTR_MODE_INTX:
-		return intr == enic_legacy_err_intr();
+		return intr == ENIC_LEGACY_ERR_INTR;
 	case VNIC_DEV_INTR_MODE_MSIX:
 		return intr == enic_msix_err_intr(enic);
 	case VNIC_DEV_INTR_MODE_MSI:
@@ -293,7 +303,7 @@ static inline bool enic_is_notify_intr(struct enic *enic, int intr)
 {
 	switch (vnic_dev_get_intr_mode(enic->vdev)) {
 	case VNIC_DEV_INTR_MODE_INTX:
-		return intr == enic_legacy_notify_intr();
+		return intr == ENIC_LEGACY_NOTIFY_INTR;
 	case VNIC_DEV_INTR_MODE_MSIX:
 		return intr == enic_msix_notify_intr(enic);
 	case VNIC_DEV_INTR_MODE_MSI:
@@ -304,7 +314,7 @@ static inline bool enic_is_notify_intr(struct enic *enic, int intr)
 
 static inline int enic_dma_map_check(struct enic *enic, dma_addr_t dma_addr)
 {
-	if (unlikely(pci_dma_mapping_error(enic->pdev, dma_addr))) {
+	if (unlikely(dma_mapping_error(&enic->pdev->dev, dma_addr))) {
 		net_warn_ratelimited("%s: PCI dma mapping failed!\n",
 				     enic->netdev->name);
 		enic->gen_stats.dma_map_error++;

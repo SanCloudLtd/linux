@@ -48,27 +48,26 @@ struct dispc_features_scaling {
 
 struct dispc_errata {
 	bool i2000; /* DSS Does Not Support YUV Pixel Data Formats */
+	bool i2097; /* OVR Layer Disable May Cause Sync Lost */
 };
 
 enum dispc_vp_bus_type {
 	DISPC_VP_DPI,		/* DPI output */
-	DISPC_VP_OLDI,		/* OLDI (LVDS) output */
+	DISPC_VP_OLDI_AM65X,	/* OLDI (LVDS) output for AM65x DSS */
 	DISPC_VP_INTERNAL,	/* SoC internal routing */
+	DISPC_VP_TIED_OFF,	/* Tied off / Unavailable */
 	DISPC_VP_MAX_BUS_TYPE,
 };
 
 enum dispc_dss_subrevision {
 	DISPC_K2G,
+	DISPC_AM625,
+	DISPC_AM62A7,
+	DISPC_AM62P51,
+	DISPC_AM62P52,
+	DISPC_AM62L,
 	DISPC_AM65X,
 	DISPC_J721E,
-	DISPC_AM625,
-};
-
-enum dss_oldi_modes {
-	OLDI_MODE_OFF,				/* OLDI turned off / tied off in IP. */
-	OLDI_SINGLE_LINK_SINGLE_MODE,		/* Single Output over OLDI 0. */
-	OLDI_SINGLE_LINK_DUPLICATE_MODE,	/* Duplicate Output over OLDI 0 and 1. */
-	OLDI_DUAL_LINK,				/* Combined Output over OLDI 0 and 1. */
 };
 
 struct dispc_features {
@@ -85,7 +84,7 @@ struct dispc_features {
 	const char *vp_name[TIDSS_MAX_PORTS]; /* Should match dt reg names */
 	const char *ovr_name[TIDSS_MAX_PORTS]; /* Should match dt reg names */
 	const char *vpclk_name[TIDSS_MAX_PORTS]; /* Should match dt clk names */
-	const enum dispc_vp_bus_type vp_bus_type[TIDSS_MAX_PORTS];
+	enum dispc_vp_bus_type vp_bus_type[TIDSS_MAX_PORTS];
 	struct tidss_vp_feat vp_feat;
 	u32 num_planes;
 	const char *vid_name[TIDSS_MAX_PLANES]; /* Should match dt reg names */
@@ -94,9 +93,17 @@ struct dispc_features {
 };
 
 extern const struct dispc_features dispc_k2g_feats;
+extern const struct dispc_features dispc_am625_feats;
+extern const struct dispc_features dispc_am62a7_feats;
+extern const struct dispc_features dispc_am62l_feats;
+extern const struct dispc_features dispc_am62p51_feats;
+extern const struct dispc_features dispc_am62p52_feats;
 extern const struct dispc_features dispc_am65x_feats;
 extern const struct dispc_features dispc_j721e_feats;
-extern const struct dispc_features dispc_am625_feats;
+
+void tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport,
+			  u32 oldi_cfg);
+unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate);
 
 void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask);
 dispc_irq_t dispc_read_and_clear_irqstatus(struct dispc_device *dispc);
@@ -132,13 +139,15 @@ int dispc_runtime_resume(struct dispc_device *dispc);
 int dispc_plane_check(struct dispc_device *dispc, u32 hw_plane,
 		      const struct drm_plane_state *state,
 		      u32 hw_videoport);
-int dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
-		      const struct drm_plane_state *state,
-		      u32 hw_videoport);
-int dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable);
+void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+		       const struct drm_plane_state *state,
+		       u32 hw_videoport);
+void dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable);
 const u32 *dispc_plane_formats(struct dispc_device *dispc, unsigned int *len);
 
 int dispc_init(struct tidss_device *tidss);
 void dispc_remove(struct tidss_device *tidss);
+
+void dispc_splash_fini(struct dispc_device *dispc);
 
 #endif

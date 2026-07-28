@@ -12,6 +12,12 @@
 #define TMOUTEN				BIT(0)
 
 #define MAC_FPE_CTRL_STS		0x00000234
+#define TRSP				BIT(19)
+#define TVER				BIT(18)
+#define RRSP				BIT(17)
+#define RVER				BIT(16)
+#define SRSP				BIT(2)
+#define SVER				BIT(1)
 #define EFPE				BIT(0)
 
 #define MAC_PPS_CONTROL			0x00000b70
@@ -33,22 +39,11 @@
 #define MAC_PPSx_INTERVAL(x)		(0x00000b88 + ((x) * 0x10))
 #define MAC_PPSx_WIDTH(x)		(0x00000b8c + ((x) * 0x10))
 
-#define MTL_EST_CONTROL			0x00000c50
-#define PTOV				GENMASK(31, 24)
-#define PTOV_SHIFT			24
-#define SSWL				BIT(1)
-#define EEST				BIT(0)
-#define MTL_EST_GCL_CONTROL		0x00000c80
-#define BTR_LOW				0x0
-#define BTR_HIGH			0x1
-#define CTR_LOW				0x2
-#define CTR_HIGH			0x3
-#define TER				0x4
-#define LLR				0x5
-#define ADDR_SHIFT			8
-#define GCRR				BIT(2)
-#define SRWO				BIT(0)
-#define MTL_EST_GCL_DATA		0x00000c84
+#define MTL_FPE_CTRL_STS		0x00000c90
+/* Preemption Classification */
+#define DWMAC5_PREEMPTION_CLASS		GENMASK(15, 8)
+/* Additional Fragment Size of preempted frames */
+#define DWMAC5_ADD_FRAG_SZ		GENMASK(1, 0)
 
 #define MTL_RXP_CONTROL_STATUS		0x00000ca0
 #define RXPI				BIT(31)
@@ -62,6 +57,7 @@
 #define ADDR				GENMASK(15, 0)
 #define MTL_RXP_IACC_DATA		0x00000cb4
 #define MTL_ECC_CONTROL			0x00000cc0
+#define MEEAO				BIT(8)
 #define TSOEE				BIT(4)
 #define MRXPEE				BIT(3)
 #define MESTEE				BIT(2)
@@ -98,7 +94,10 @@
 #define GMAC_RXQCTRL_VFFQ_SHIFT		17
 #define GMAC_RXQCTRL_VFFQE		BIT(16)
 
-int dwmac5_safety_feat_config(void __iomem *ioaddr, unsigned int asp);
+#define GMAC_INT_FPE_EN			BIT(17)
+
+int dwmac5_safety_feat_config(void __iomem *ioaddr, unsigned int asp,
+			      struct stmmac_safety_feature_cfg *safety_cfg);
 int dwmac5_safety_feat_irq_status(struct net_device *ndev,
 		void __iomem *ioaddr, unsigned int asp,
 		struct stmmac_safety_stats *stats);
@@ -109,9 +108,16 @@ int dwmac5_rxp_config(void __iomem *ioaddr, struct stmmac_tc_entry *entries,
 int dwmac5_flex_pps_config(void __iomem *ioaddr, int index,
 			   struct stmmac_pps_cfg *cfg, bool enable,
 			   u32 sub_second_inc, u32 systime_flags);
-int dwmac5_est_configure(void __iomem *ioaddr, struct stmmac_est *cfg,
-			 unsigned int ptp_rate);
-void dwmac5_fpe_configure(void __iomem *ioaddr, u32 num_txq, u32 num_rxq,
-			  bool enable);
+void dwmac5_fpe_configure(void __iomem *ioaddr, struct stmmac_fpe_cfg *cfg,
+			  u32 num_txq, u32 num_rxq,
+			  bool tx_enable, bool pmac_enable);
+void dwmac5_fpe_send_mpacket(void __iomem *ioaddr,
+			     struct stmmac_fpe_cfg *cfg,
+			     enum stmmac_mpacket_type type);
+int dwmac5_fpe_irq_status(void __iomem *ioaddr, struct net_device *dev);
+int dwmac5_fpe_get_add_frag_size(const void __iomem *ioaddr);
+void dwmac5_fpe_set_add_frag_size(void __iomem *ioaddr, u32 add_frag_size);
+int dwmac5_fpe_map_preemption_class(struct net_device *ndev,
+				    struct netlink_ext_ack *extack, u32 pclass);
 
 #endif /* __DWMAC5_H__ */

@@ -11,10 +11,9 @@
  */
 #include <linux/module.h>
 #include <linux/regmap.h>
-#include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
-#include <linux/of_irq.h>
+#include <linux/property.h>
 #include <linux/regulator/consumer.h>
 
 #include <linux/iio/iio.h>
@@ -27,6 +26,7 @@
 #include "bmi160.h"
 
 #define BMI160_REG_CHIP_ID	0x00
+#define BMI120_CHIP_ID_VAL	0xD3
 #define BMI160_CHIP_ID_VAL	0xD1
 
 #define BMI160_REG_PMU_STATUS	0x03
@@ -113,6 +113,11 @@
 	.ext_info = bmi160_ext_info,				\
 }
 
+static const u8 bmi_chip_ids[] = {
+	BMI120_CHIP_ID_VAL,
+	BMI160_CHIP_ID_VAL,
+};
+
 /* scan indexes follow DATA register order */
 enum bmi160_scan_axis {
 	BMI160_SCAN_EXT_MAGN_X = 0,
@@ -144,7 +149,7 @@ const struct regmap_config bmi160_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 };
-EXPORT_SYMBOL(bmi160_regmap_config);
+EXPORT_SYMBOL_NS(bmi160_regmap_config, IIO_BMI160);
 
 struct bmi160_regs {
 	u8 data; /* LSB byte register for X-axis */
@@ -430,8 +435,7 @@ static irqreturn_t bmi160_trigger_handler(int irq, void *p)
 	int i, ret, j = 0, base = BMI160_REG_DATA_MAGN_XOUT_L;
 	__le16 sample;
 
-	for_each_set_bit(i, indio_dev->active_scan_mask,
-			 indio_dev->masklength) {
+	iio_for_each_active_channel(indio_dev, i) {
 		ret = regmap_bulk_read(data->regmap, base + i * sizeof(sample),
 				       &sample, sizeof(sample));
 		if (ret)
@@ -484,7 +488,6 @@ static int bmi160_write_raw(struct iio_dev *indio_dev,
 	case IIO_CHAN_INFO_SCALE:
 		return bmi160_set_scale(data,
 					bmi160_to_sensor(chan->type), val2);
-		break;
 	case IIO_CHAN_INFO_SAMP_FREQ:
 		return bmi160_set_odr(data, bmi160_to_sensor(chan->type),
 				      val, val2);
@@ -525,17 +528,6 @@ static const struct iio_info bmi160_info = {
 	.write_raw = bmi160_write_raw,
 	.attrs = &bmi160_attrs_group,
 };
-
-static const char *bmi160_match_acpi_device(struct device *dev)
-{
-	const struct acpi_device_id *id;
-
-	id = acpi_match_device(dev->driver->acpi_match_table, dev);
-	if (!id)
-		return NULL;
-
-	return dev_name(dev);
-}
 
 static int bmi160_write_conf_reg(struct regmap *regmap, unsigned int reg,
 				 unsigned int mask, unsigned int bits,
@@ -646,20 +638,20 @@ int bmi160_enable_irq(struct regmap *regmap, bool enable)
 				     BMI160_DRDY_INT_EN, enable_bit,
 				     BMI160_NORMAL_WRITE_USLEEP);
 }
-EXPORT_SYMBOL(bmi160_enable_irq);
+EXPORT_SYMBOL_NS(bmi160_enable_irq, IIO_BMI160);
 
-static int bmi160_get_irq(struct device_node *of_node, enum bmi160_int_pin *pin)
+static int bmi160_get_irq(struct fwnode_handle *fwnode, enum bmi160_int_pin *pin)
 {
 	int irq;
 
 	/* Use INT1 if possible, otherwise fall back to INT2. */
-	irq = of_irq_get_byname(of_node, "INT1");
+	irq = fwnode_irq_get_byname(fwnode, "INT1");
 	if (irq > 0) {
 		*pin = BMI160_PIN_INT1;
 		return irq;
 	}
 
-	irq = of_irq_get_byname(of_node, "INT2");
+	irq = fwnode_irq_get_byname(fwnode, "INT2");
 	if (irq > 0)
 		*pin = BMI160_PIN_INT2;
 
@@ -689,7 +681,7 @@ static int bmi160_config_device_irq(struct iio_dev *indio_dev, int irq_type,
 		return -EINVAL;
 	}
 
-	open_drain = of_property_read_bool(dev->of_node, "drive-open-drain");
+	open_drain = device_property_read_bool(dev, "drive-open-drain");
 
 	return bmi160_config_pin(data->regmap, pin, open_drain, irq_mask,
 				 BMI160_NORMAL_WRITE_USLEEP);
@@ -715,6 +707,16 @@ static int bmi160_setup_irq(struct iio_dev *indio_dev, int irq,
 		return ret;
 
 	return bmi160_probe_trigger(indio_dev, irq, irq_type);
+}
+
+static int bmi160_check_chip_id(const u8 chip_id)
+{
+	for (int i = 0; i < ARRAY_SIZE(bmi_chip_ids); i++) {
+		if (chip_id == bmi_chip_ids[i])
+			return 0;
+	}
+
+	return -ENODEV;
 }
 
 static int bmi160_chip_init(struct bmi160_data *data, bool use_spi)
@@ -750,12 +752,10 @@ static int bmi160_chip_init(struct bmi160_data *data, bool use_spi)
 		dev_err(dev, "Error reading chip id\n");
 		goto disable_regulator;
 	}
-	if (val != BMI160_CHIP_ID_VAL) {
-		dev_err(dev, "Wrong chip id, got %x expected %x\n",
-			val, BMI160_CHIP_ID_VAL);
-		ret = -ENODEV;
-		goto disable_regulator;
-	}
+
+	ret = bmi160_check_chip_id(val);
+	if (ret)
+		dev_warn(dev, "Chip id not found: %x\n", val);
 
 	ret = bmi160_set_mode(data, BMI160_ACCEL, true);
 	if (ret)
@@ -794,7 +794,8 @@ int bmi160_probe_trigger(struct iio_dev *indio_dev, int irq, u32 irq_type)
 	int ret;
 
 	data->trig = devm_iio_trigger_alloc(&indio_dev->dev, "%s-dev%d",
-					    indio_dev->name, indio_dev->id);
+					    indio_dev->name,
+					    iio_device_id(indio_dev));
 
 	if (data->trig == NULL)
 		return -ENOMEM;
@@ -860,8 +861,7 @@ int bmi160_core_probe(struct device *dev, struct regmap *regmap,
 		return ret;
 	}
 
-	ret = iio_read_mount_matrix(dev, "mount-matrix",
-				    &data->orientation);
+	ret = iio_read_mount_matrix(dev, &data->orientation);
 	if (ret)
 		return ret;
 
@@ -872,9 +872,6 @@ int bmi160_core_probe(struct device *dev, struct regmap *regmap,
 	ret = devm_add_action_or_reset(dev, bmi160_chip_uninit, data);
 	if (ret)
 		return ret;
-
-	if (!name && ACPI_HANDLE(dev))
-		name = bmi160_match_acpi_device(dev);
 
 	indio_dev->channels = bmi160_channels;
 	indio_dev->num_channels = ARRAY_SIZE(bmi160_channels);
@@ -888,7 +885,7 @@ int bmi160_core_probe(struct device *dev, struct regmap *regmap,
 	if (ret)
 		return ret;
 
-	irq = bmi160_get_irq(dev->of_node, &int_pin);
+	irq = bmi160_get_irq(dev_fwnode(dev), &int_pin);
 	if (irq > 0) {
 		ret = bmi160_setup_irq(indio_dev, irq, int_pin);
 		if (ret)
@@ -900,7 +897,7 @@ int bmi160_core_probe(struct device *dev, struct regmap *regmap,
 
 	return devm_iio_device_register(dev, indio_dev);
 }
-EXPORT_SYMBOL_GPL(bmi160_core_probe);
+EXPORT_SYMBOL_NS_GPL(bmi160_core_probe, IIO_BMI160);
 
 MODULE_AUTHOR("Daniel Baluta <daniel.baluta@intel.com>");
 MODULE_DESCRIPTION("Bosch BMI160 driver");

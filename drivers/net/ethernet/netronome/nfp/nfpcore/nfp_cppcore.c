@@ -9,7 +9,7 @@
  *          Rolf Neugebauer <rolf.neugebauer@netronome.com>
  */
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/ioport.h>
@@ -908,8 +908,7 @@ area_cache_put(struct nfp_cpp *cpp, struct nfp_cpp_area_cache *cache)
 		return;
 
 	/* Move to front of LRU */
-	list_del(&cache->entry);
-	list_add(&cache->entry, &cpp->area_cache_list);
+	list_move(&cache->entry, &cpp->area_cache_list);
 
 	mutex_unlock(&cpp->area_cache_mutex);
 }

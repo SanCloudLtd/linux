@@ -126,7 +126,7 @@ static struct attribute *ep_dev_attrs[] = {
 	&dev_attr_direction.attr,
 	NULL,
 };
-static struct attribute_group ep_dev_attr_grp = {
+static const struct attribute_group ep_dev_attr_grp = {
 	.attrs = ep_dev_attrs,
 };
 static const struct attribute_group *ep_dev_groups[] = {
@@ -141,7 +141,7 @@ static void ep_device_release(struct device *dev)
 	kfree(ep_dev);
 }
 
-struct device_type usb_ep_device_type = {
+const struct device_type usb_ep_device_type = {
 	.name =		"usb_endpoint",
 	.release = ep_device_release,
 };

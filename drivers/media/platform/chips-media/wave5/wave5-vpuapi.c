@@ -2,21 +2,18 @@
 /*
  * Wave5 series multi-standard codec IP - helper functions
  *
- * Copyright (C) 2021 CHIPS&MEDIA INC
+ * Copyright (C) 2021-2023 CHIPS&MEDIA INC
  */
 
 #include <linux/bug.h>
+#include <linux/pm_runtime.h>
+#include <linux/delay.h>
 #include "wave5-vpuapi.h"
 #include "wave5-regdefine.h"
 #include "wave5.h"
 
 #define DECODE_ALL_TEMPORAL_LAYERS 0
 #define DECODE_ALL_SPATIAL_LAYERS 0
-
-void wave5_vpu_clear_interrupt_ex(struct vpu_instance *inst, u32 intr_flag)
-{
-	wave5_vpu_clear_interrupt(inst, intr_flag);
-}
 
 static int wave5_initialize_vpu(struct device *dev, u8 *code, size_t size)
 {
@@ -52,6 +49,55 @@ int wave5_vpu_init_with_bitcode(struct device *dev, u8 *bitcode, size_t size)
 	return wave5_initialize_vpu(dev, bitcode, size);
 }
 
+int wave5_vpu_flush_instance(struct vpu_instance *inst)
+{
+	int ret = 0;
+	int mutex_ret = 0;
+	int retry = 0;
+
+	mutex_ret = mutex_lock_interruptible(&inst->dev->hw_lock);
+	if (mutex_ret)
+		return mutex_ret;
+	do {
+		/*
+		 * Repeat the FLUSH command until the firmware reports that the
+		 * VPU isn't running anymore
+		 */
+		ret = wave5_vpu_hw_flush_instance(inst);
+		if (ret < 0 && ret != -EBUSY) {
+			dev_warn(inst->dev->dev, "Flush of %s instance with id: %d fail: %d\n",
+				 inst->type == VPU_INST_TYPE_DEC ? "DECODER" : "ENCODER", inst->id,
+				 ret);
+			mutex_unlock(&inst->dev->hw_lock);
+			return ret;
+		}
+		if (ret == -EBUSY && retry++ >= MAX_FIRMWARE_CALL_RETRY) {
+			dev_warn(inst->dev->dev, "Flush of %s instance with id: %d timed out!\n",
+				 inst->type == VPU_INST_TYPE_DEC ? "DECODER" : "ENCODER", inst->id);
+			mutex_unlock(&inst->dev->hw_lock);
+			return -ETIMEDOUT;
+		} else if (ret == -EBUSY) {
+			struct dec_output_info dec_info;
+
+			mutex_unlock(&inst->dev->hw_lock);
+			wave5_vpu_dec_get_output_info(inst, &dec_info);
+			/*
+			 * wave5_vpu_dec_set_disp_flag() acquires hw_lock internally,
+			 * so it must be called here before re-acquiring hw_lock to
+			 * avoid a deadlock.
+			 */
+			if (dec_info.index_frame_display >= 0)
+				wave5_vpu_dec_set_disp_flag(inst, dec_info.index_frame_display);
+			mutex_ret = mutex_lock_interruptible(&inst->dev->hw_lock);
+			if (mutex_ret)
+				return mutex_ret;
+		}
+	} while (ret != 0);
+	mutex_unlock(&inst->dev->hw_lock);
+
+	return ret;
+}
+
 int wave5_vpu_get_version_info(struct device *dev, u32 *revision, unsigned int *product_id)
 {
 	int ret;
@@ -77,8 +123,6 @@ err_out:
 
 static int wave5_check_dec_open_param(struct vpu_instance *inst, struct dec_open_param *param)
 {
-	struct vpu_attr *p_attr = &inst->dev->attr;
-
 	if (inst->id >= MAX_NUM_INSTANCE) {
 		dev_err(inst->dev->dev, "Too many simultaneous instances: %d (max: %u)\n",
 			inst->id, MAX_NUM_INSTANCE);
@@ -91,30 +135,11 @@ static int wave5_check_dec_open_param(struct vpu_instance *inst, struct dec_open
 		return -EINVAL;
 	}
 
-	if (param->bitstream_mode == BS_MODE_INTERRUPT &&
-	    (param->bitstream_buffer_size % 1024 ||
-	     param->bitstream_buffer_size < MIN_BITSTREAM_BUFFER_SIZE)) {
+	if (param->bitstream_buffer_size % 1024 ||
+	    param->bitstream_buffer_size < MIN_BITSTREAM_BUFFER_SIZE) {
 		dev_err(inst->dev->dev,
 			"Bitstream buffer size must be aligned to a multiple of 1024 and have a minimum size of %d\n",
 			MIN_BITSTREAM_BUFFER_SIZE);
-		return -EINVAL;
-	}
-
-	if (!(BIT(param->bitstream_mode) && p_attr->support_bitstream_mode)) {
-		dev_err(inst->dev->dev,
-			"Bitstream mode only configurable with the 'support_bitstream_mode' flag");
-		return -EINVAL;
-	}
-
-	if (!(BIT(param->frame_endian) && p_attr->support_endian_mask)) {
-		dev_err(inst->dev->dev,
-			"Frame endianness only configurable with the 'support_endian_mask' flag");
-		return -EINVAL;
-	}
-
-	if (!(BIT(param->stream_endian) && p_attr->support_endian_mask)) {
-		dev_err(inst->dev->dev,
-			"Stream endianness only configurable with the 'support_endian_mask' flag");
 		return -EINVAL;
 	}
 
@@ -142,12 +167,6 @@ int wave5_vpu_dec_open(struct vpu_instance *inst, struct dec_open_param *open_pa
 		return -ENODEV;
 	}
 
-	inst->codec_info = kzalloc(sizeof(*inst->codec_info), GFP_KERNEL);
-	if (!inst->codec_info) {
-		mutex_unlock(&vpu_dev->hw_lock);
-		return -ENOMEM;
-	}
-
 	p_dec_info = &inst->codec_info->dec_info;
 	memcpy(&p_dec_info->open_param, open_param, sizeof(struct dec_open_param));
 
@@ -159,73 +178,105 @@ int wave5_vpu_dec_open(struct vpu_instance *inst, struct dec_open_param *open_pa
 	p_dec_info->stream_buf_size = buffer_size;
 	p_dec_info->stream_buf_end_addr = buffer_addr + buffer_size;
 	p_dec_info->reorder_enable = TRUE;
-	p_dec_info->mirror_direction = MIRDIR_NONE;
 	p_dec_info->temp_id_select_mode = TEMPORAL_ID_MODE_ABSOLUTE;
 	p_dec_info->target_temp_id = DECODE_ALL_TEMPORAL_LAYERS;
 	p_dec_info->target_spatial_id = DECODE_ALL_SPATIAL_LAYERS;
 
 	ret = wave5_vpu_build_up_dec_param(inst, open_param);
-	if (ret)
-		goto free_codec_info;
-
-	mutex_unlock(&vpu_dev->hw_lock);
-
-	return 0;
-
-free_codec_info:
-	kfree(inst->codec_info);
 	mutex_unlock(&vpu_dev->hw_lock);
 
 	return ret;
+}
+
+static int reset_auxiliary_buffers(struct vpu_instance *inst, unsigned int index)
+{
+	struct dec_info *p_dec_info = &inst->codec_info->dec_info;
+
+	if (index >= MAX_REG_FRAME)
+		return 1;
+
+	if (p_dec_info->vb_mv[index].size == 0 && p_dec_info->vb_fbc_y_tbl[index].size == 0 &&
+	    p_dec_info->vb_fbc_c_tbl[index].size == 0)
+		return 1;
+
+	wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_mv[index]);
+	wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_fbc_y_tbl[index]);
+	wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_fbc_c_tbl[index]);
+
+	return 0;
 }
 
 int wave5_vpu_dec_close(struct vpu_instance *inst, u32 *fail_res)
 {
 	struct dec_info *p_dec_info = &inst->codec_info->dec_info;
 	int ret;
+	int retry = 0;
 	struct vpu_device *vpu_dev = inst->dev;
 	int i;
+	struct dec_output_info dec_info;
+	int ret_mutex;
 
 	*fail_res = 0;
 	if (!inst->codec_info)
 		return -EINVAL;
 
-	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
-	if (ret)
-		return ret;
+	pm_runtime_resume_and_get(inst->dev->dev);
 
-	ret = wave5_vpu_dec_finish_seq(inst, fail_res);
-	if (ret) {
-		dev_warn(inst->dev->dev, "dec_finish_seq timed out\n");
-
-		if (*fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING) {
-			mutex_unlock(&vpu_dev->hw_lock);
-			return ret;
-		}
+	ret_mutex = mutex_lock_interruptible(&vpu_dev->hw_lock);
+	if (ret_mutex) {
+		pm_runtime_put_sync(inst->dev->dev);
+		return ret_mutex;
 	}
+
+	do {
+		ret = wave5_vpu_dec_finish_seq(inst, fail_res);
+		if (ret < 0 && *fail_res != WAVE5_SYSERR_VPU_STILL_RUNNING) {
+			dev_warn(inst->dev->dev, "dec_finish_seq timed out\n");
+			goto unlock_and_return;
+		}
+
+		if (ret == 0)
+			break;
+
+		if (*fail_res != WAVE5_SYSERR_VPU_STILL_RUNNING) {
+			dev_warn(inst->dev->dev, "dec_finish_seq timed out\n");
+			goto unlock_and_return;
+		}
+
+		if (retry++ >= MAX_FIRMWARE_CALL_RETRY) {
+			ret = -ETIMEDOUT;
+			goto unlock_and_return;
+		}
+
+		mutex_unlock(&vpu_dev->hw_lock);
+		wave5_vpu_dec_get_output_info(inst, &dec_info);
+		ret_mutex = mutex_lock_interruptible(&vpu_dev->hw_lock);
+		if (ret_mutex) {
+			pm_runtime_put_sync(inst->dev->dev);
+			return ret_mutex;
+		}
+	} while (ret != 0);
 
 	dev_dbg(inst->dev->dev, "%s: dec_finish_seq complete\n", __func__);
 
-	if (p_dec_info->vb_work.size)
-		wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_work);
+	wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_work);
 
 	for (i = 0 ; i < MAX_REG_FRAME; i++) {
-		if (p_dec_info->vb_mv[i].size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_mv[i]);
-		if (p_dec_info->vb_fbc_y_tbl[i].size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_fbc_y_tbl[i]);
-		if (p_dec_info->vb_fbc_c_tbl[i].size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_fbc_c_tbl[i]);
+		ret = reset_auxiliary_buffers(inst, i);
+		if (ret) {
+			ret = 0;
+			break;
+		}
 	}
 
-	if (p_dec_info->vb_task.size)
-		wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_task);
+	wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_task);
 
+	mutex_destroy(&inst->feed_lock);
+
+unlock_and_return:
 	mutex_unlock(&vpu_dev->hw_lock);
-
-	kfree(inst->codec_info);
-
-	return 0;
+	pm_runtime_put_sync(inst->dev->dev);
+	return ret;
 }
 
 int wave5_vpu_dec_issue_seq_init(struct vpu_instance *inst)
@@ -258,7 +309,7 @@ int wave5_vpu_dec_complete_seq_init(struct vpu_instance *inst, struct dec_initia
 	if (!ret)
 		p_dec_info->initial_info_obtained = true;
 
-	info->rd_ptr = wave5_vpu_dec_get_rd_ptr(inst);
+	info->rd_ptr = wave5_dec_get_rd_ptr(inst);
 	info->wr_ptr = p_dec_info->stream_wr_ptr;
 
 	p_dec_info->initial_info = *info;
@@ -269,8 +320,7 @@ int wave5_vpu_dec_complete_seq_init(struct vpu_instance *inst, struct dec_initia
 }
 
 int wave5_vpu_dec_register_frame_buffer_ex(struct vpu_instance *inst, int num_of_decoding_fbs,
-					   int num_of_display_fbs, int stride, int height,
-					   int map_type)
+					   int num_of_display_fbs, int stride, int height)
 {
 	struct dec_info *p_dec_info;
 	int ret;
@@ -326,21 +376,17 @@ int wave5_vpu_dec_get_bitstream_buffer(struct vpu_instance *inst, dma_addr_t *pr
 	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
 	if (ret)
 		return ret;
-	rd_ptr = wave5_vpu_dec_get_rd_ptr(inst);
+	rd_ptr = wave5_dec_get_rd_ptr(inst);
 	mutex_unlock(&vpu_dev->hw_lock);
 
 	wr_ptr = p_dec_info->stream_wr_ptr;
 
-	if (p_dec_info->open_param.bitstream_mode != BS_MODE_PIC_END) {
-		if (wr_ptr < rd_ptr)
-			room = rd_ptr - wr_ptr;
-		else
-			room = (p_dec_info->stream_buf_end_addr - wr_ptr) +
-				(rd_ptr - p_dec_info->stream_buf_start_addr);
-		room--;
-	} else {
-		room = (p_dec_info->stream_buf_end_addr - wr_ptr);
-	}
+	if (wr_ptr < rd_ptr)
+		room = rd_ptr - wr_ptr;
+	else
+		room = (p_dec_info->stream_buf_end_addr - wr_ptr) +
+			(rd_ptr - p_dec_info->stream_buf_start_addr);
+	room--;
 
 	if (prd_ptr)
 		*prd_ptr = rd_ptr;
@@ -373,15 +419,13 @@ int wave5_vpu_dec_update_bitstream_buffer(struct vpu_instance *inst, size_t size
 
 		wr_ptr += size;
 
-		if (p_dec_info->open_param.bitstream_mode != BS_MODE_PIC_END) {
-			if (wr_ptr > p_dec_info->stream_buf_end_addr) {
-				u32 room = wr_ptr - p_dec_info->stream_buf_end_addr;
+		if (wr_ptr > p_dec_info->stream_buf_end_addr) {
+			u32 room = wr_ptr - p_dec_info->stream_buf_end_addr;
 
-				wr_ptr = p_dec_info->stream_buf_start_addr;
-				wr_ptr += room;
-			} else if (wr_ptr == p_dec_info->stream_buf_end_addr) {
-				wr_ptr = p_dec_info->stream_buf_start_addr;
-			}
+			wr_ptr = p_dec_info->stream_buf_start_addr;
+			wr_ptr += room;
+		} else if (wr_ptr == p_dec_info->stream_buf_end_addr) {
+			wr_ptr = p_dec_info->stream_buf_start_addr;
 		}
 
 		p_dec_info->stream_wr_ptr = wr_ptr;
@@ -397,20 +441,20 @@ int wave5_vpu_dec_update_bitstream_buffer(struct vpu_instance *inst, size_t size
 	return ret;
 }
 
-int wave5_vpu_dec_start_one_frame(struct vpu_instance *inst, struct dec_param *param, u32 *res_fail)
+int wave5_vpu_dec_start_one_frame(struct vpu_instance *inst, u32 *res_fail)
 {
 	struct dec_info *p_dec_info = &inst->codec_info->dec_info;
 	int ret;
 	struct vpu_device *vpu_dev = inst->dev;
 
-	if (p_dec_info->stride == 0) // this means frame buffers have not been registered.
+	if (p_dec_info->stride == 0) /* this means frame buffers have not been registered. */
 		return -EINVAL;
 
 	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
 	if (ret)
 		return ret;
 
-	ret = wave5_vpu_decode(inst, param, res_fail);
+	ret = wave5_vpu_decode(inst, res_fail);
 
 	mutex_unlock(&vpu_dev->hw_lock);
 
@@ -438,6 +482,22 @@ int wave5_vpu_dec_set_rd_ptr(struct vpu_instance *inst, dma_addr_t addr, int upd
 	return ret;
 }
 
+dma_addr_t wave5_vpu_dec_get_rd_ptr(struct vpu_instance *inst)
+{
+	int ret;
+	dma_addr_t rd_ptr = 0;
+
+	ret = mutex_lock_interruptible(&inst->dev->hw_lock);
+	if (ret)
+		return rd_ptr;
+
+	rd_ptr = wave5_dec_get_rd_ptr(inst);
+
+	mutex_unlock(&inst->dev->hw_lock);
+
+	return rd_ptr;
+}
+
 int wave5_vpu_dec_get_output_info(struct vpu_instance *inst, struct dec_output_info *info)
 {
 	struct dec_info *p_dec_info;
@@ -450,7 +510,7 @@ int wave5_vpu_dec_get_output_info(struct vpu_instance *inst, struct dec_output_i
 	struct vpu_device *vpu_dev = inst->dev;
 	struct dec_output_info *disp_info;
 
-	if (!info)
+	if (WARN_ON(!info))
 		return -EINVAL;
 
 	p_dec_info = &inst->codec_info->dec_info;
@@ -470,13 +530,13 @@ int wave5_vpu_dec_get_output_info(struct vpu_instance *inst, struct dec_output_i
 
 	decoded_index = info->index_frame_decoded;
 
-	// calculate display frame region
+	/* calculate display frame region */
 	val = 0;
-	//default value
 	rect_info.left = 0;
 	rect_info.right = 0;
 	rect_info.top = 0;
 	rect_info.bottom = 0;
+
 	if (decoded_index < WAVE5_MAX_FBS) {
 		if (inst->std == W_HEVC_DEC || inst->std == W_AVC_DEC)
 			rect_info = p_dec_info->initial_info.pic_crop_rect;
@@ -484,114 +544,48 @@ int wave5_vpu_dec_get_output_info(struct vpu_instance *inst, struct dec_output_i
 		if (inst->std == W_HEVC_DEC)
 			p_dec_info->dec_out_info[decoded_index].decoded_poc = info->decoded_poc;
 
-		if (inst->std == W_AVS2_DEC)
-			p_dec_info->dec_out_info[decoded_index].avs2_info.decoded_poi =
-				info->avs2_info.decoded_poi;
-
 		p_dec_info->dec_out_info[decoded_index].rc_decoded = rect_info;
 	}
 	info->rc_decoded = rect_info;
 
 	disp_idx = info->index_frame_display;
-	disp_info = &p_dec_info->dec_out_info[disp_idx];
 	if (info->index_frame_display >= 0 && info->index_frame_display < WAVE5_MAX_FBS) {
-		u32 width = info->dec_pic_width;
-		u32 height = info->dec_pic_height;
-
+		disp_info = &p_dec_info->dec_out_info[disp_idx];
 		if (info->index_frame_display != info->index_frame_decoded) {
 			/*
 			 * when index_frame_decoded < 0, and index_frame_display >= 0
 			 * info->dec_pic_width and info->dec_pic_height are still valid
 			 * but those of p_dec_info->dec_out_info[disp_idx] are invalid in VP9
 			 */
-			width = disp_info->dec_pic_width;
-			height = disp_info->dec_pic_height;
-		}
-		// TODO no rotation/mirror v4l2 cmd implemented for the decoder
-		if (p_dec_info->rotation_enable || p_dec_info->mirror_enable)
-			if (p_dec_info->rotation_angle == 90 || p_dec_info->rotation_angle == 270)
-				swap(width, height);
-
-		if (p_dec_info->rotation_enable) {
-			switch (p_dec_info->rotation_angle) {
-			case 90:
-				info->rc_display.left = disp_info->rc_decoded.top;
-				info->rc_display.right = disp_info->rc_decoded.bottom;
-				info->rc_display.top = disp_info->rc_decoded.right;
-				info->rc_display.bottom = disp_info->rc_decoded.left;
-				break;
-			case 270:
-				info->rc_display.left = disp_info->rc_decoded.bottom;
-				info->rc_display.right = disp_info->rc_decoded.top;
-				info->rc_display.top = disp_info->rc_decoded.left;
-				info->rc_display.bottom = disp_info->rc_decoded.right;
-				break;
-			case 180:
-				info->rc_display.left = disp_info->rc_decoded.right;
-				info->rc_display.right = disp_info->rc_decoded.left;
-				info->rc_display.top = disp_info->rc_decoded.bottom;
-				info->rc_display.bottom = disp_info->rc_decoded.top;
-				break;
-			default:
-				info->rc_display = disp_info->rc_decoded;
-				break;
-			}
+			info->disp_pic_width = disp_info->dec_pic_width;
+			info->disp_pic_height = disp_info->dec_pic_height;
 		} else {
-			info->rc_display = disp_info->rc_decoded;
+			info->disp_pic_width = info->dec_pic_width;
+			info->disp_pic_height = info->dec_pic_height;
 		}
 
-		if (p_dec_info->mirror_enable) {
-			if (p_dec_info->mirror_direction & MIRDIR_VER)
-				swap(info->rc_display.top, info->rc_display.bottom);
-			if (p_dec_info->mirror_direction & MIRDIR_HOR)
-				swap(info->rc_display.left, info->rc_display.right);
-		}
+		info->rc_display = disp_info->rc_decoded;
 
-		switch (inst->std) {
-		case W_AVS2_DEC:
-			info->avs2_info.display_poi =
-				disp_info->avs2_info.decoded_poi;
-			break;
-		default:
-			break;
-		}
-
-		info->disp_pic_width = width;
-		info->disp_pic_height = height;
 	} else {
 		info->rc_display.left = 0;
 		info->rc_display.right = 0;
 		info->rc_display.top = 0;
 		info->rc_display.bottom = 0;
-
-		if (p_dec_info->rotation_enable || p_dec_info->mirror_enable ||
-		    p_dec_info->dering_enable) {
-			info->disp_pic_width = info->dec_pic_width;
-			info->disp_pic_height = info->dec_pic_height;
-		} else {
-			info->disp_pic_width = 0;
-			info->disp_pic_height = 0;
-		}
+		info->disp_pic_width = 0;
+		info->disp_pic_height = 0;
 	}
 
-	p_dec_info->stream_rd_ptr = wave5_vpu_dec_get_rd_ptr(inst);
+	p_dec_info->stream_rd_ptr = wave5_dec_get_rd_ptr(inst);
 	p_dec_info->frame_display_flag = vpu_read_reg(vpu_dev, W5_RET_DEC_DISP_IDC);
-	if (inst->std == W_VP9_DEC)
-		p_dec_info->frame_display_flag &= 0xFFFF;
 
-	if (p_dec_info->dering_enable || p_dec_info->mirror_enable || p_dec_info->rotation_enable) {
-		info->disp_frame = p_dec_info->rotator_output;
-		info->disp_frame.stride = p_dec_info->rotator_stride;
-	} else {
-		val = p_dec_info->num_of_decoding_fbs; //fb_offset
+	val = p_dec_info->num_of_decoding_fbs; //fb_offset
 
-		max_dec_index = (p_dec_info->num_of_decoding_fbs > p_dec_info->num_of_display_fbs) ?
-			p_dec_info->num_of_decoding_fbs : p_dec_info->num_of_display_fbs;
+	max_dec_index = (p_dec_info->num_of_decoding_fbs > p_dec_info->num_of_display_fbs) ?
+		p_dec_info->num_of_decoding_fbs : p_dec_info->num_of_display_fbs;
 
-		if (info->index_frame_display >= 0 &&
-		    info->index_frame_display < (int)max_dec_index)
-			info->disp_frame = inst->frame_buf[val + info->index_frame_display];
-	}
+	if (info->index_frame_display >= 0 &&
+	    info->index_frame_display < (int)max_dec_index)
+		info->disp_frame = inst->frame_buf[val + info->index_frame_display];
 
 	info->rd_ptr = p_dec_info->stream_rd_ptr;
 	info->wr_ptr = p_dec_info->stream_wr_ptr;
@@ -604,8 +598,7 @@ int wave5_vpu_dec_get_output_info(struct vpu_instance *inst, struct dec_output_i
 	if (disp_idx < WAVE5_MAX_FBS)
 		info->disp_frame.sequence_no = info->sequence_no;
 
-	if (info->sequence_changed &&
-	    !(info->sequence_changed & SEQ_CHANGE_INTER_RES_CHANGE)) {
+	if (info->sequence_changed) {
 		memcpy((void *)&p_dec_info->initial_info, (void *)&p_dec_info->new_seq_info,
 		       sizeof(struct dec_initial_info));
 		p_dec_info->initial_info.sequence_no++;
@@ -620,7 +613,7 @@ err_out:
 int wave5_vpu_dec_clr_disp_flag(struct vpu_instance *inst, int index)
 {
 	struct dec_info *p_dec_info = &inst->codec_info->dec_info;
-	int ret = 0;
+	int ret;
 	struct vpu_device *vpu_dev = inst->dev;
 
 	if (index >= p_dec_info->num_of_display_fbs)
@@ -653,9 +646,23 @@ int wave5_vpu_dec_set_disp_flag(struct vpu_instance *inst, int index)
 	return ret;
 }
 
+int wave5_vpu_dec_reset_framebuffer(struct vpu_instance *inst, unsigned int index)
+{
+	if (index >= MAX_REG_FRAME)
+		return -EINVAL;
+
+	if (inst->frame_vbuf[index].size == 0)
+		return -EINVAL;
+
+	wave5_vdi_free_dma_memory(inst->dev, &inst->frame_vbuf[index]);
+
+	return 0;
+}
+
 int wave5_vpu_dec_give_command(struct vpu_instance *inst, enum codec_command cmd, void *parameter)
 {
 	struct dec_info *p_dec_info = &inst->codec_info->dec_info;
+	int ret = 0;
 
 	switch (cmd) {
 	case DEC_GET_QUEUE_STATUS: {
@@ -665,17 +672,19 @@ int wave5_vpu_dec_give_command(struct vpu_instance *inst, enum codec_command cmd
 		queue_info->report_queue_count = p_dec_info->report_queue_count;
 		break;
 	}
-	case ENABLE_DEC_THUMBNAIL_MODE:
-		p_dec_info->thumbnail_mode = true;
-		break;
 	case DEC_RESET_FRAMEBUF_INFO: {
 		int i;
 
-		for (i = 0; i < inst->dst_buf_count; i++) {
-			wave5_vdi_free_dma_memory(inst->dev, &inst->frame_vbuf[i]);
-			wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_mv[i]);
-			wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_fbc_y_tbl[i]);
-			wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_fbc_c_tbl[i]);
+		for (i = 0; i < MAX_REG_FRAME; i++) {
+			ret = wave5_vpu_dec_reset_framebuffer(inst, i);
+			if (ret)
+				break;
+		}
+
+		for (i = 0; i < MAX_REG_FRAME; i++) {
+			ret = reset_auxiliary_buffers(inst, i);
+			if (ret)
+				break;
 		}
 
 		wave5_vdi_free_dma_memory(inst->dev, &p_dec_info->vb_task);
@@ -692,7 +701,7 @@ int wave5_vpu_dec_give_command(struct vpu_instance *inst, enum codec_command cmd
 		return -EINVAL;
 	}
 
-	return 0;
+	return ret;
 }
 
 int wave5_vpu_enc_open(struct vpu_instance *inst, struct enc_open_param *open_param)
@@ -714,24 +723,10 @@ int wave5_vpu_enc_open(struct vpu_instance *inst, struct enc_open_param *open_pa
 		return -ENODEV;
 	}
 
-	inst->codec_info = kzalloc(sizeof(*inst->codec_info), GFP_KERNEL);
-	if (!inst->codec_info) {
-		mutex_unlock(&vpu_dev->hw_lock);
-		return -ENOMEM;
-	}
-
 	p_enc_info = &inst->codec_info->enc_info;
 	p_enc_info->open_param = *open_param;
 
 	ret = wave5_vpu_build_up_enc_param(vpu_dev->dev, inst, open_param);
-	if (ret)
-		goto free_codec_info;
-	mutex_unlock(&vpu_dev->hw_lock);
-
-	return 0;
-
-free_codec_info:
-	kfree(inst->codec_info);
 	mutex_unlock(&vpu_dev->hw_lock);
 
 	return ret;
@@ -739,54 +734,56 @@ free_codec_info:
 
 int wave5_vpu_enc_close(struct vpu_instance *inst, u32 *fail_res)
 {
-	struct enc_info *p_enc_info;
+	struct enc_info *p_enc_info = &inst->codec_info->enc_info;
 	int ret;
+	int retry = 0;
 	struct vpu_device *vpu_dev = inst->dev;
-	*fail_res = 0;
 
+	*fail_res = 0;
 	if (!inst->codec_info)
 		return -EINVAL;
-	p_enc_info = &inst->codec_info->enc_info;
+
+	pm_runtime_resume_and_get(inst->dev->dev);
 
 	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
-	if (ret)
-		return ret;
-
-	ret = wave5_vpu_enc_finish_seq(inst, fail_res);
 	if (ret) {
-		dev_warn(inst->dev->dev, "enc seq end timed out\n");
+		pm_runtime_resume_and_get(inst->dev->dev);
+		return ret;
+	}
 
-		if (*fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING) {
+	do {
+		ret = wave5_vpu_enc_finish_seq(inst, fail_res);
+		if (ret < 0 && *fail_res != WAVE5_SYSERR_VPU_STILL_RUNNING) {
+			dev_warn(inst->dev->dev, "enc_finish_seq timed out\n");
+			pm_runtime_resume_and_get(inst->dev->dev);
 			mutex_unlock(&vpu_dev->hw_lock);
 			return ret;
 		}
-	}
 
-	dev_dbg(inst->dev->dev, "%s: enc seq end timed out\n", __func__);
+		if (*fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING &&
+		    retry++ >= MAX_FIRMWARE_CALL_RETRY) {
+			pm_runtime_resume_and_get(inst->dev->dev);
+			mutex_unlock(&vpu_dev->hw_lock);
+			return -ETIMEDOUT;
+		}
+	} while (ret != 0);
 
-	if (p_enc_info->vb_work.size)
-		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_work);
+	dev_dbg(inst->dev->dev, "%s: enc_finish_seq complete\n", __func__);
+
+	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_work);
 
 	if (inst->std == W_HEVC_ENC || inst->std == W_AVC_ENC) {
-		if (p_enc_info->vb_sub_sam_buf.size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_sub_sam_buf);
-
-		if (p_enc_info->vb_mv.size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_mv);
-
-		if (p_enc_info->vb_fbc_y_tbl.size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_y_tbl);
-
-		if (p_enc_info->vb_fbc_c_tbl.size)
-			wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_c_tbl);
+		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_sub_sam_buf);
+		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_mv);
+		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_y_tbl);
+		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_c_tbl);
 	}
 
-	if (p_enc_info->vb_task.size)
-		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_task);
+	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_task);
 
 	mutex_unlock(&vpu_dev->hw_lock);
 
-	kfree(inst->codec_info);
+	pm_runtime_put_sync(inst->dev->dev);
 
 	return 0;
 }
@@ -834,7 +831,6 @@ int wave5_vpu_enc_register_frame_buffer(struct vpu_instance *inst, unsigned int 
 		inst->frame_buf[i].stride = stride;
 		inst->frame_buf[i].height = height;
 		inst->frame_buf[i].map_type = COMPRESSED_FRAME_MAP;
-		inst->frame_buf[i].endian = VDI_128BIT_LITTLE_ENDIAN;
 		inst->frame_buf[i].buf_y_size = size_luma;
 		inst->frame_buf[i].buf_cb = inst->frame_buf[i].buf_y + size_luma;
 		inst->frame_buf[i].buf_cb_size = size_chroma;
@@ -857,43 +853,32 @@ static int wave5_check_enc_param(struct vpu_instance *inst, struct enc_param *pa
 	if (!param)
 		return -EINVAL;
 
-	if (!param->skip_picture && !param->source_frame)
+	if (!param->source_frame)
 		return -EINVAL;
 
 	if (p_enc_info->open_param.bit_rate == 0 && inst->std == W_HEVC_ENC) {
-		if (param->force_pic_qp_enable &&
-		    (param->force_pic_qp_i > MAX_INTRA_QP || param->force_pic_qp_p > MAX_INTRA_QP ||
-		     param->force_pic_qp_b > MAX_INTRA_QP))
-			return -EINVAL;
-		if (!p_enc_info->ring_buffer_enable &&
-		    (param->pic_stream_buffer_addr % 16 || param->pic_stream_buffer_size == 0))
+		if (param->pic_stream_buffer_addr % 16 || param->pic_stream_buffer_size == 0)
 			return -EINVAL;
 	}
-	if (!p_enc_info->ring_buffer_enable &&
-	    (param->pic_stream_buffer_addr % 8 || param->pic_stream_buffer_size == 0))
+	if (param->pic_stream_buffer_addr % 8 || param->pic_stream_buffer_size == 0)
 		return -EINVAL;
 
 	return 0;
 }
 
-static uint64_t wave5_get_timestamp(struct vpu_instance *inst)
+int wave5_vpu_enc_change_param(struct vpu_instance *inst, u32 *fail_res)
 {
-	struct enc_info *p_enc_info;
-	u64 pts;
-	u32 fps;
+	int ret;
+	struct vpu_device *vpu_dev = inst->dev;
 
-	if (!inst->codec_info)
-		return 0;
+	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
+	if (ret)
+		return ret;
 
-	p_enc_info = &inst->codec_info->enc_info;
-	fps = p_enc_info->open_param.frame_rate_info;
-	if (fps == 0)
-		fps = 30;
+	ret = wave5_vpu_enc_apply_change_param(inst, fail_res);
+	mutex_unlock(&vpu_dev->hw_lock);
 
-	pts = p_enc_info->cur_pts;
-	p_enc_info->cur_pts += 90000 / fps; /* 90_k_hz/fps */
-
-	return pts;
+	return ret;
 }
 
 int wave5_vpu_enc_start_one_frame(struct vpu_instance *inst, struct enc_param *param, u32 *fail_res)
@@ -904,7 +889,7 @@ int wave5_vpu_enc_start_one_frame(struct vpu_instance *inst, struct enc_param *p
 
 	*fail_res = 0;
 
-	if (p_enc_info->stride == 0) // this means frame buffers have not been registered.
+	if (p_enc_info->stride == 0) /* this means frame buffers have not been registered. */
 		return -EINVAL;
 
 	ret = wave5_check_enc_param(inst, param);
@@ -915,8 +900,7 @@ int wave5_vpu_enc_start_one_frame(struct vpu_instance *inst, struct enc_param *p
 	if (ret)
 		return ret;
 
-	p_enc_info->pts_map[param->src_idx] = p_enc_info->open_param.enable_pts ?
-					      wave5_get_timestamp(inst) : param->pts;
+	p_enc_info->pts_map[param->src_idx] = param->pts;
 
 	ret = wave5_vpu_encode(inst, param, fail_res);
 

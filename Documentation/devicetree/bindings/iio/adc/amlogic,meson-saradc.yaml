@@ -41,7 +41,6 @@ properties:
 
   clock-names:
     minItems: 2
-    maxItems: 4
     items:
       - const: clkin
       - const: core
@@ -66,6 +65,9 @@ properties:
 
   nvmem-cell-names:
     const: temperature_calib
+
+  power-domains:
+    maxItems: 1
 
 allOf:
   - if:

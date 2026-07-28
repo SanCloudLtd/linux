@@ -222,18 +222,47 @@ ndo_do_ioctl:
 	Synchronization: rtnl_lock() semaphore.
 	Context: process
 
+        This is only called by network subsystems internally,
+        not by user space calling ioctl as it was in before
+        linux-5.14.
+
+ndo_siocbond:
+        Synchronization: rtnl_lock() semaphore.
+        Context: process
+
+        Used by the bonding driver for the SIOCBOND family of
+        ioctl commands.
+
+ndo_siocwandev:
+	Synchronization: rtnl_lock() semaphore.
+	Context: process
+
+	Used by the drivers/net/wan framework to handle
+	the SIOCWANDEV ioctl with the if_settings structure.
+
+ndo_siocdevprivate:
+	Synchronization: rtnl_lock() semaphore.
+	Context: process
+
+	This is used to implement SIOCDEVPRIVATE ioctl helpers.
+	These should not be added to new drivers, so don't use.
+
+ndo_eth_ioctl:
+	Synchronization: rtnl_lock() semaphore.
+	Context: process
+
 ndo_get_stats:
-	Synchronization: dev_base_lock rwlock.
-	Context: nominally process, but don't sleep inside an rwlock
+	Synchronization: rtnl_lock() semaphore, or RCU.
+	Context: atomic (can't sleep under RCU)
 
 ndo_start_xmit:
 	Synchronization: __netif_tx_lock spinlock.
 
-	When the driver sets NETIF_F_LLTX in dev->features this will be
+	When the driver sets dev->lltx this will be
 	called without holding netif_tx_lock. In this case the driver
 	has to lock by itself when needed.
 	The locking there should also properly protect against
-	set_rx_mode. WARNING: use of NETIF_F_LLTX is deprecated.
+	set_rx_mode. WARNING: use of dev->lltx is deprecated.
 	Don't use it for new drivers.
 
 	Context: Process with BHs disabled or BH (timer),

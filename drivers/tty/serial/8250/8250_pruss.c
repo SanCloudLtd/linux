@@ -12,7 +12,6 @@
 #include <linux/of_irq.h>
 #include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/pruss.h>
 #include <linux/remoteproc.h>
 #include "8250.h"
 
@@ -95,7 +94,7 @@ static unsigned int pruss8250_get_divisor(struct uart_port *port,
 static void pruss8250_set_divisor(struct uart_port *port, unsigned int baud,
 				  unsigned int quot, unsigned int quot_frac)
 {
-	serial8250_do_set_divisor(port, baud, quot, quot_frac);
+	serial8250_do_set_divisor(port, baud, quot);
 	/*
 	 * quot_frac holds the MDR over-sampling mode
 	 * which is set in pruss8250_get_divisor()
@@ -185,12 +184,11 @@ err_dispose:
 	return ret;
 }
 
-static int pruss8250_remove(struct platform_device *pdev)
+static void pruss8250_remove(struct platform_device *pdev)
 {
 	struct pruss8250_info *info = platform_get_drvdata(pdev);
 
 	serial8250_unregister_port(info->line);
-	return 0;
 }
 
 static const struct of_device_id pruss8250_table[] = {

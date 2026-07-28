@@ -84,9 +84,7 @@ MODULE_DESCRIPTION("sysfs interface to BIOS iBFT information");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(IBFT_ISCSI_VERSION);
 
-#ifndef CONFIG_ISCSI_IBFT_FIND
-struct acpi_table_ibft *ibft_addr;
-#endif
+static struct acpi_table_ibft *ibft_addr;
 
 struct ibft_hdr {
 	u8 id;
@@ -312,7 +310,10 @@ static ssize_t ibft_attr_show_nic(void *data, int type, char *buf)
 		str += sprintf_ipaddr(str, nic->ip_addr);
 		break;
 	case ISCSI_BOOT_ETH_SUBNET_MASK:
-		val = cpu_to_be32(~((1 << (32-nic->subnet_mask_prefix))-1));
+		if (nic->subnet_mask_prefix > 32)
+			val = cpu_to_be32(~0);
+		else
+			val = cpu_to_be32(~((1 << (32-nic->subnet_mask_prefix))-1));
 		str += sprintf(str, "%pI4", &val);
 		break;
 	case ISCSI_BOOT_ETH_PREFIX_LEN:
@@ -849,7 +850,21 @@ static void __init acpi_find_ibft_region(void)
 {
 }
 #endif
-
+#ifdef CONFIG_ISCSI_IBFT_FIND
+static int __init acpi_find_isa_region(void)
+{
+	if (ibft_phys_addr) {
+		ibft_addr = isa_bus_to_virt(ibft_phys_addr);
+		return 0;
+	}
+	return -ENODEV;
+}
+#else
+static int __init acpi_find_isa_region(void)
+{
+	return -ENODEV;
+}
+#endif
 /*
  * ibft_init() - creates sysfs tree entries for the iBFT data.
  */
@@ -858,11 +873,11 @@ static int __init ibft_init(void)
 	int rc = 0;
 
 	/*
-	   As on UEFI systems the setup_arch()/find_ibft_region()
+	   As on UEFI systems the setup_arch()/reserve_ibft_region()
 	   is called before ACPI tables are parsed and it only does
 	   legacy finding.
 	*/
-	if (!ibft_addr)
+	if (acpi_find_isa_region())
 		acpi_find_ibft_region();
 
 	if (ibft_addr) {

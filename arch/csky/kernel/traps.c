@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 // Copyright (C) 2018 Hangzhou C-SKY Microsystems co.,ltd.
 
+#include <linux/cpu.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/kernel.h>
@@ -39,9 +40,7 @@ asmlinkage void csky_cmpxchg(void);
 asmlinkage void csky_get_tls(void);
 asmlinkage void csky_irq(void);
 
-asmlinkage void csky_tlbinvalidl(void);
-asmlinkage void csky_tlbinvalids(void);
-asmlinkage void csky_tlbmodified(void);
+asmlinkage void csky_pagefault(void);
 
 /* Defined in head.S */
 asmlinkage void _start_smp_secondary(void);
@@ -66,9 +65,9 @@ void __init trap_init(void)
 	VEC_INIT(VEC_TRAP3, csky_get_tls);
 
 	/* setup MMU TLB exception */
-	VEC_INIT(VEC_TLBINVALIDL, csky_tlbinvalidl);
-	VEC_INIT(VEC_TLBINVALIDS, csky_tlbinvalids);
-	VEC_INIT(VEC_TLBMODIFIED, csky_tlbmodified);
+	VEC_INIT(VEC_TLBINVALIDL, csky_pagefault);
+	VEC_INIT(VEC_TLBINVALIDS, csky_pagefault);
+	VEC_INIT(VEC_TLBMODIFIED, csky_pagefault);
 
 #ifdef CONFIG_CPU_HAS_FPU
 	init_fpu();

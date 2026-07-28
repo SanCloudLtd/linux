@@ -2,11 +2,10 @@
 /*
  * TI VIP capture driver
  *
- * Copyright (C) 2018 Texas Instruments Incorpated - http://www.ti.com/
+ * Copyright (C) 2025 Texas Instruments Incorpated - http://www.ti.com/
  * David Griego, <dagriego@biglakesoftware.com>
  * Dale Farnsworth, <dale@farnsworth.org>
- * Nikhil Devshatwar, <nikhil.nd@ti.com>
- * Benoit Parrot, <bparrot@ti.com>
+ * Yemike Abhilash Chandra, <y-abhilashchandra@ti.com>
  */
 
 #ifndef __TI_VIP_H
@@ -21,6 +20,7 @@
 #include <media/videobuf2-dma-contig.h>
 #include <media/videobuf2-memops.h>
 #include <media/v4l2-fwnode.h>
+#include <media/v4l2-async.h>
 
 #include "vpdma.h"
 #include "vpdma_priv.h"
@@ -36,7 +36,7 @@
 #define VIP_NUM_SLICES	2
 
 /*
- * Additionnal client identifiers used for VPDMA configuration descriptors
+ * Additional client identifiers used for VPDMA configuration descriptors
  */
 #define VIP_SLICE1_CFD_SC_CLIENT	7
 #define VIP_SLICE2_CFD_SC_CLIENT	8
@@ -146,6 +146,7 @@ struct vip_dev {
 	int			slice_id;
 	int			num_ports;	/* count of open ports */
 	struct mutex		mutex;
+	/* protects access to stream buffer queues */
 	spinlock_t		slock;
 
 	int			irq;
@@ -255,7 +256,6 @@ enum data_path_select {
 	VIP_CHR_DS_1_DATA_BYPASS,
 	VIP_CHR_DS_2_DATA_BYPASS,
 };
-
 
 enum data_interface_modes {
 	SINGLE_24B_INTERFACE = 0,

@@ -8,7 +8,8 @@
  */
 
 #include <linux/linkage.h>
-#include <linux/list.h>
+#include <linux/cleanup.h>
+#include <linux/types.h>
 
 /*
  * We put the hardirq and softirq counter into the preemption
@@ -77,14 +78,42 @@
 /* preempt_count() and related functions, depends on PREEMPT_NEED_RESCHED */
 #include <asm/preempt.h>
 
+/**
+ * interrupt_context_level - return interrupt context level
+ *
+ * Returns the current interrupt context level.
+ *  0 - normal context
+ *  1 - softirq context
+ *  2 - hardirq context
+ *  3 - NMI context
+ */
+static __always_inline unsigned char interrupt_context_level(void)
+{
+	unsigned long pc = preempt_count();
+	unsigned char level = 0;
+
+	level += !!(pc & (NMI_MASK));
+	level += !!(pc & (NMI_MASK | HARDIRQ_MASK));
+	level += !!(pc & (NMI_MASK | HARDIRQ_MASK | SOFTIRQ_OFFSET));
+
+	return level;
+}
+
+/*
+ * These macro definitions avoid redundant invocations of preempt_count()
+ * because such invocations would result in redundant loads given that
+ * preempt_count() is commonly implemented with READ_ONCE().
+ */
+
 #define nmi_count()	(preempt_count() & NMI_MASK)
 #define hardirq_count()	(preempt_count() & HARDIRQ_MASK)
 #ifdef CONFIG_PREEMPT_RT
 # define softirq_count()	(current->softirq_disable_cnt & SOFTIRQ_MASK)
+# define irq_count()		((preempt_count() & (NMI_MASK | HARDIRQ_MASK)) | softirq_count())
 #else
 # define softirq_count()	(preempt_count() & SOFTIRQ_MASK)
+# define irq_count()		(preempt_count() & (NMI_MASK | HARDIRQ_MASK | SOFTIRQ_MASK))
 #endif
-#define irq_count()	(nmi_count() | hardirq_count() | softirq_count())
 
 /*
  * Macros to retrieve the current execution context:
@@ -97,7 +126,11 @@
 #define in_nmi()		(nmi_count())
 #define in_hardirq()		(hardirq_count())
 #define in_serving_softirq()	(softirq_count() & SOFTIRQ_OFFSET)
-#define in_task()		(!(in_nmi() | in_hardirq() | in_serving_softirq()))
+#ifdef CONFIG_PREEMPT_RT
+# define in_task()		(!((preempt_count() & (NMI_MASK | HARDIRQ_MASK)) | in_serving_softirq()))
+#else
+# define in_task()		(!(preempt_count() & (NMI_MASK | HARDIRQ_MASK | SOFTIRQ_OFFSET)))
+#endif
 
 /*
  * The following macros are deprecated and should not be used in new code:
@@ -122,9 +155,10 @@
  * The preempt_count offset after spin_lock()
  */
 #if !defined(CONFIG_PREEMPT_RT)
-#define PREEMPT_LOCK_OFFSET	PREEMPT_DISABLE_OFFSET
+#define PREEMPT_LOCK_OFFSET		PREEMPT_DISABLE_OFFSET
 #else
-#define PREEMPT_LOCK_OFFSET	0
+/* Locks on RT do not disable preemption */
+#define PREEMPT_LOCK_OFFSET		0
 #endif
 
 /*
@@ -174,31 +208,11 @@ extern void preempt_count_sub(int val);
 #define preempt_count_inc() preempt_count_add(1)
 #define preempt_count_dec() preempt_count_sub(1)
 
-#ifdef CONFIG_PREEMPT_LAZY
-#define add_preempt_lazy_count(val)	do { preempt_lazy_count() += (val); } while (0)
-#define sub_preempt_lazy_count(val)	do { preempt_lazy_count() -= (val); } while (0)
-#define inc_preempt_lazy_count()	add_preempt_lazy_count(1)
-#define dec_preempt_lazy_count()	sub_preempt_lazy_count(1)
-#define preempt_lazy_count()		(current_thread_info()->preempt_lazy_count)
-#else
-#define add_preempt_lazy_count(val)	do { } while (0)
-#define sub_preempt_lazy_count(val)	do { } while (0)
-#define inc_preempt_lazy_count()	do { } while (0)
-#define dec_preempt_lazy_count()	do { } while (0)
-#define preempt_lazy_count()		(0)
-#endif
-
 #ifdef CONFIG_PREEMPT_COUNT
 
 #define preempt_disable() \
 do { \
 	preempt_count_inc(); \
-	barrier(); \
-} while (0)
-
-#define preempt_lazy_disable() \
-do { \
-	inc_preempt_lazy_count(); \
 	barrier(); \
 } while (0)
 
@@ -208,13 +222,7 @@ do { \
 	preempt_count_dec(); \
 } while (0)
 
-#ifndef CONFIG_PREEMPT_RT
-# define preempt_enable_no_resched() sched_preempt_enable_no_resched()
-# define preempt_check_resched_rt() barrier();
-#else
-# define preempt_enable_no_resched() preempt_enable()
-# define preempt_check_resched_rt() preempt_check_resched()
-#endif
+#define preempt_enable_no_resched() sched_preempt_enable_no_resched()
 
 #define preemptible()	(preempt_count() == 0 && !irqs_disabled())
 
@@ -239,29 +247,11 @@ do { \
 		__preempt_schedule(); \
 } while (0)
 
-/*
- * open code preempt_check_resched() because it is not exported to modules and
- * used by local_unlock() or bpf_enable_instrumentation().
- */
-#define preempt_lazy_enable() \
-do { \
-	dec_preempt_lazy_count(); \
-	barrier(); \
-	if (should_resched(0)) \
-		__preempt_schedule(); \
-} while (0)
-
 #else /* !CONFIG_PREEMPTION */
 #define preempt_enable() \
 do { \
 	barrier(); \
 	preempt_count_dec(); \
-} while (0)
-
-#define preempt_lazy_enable() \
-do { \
-	dec_preempt_lazy_count(); \
-	barrier(); \
 } while (0)
 
 #define preempt_enable_notrace() \
@@ -302,11 +292,7 @@ do { \
 #define preempt_disable_notrace()		barrier()
 #define preempt_enable_no_resched_notrace()	barrier()
 #define preempt_enable_notrace()		barrier()
-#define preempt_check_resched_rt()		barrier()
 #define preemptible()				0
-
-#define preempt_lazy_disable()			barrier()
-#define preempt_lazy_enable()			barrier()
 
 #endif /* CONFIG_PREEMPT_COUNT */
 
@@ -326,21 +312,9 @@ do { \
 } while (0)
 #define preempt_fold_need_resched() \
 do { \
-	if (tif_need_resched_now()) \
+	if (tif_need_resched()) \
 		set_preempt_need_resched(); \
 } while (0)
-
-#ifdef CONFIG_PREEMPT_RT
-# define preempt_disable_rt()		preempt_disable()
-# define preempt_enable_rt()		preempt_enable()
-# define preempt_disable_nort()		barrier()
-# define preempt_enable_nort()		barrier()
-#else
-# define preempt_disable_rt()		barrier()
-# define preempt_enable_rt()		barrier()
-# define preempt_disable_nort()		preempt_disable()
-# define preempt_enable_nort()		preempt_enable()
-#endif
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 
@@ -386,7 +360,9 @@ void preempt_notifier_unregister(struct preempt_notifier *notifier);
 static inline void preempt_notifier_init(struct preempt_notifier *notifier,
 				     struct preempt_ops *ops)
 {
-	INIT_HLIST_NODE(&notifier->link);
+	/* INIT_HLIST_NODE() open coded, to avoid dependency on list.h */
+	notifier->link.next = NULL;
+	notifier->link.pprev = NULL;
 	notifier->ops = ops;
 }
 
@@ -454,16 +430,110 @@ extern void migrate_enable(void);
 
 #else
 
-static inline void migrate_disable(void)
-{
-	preempt_lazy_disable();
-}
-
-static inline void migrate_enable(void)
-{
-	preempt_lazy_enable();
-}
+static inline void migrate_disable(void) { }
+static inline void migrate_enable(void) { }
 
 #endif /* CONFIG_SMP */
+
+/**
+ * preempt_disable_nested - Disable preemption inside a normally preempt disabled section
+ *
+ * Use for code which requires preemption protection inside a critical
+ * section which has preemption disabled implicitly on non-PREEMPT_RT
+ * enabled kernels, by e.g.:
+ *  - holding a spinlock/rwlock
+ *  - soft interrupt context
+ *  - regular interrupt handlers
+ *
+ * On PREEMPT_RT enabled kernels spinlock/rwlock held sections, soft
+ * interrupt context and regular interrupt handlers are preemptible and
+ * only prevent migration. preempt_disable_nested() ensures that preemption
+ * is disabled for cases which require CPU local serialization even on
+ * PREEMPT_RT. For non-PREEMPT_RT kernels this is a NOP.
+ *
+ * The use cases are code sequences which are not serialized by a
+ * particular lock instance, e.g.:
+ *  - seqcount write side critical sections where the seqcount is not
+ *    associated to a particular lock and therefore the automatic
+ *    protection mechanism does not work. This prevents a live lock
+ *    against a preempting high priority reader.
+ *  - RMW per CPU variable updates like vmstat.
+ */
+/* Macro to avoid header recursion hell vs. lockdep */
+#define preempt_disable_nested()				\
+do {								\
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))			\
+		preempt_disable();				\
+	else							\
+		lockdep_assert_preemption_disabled();		\
+} while (0)
+
+/**
+ * preempt_enable_nested - Undo the effect of preempt_disable_nested()
+ */
+static __always_inline void preempt_enable_nested(void)
+{
+	if (IS_ENABLED(CONFIG_PREEMPT_RT))
+		preempt_enable();
+}
+
+DEFINE_LOCK_GUARD_0(preempt, preempt_disable(), preempt_enable())
+DEFINE_LOCK_GUARD_0(preempt_notrace, preempt_disable_notrace(), preempt_enable_notrace())
+DEFINE_LOCK_GUARD_0(migrate, migrate_disable(), migrate_enable())
+
+#ifdef CONFIG_PREEMPT_DYNAMIC
+
+extern bool preempt_model_none(void);
+extern bool preempt_model_voluntary(void);
+extern bool preempt_model_full(void);
+extern bool preempt_model_lazy(void);
+extern bool preempt_model_laziest(void);
+
+#else
+
+static inline bool preempt_model_none(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_NONE);
+}
+static inline bool preempt_model_voluntary(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_VOLUNTARY);
+}
+static inline bool preempt_model_full(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT);
+}
+
+static inline bool preempt_model_lazy(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_LAZY);
+}
+static inline bool preempt_model_laziest(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_LAZIEST);
+}
+
+#endif
+
+static inline bool preempt_model_rt(void)
+{
+	return IS_ENABLED(CONFIG_PREEMPT_RT);
+}
+
+/*
+ * Does the preemption model allow non-cooperative preemption?
+ *
+ * For !CONFIG_PREEMPT_DYNAMIC kernels this is an exact match with
+ * CONFIG_PREEMPTION; for CONFIG_PREEMPT_DYNAMIC this doesn't work as the
+ * kernel is *built* with CONFIG_PREEMPTION=y but may run with e.g. the
+ * PREEMPT_NONE model.
+ */
+static inline bool preempt_model_preemptible(void)
+{
+	return preempt_model_full() ||
+	       preempt_model_lazy() ||
+	       preempt_model_laziest() ||
+	       preempt_model_rt();
+}
 
 #endif /* __LINUX_PREEMPT_H */

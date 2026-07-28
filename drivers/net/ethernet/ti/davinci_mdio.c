@@ -23,7 +23,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/davinci_emac.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
 #include <linux/of_mdio.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/mdio-bitbang.h>
@@ -84,7 +83,7 @@ struct davinci_mdio_regs {
 #define USERACCESS_DATA		(0xffff)
 
 		u32	physel;
-	}	user[0];
+	}	user[];
 };
 
 static const struct mdio_platform_data default_pdata = {
@@ -225,17 +224,15 @@ static int davinci_get_mdio_data(struct mdiobb_ctrl *ctrl)
 	return test_bit(MDIO_PIN, &reg);
 }
 
-static int davinci_mdiobb_read(struct mii_bus *bus, int phy, int reg)
+static int davinci_mdiobb_read_c22(struct mii_bus *bus, int phy, int reg)
 {
 	int ret;
 
-	ret = pm_runtime_get_sync(bus->parent);
-	if (ret < 0) {
-		pm_runtime_put_noidle(bus->parent);
+	ret = pm_runtime_resume_and_get(bus->parent);
+	if (ret < 0)
 		return ret;
-	}
 
-	ret = mdiobb_read(bus, phy, reg);
+	ret = mdiobb_read_c22(bus, phy, reg);
 
 	pm_runtime_mark_last_busy(bus->parent);
 	pm_runtime_put_autosuspend(bus->parent);
@@ -243,18 +240,50 @@ static int davinci_mdiobb_read(struct mii_bus *bus, int phy, int reg)
 	return ret;
 }
 
-static int davinci_mdiobb_write(struct mii_bus *bus, int phy, int reg,
-				u16 val)
+static int davinci_mdiobb_write_c22(struct mii_bus *bus, int phy, int reg,
+				    u16 val)
 {
 	int ret;
 
-	ret = pm_runtime_get_sync(bus->parent);
-	if (ret < 0) {
-		pm_runtime_put_noidle(bus->parent);
+	ret = pm_runtime_resume_and_get(bus->parent);
+	if (ret < 0)
 		return ret;
-	}
 
-	ret = mdiobb_write(bus, phy, reg, val);
+	ret = mdiobb_write_c22(bus, phy, reg, val);
+
+	pm_runtime_mark_last_busy(bus->parent);
+	pm_runtime_put_autosuspend(bus->parent);
+
+	return ret;
+}
+
+static int davinci_mdiobb_read_c45(struct mii_bus *bus, int phy, int devad,
+				   int reg)
+{
+	int ret;
+
+	ret = pm_runtime_resume_and_get(bus->parent);
+	if (ret < 0)
+		return ret;
+
+	ret = mdiobb_read_c45(bus, phy, devad, reg);
+
+	pm_runtime_mark_last_busy(bus->parent);
+	pm_runtime_put_autosuspend(bus->parent);
+
+	return ret;
+}
+
+static int davinci_mdiobb_write_c45(struct mii_bus *bus, int phy, int devad,
+				    int reg, u16 val)
+{
+	int ret;
+
+	ret = pm_runtime_resume_and_get(bus->parent);
+	if (ret < 0)
+		return ret;
+
+	ret = mdiobb_write_c45(bus, phy, devad, reg, val);
 
 	pm_runtime_mark_last_busy(bus->parent);
 	pm_runtime_put_autosuspend(bus->parent);
@@ -267,11 +296,9 @@ static int davinci_mdio_common_reset(struct davinci_mdio_data *data)
 	u32 phy_mask, ver;
 	int ret;
 
-	ret = pm_runtime_get_sync(data->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(data->dev);
+	ret = pm_runtime_resume_and_get(data->dev);
+	if (ret < 0)
 		return ret;
-	}
 
 	if (data->manual_mode) {
 		davinci_mdio_disable(data);
@@ -387,11 +414,9 @@ static int davinci_mdio_read(struct mii_bus *bus, int phy_id, int phy_reg)
 	if (phy_reg & ~PHY_REG_MASK || phy_id & ~PHY_ID_MASK)
 		return -EINVAL;
 
-	ret = pm_runtime_get_sync(data->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(data->dev);
+	ret = pm_runtime_resume_and_get(data->dev);
+	if (ret < 0)
 		return ret;
-	}
 
 	reg = (USERACCESS_GO | USERACCESS_READ | (phy_reg << 21) |
 	       (phy_id << 16));
@@ -431,11 +456,9 @@ static int davinci_mdio_write(struct mii_bus *bus, int phy_id,
 	if (phy_reg & ~PHY_REG_MASK || phy_id & ~PHY_ID_MASK)
 		return -EINVAL;
 
-	ret = pm_runtime_get_sync(data->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(data->dev);
+	ret = pm_runtime_resume_and_get(data->dev);
+	if (ret < 0)
 		return ret;
-	}
 
 	reg = (USERACCESS_GO | USERACCESS_WRITE | (phy_reg << 21) |
 		   (phy_id << 16) | (phy_data & USERACCESS_DATA));
@@ -488,16 +511,12 @@ static const struct k3_mdio_soc_data am65_mdio_soc_data = {
 };
 
 static const struct soc_device_attribute k3_mdio_socinfo[] = {
-	{ .family = "AM62X", .revision = "SR1.0", .data = &am65_mdio_soc_data },
-	{ .family = "AM64X", .revision = "SR1.0", .data = &am65_mdio_soc_data },
-	{ .family = "AM64X", .revision = "SR2.0", .data = &am65_mdio_soc_data },
-	{ .family = "AM65X", .revision = "SR1.0", .data = &am65_mdio_soc_data },
-	{ .family = "AM65X", .revision = "SR2.0", .data = &am65_mdio_soc_data },
-	{ .family = "J7200", .revision = "SR1.0", .data = &am65_mdio_soc_data },
-	{ .family = "J7200", .revision = "SR2.0", .data = &am65_mdio_soc_data },
-	{ .family = "J721E", .revision = "SR1.0", .data = &am65_mdio_soc_data },
-	{ .family = "J721E", .revision = "SR2.0", .data = &am65_mdio_soc_data },
-	{ .family = "J721S2", .revision = "SR1.0", .data = &am65_mdio_soc_data},
+	{ .family = "AM62X", .data = &am65_mdio_soc_data },
+	{ .family = "AM64X", .data = &am65_mdio_soc_data },
+	{ .family = "AM65X", .data = &am65_mdio_soc_data },
+	{ .family = "J7200", .data = &am65_mdio_soc_data },
+	{ .family = "J721E", .data = &am65_mdio_soc_data },
+	{ .family = "J721S2", .data = &am65_mdio_soc_data },
 	{ /* sentinel */ },
 };
 
@@ -583,8 +602,10 @@ static int davinci_mdio_probe(struct platform_device *pdev)
 	data->bus->name		= dev_name(dev);
 
 	if (data->manual_mode) {
-		data->bus->read		= davinci_mdiobb_read;
-		data->bus->write	= davinci_mdiobb_write;
+		data->bus->read		= davinci_mdiobb_read_c22;
+		data->bus->write	= davinci_mdiobb_write_c22;
+		data->bus->read_c45	= davinci_mdiobb_read_c45;
+		data->bus->write_c45	= davinci_mdiobb_write_c45;
 		data->bus->reset	= davinci_mdiobb_reset;
 
 		dev_info(dev, "Configuring MDIO in manual mode\n");
@@ -648,7 +669,7 @@ bail_out:
 	return ret;
 }
 
-static int davinci_mdio_remove(struct platform_device *pdev)
+static void davinci_mdio_remove(struct platform_device *pdev)
 {
 	struct davinci_mdio_data *data = platform_get_drvdata(pdev);
 
@@ -661,8 +682,6 @@ static int davinci_mdio_remove(struct platform_device *pdev)
 
 	pm_runtime_dont_use_autosuspend(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
-
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -741,7 +760,7 @@ static struct platform_driver davinci_mdio_driver = {
 		.of_match_table = of_match_ptr(davinci_mdio_of_mtable),
 	},
 	.probe = davinci_mdio_probe,
-	.remove = davinci_mdio_remove,
+	.remove_new = davinci_mdio_remove,
 };
 
 static int __init davinci_mdio_init(void)

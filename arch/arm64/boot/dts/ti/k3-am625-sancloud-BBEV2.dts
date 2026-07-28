@@ -1,0 +1,394 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * https://sancloud.com/
+ *
+ * Copyright (C) 2022-2023 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2022-2023 Marc Murphy, SanCloud Ltd - https://www.sancloud.com/
+ */
+
+/dts-v1/;
+#include "k3-am625-sancloud-stratus.dtsi"
+
+/ {
+	transceiver1: can-phy0 {
+		compatible = "ti,tcan1042";
+		#phy-cells = <0>;
+		max-bitrate = <5000000>;
+	};
+
+	transceiver2: can-phy1 {
+		compatible = "ti,tcan1042";
+		#phy-cells = <0>;
+		max-bitrate = <5000000>;
+	};
+
+	transceiver3: can-phy2 {
+		compatible = "ti,tcan1042";
+		#phy-cells = <0>;
+		max-bitrate = <5000000>;
+	};
+
+
+	backlight: backlight {
+		compatible = "pwm-backlight";
+		pinctrl-names = "default";
+		pinctrl-0 = <&lcd_pwm_backlight_pins_default>;
+		brightness-levels = <0 4 8 16 32 64 128 255>;
+		default-brightness-level = <6>;
+		enable-gpios = <&main_gpio1 13 GPIO_ACTIVE_HIGH>;
+		pwms = <&epwm0 0 20000 0>;
+	};
+
+
+	panel0 {
+		compatible = "eastrising,tft070ips_4_gp";
+		backlight = <&backlight>;
+		
+			port {
+					lcd_in: endpoint {
+						remote-endpoint = <&dpi1_out>; 
+					};
+			};
+	};
+};
+
+
+
+&{/chosen} {
+		base_dtb = "k3-am625-sancloud-BBEV2.dts";
+	};
+
+&aliases {
+		ethernet0 = &cpsw_port1;
+		ethernet1 = &cpsw_port2;
+		i2c1 = &main_i2c1;
+		i2c2 = &main_i2c2;
+		i2c3 = &main_i2c3;
+		serial0 = &wkup_uart0;
+		serial1 = &mcu_uart0;
+		rs1 = &main_uart2;
+		rs2 = &main_uart4;
+		rs3 = &main_uart6;
+	};
+
+
+
+&main_pmx0 {
+	dss0_pins_default: dss0-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x0100, PIN_OUTPUT, 0) /* (AC25) VOUT0_VSYNC */
+			AM62X_IOPAD(0x00f8, PIN_OUTPUT, 0) /* (AB24) VOUT0_HSYNC */
+			AM62X_IOPAD(0x0104, PIN_OUTPUT, 0) /* (AC24) VOUT0_PCLK */
+			AM62X_IOPAD(0x00fc, PIN_OUTPUT, 0) /* (Y20) VOUT0_DE */
+			/* BLUE */
+			AM62X_IOPAD(0x00b8, PIN_OUTPUT, 0) /* (U22) VOUT0_DATA0 */
+			AM62X_IOPAD(0x00bc, PIN_OUTPUT, 0) /* (V24) VOUT0_DATA1 */
+			AM62X_IOPAD(0x00c0, PIN_OUTPUT, 0) /* (W25) VOUT0_DATA2 */
+			AM62X_IOPAD(0x00c4, PIN_OUTPUT, 0) /* (W24) VOUT0_DATA3 */
+			AM62X_IOPAD(0x00c8, PIN_OUTPUT, 0) /* (Y25) VOUT0_DATA4 */
+			AM62X_IOPAD(0x00cc, PIN_OUTPUT, 0) /* (Y24) VOUT0_DATA5 */
+			AM62X_IOPAD(0x00d0, PIN_OUTPUT, 0) /* (Y23) VOUT0_DATA6 */
+			AM62X_IOPAD(0x00d4, PIN_OUTPUT, 0) /* (AA25) VOUT0_DATA7 */
+			/* GREEN */
+			AM62X_IOPAD(0x00d8, PIN_OUTPUT, 0) /* (V21) VOUT0_DATA8 */
+			AM62X_IOPAD(0x00dc, PIN_OUTPUT, 0) /* (W21) VOUT0_DATA9 */
+			AM62X_IOPAD(0x00e0, PIN_OUTPUT, 0) /* (V20) VOUT0_DATA10 */
+			AM62X_IOPAD(0x00e4, PIN_OUTPUT, 0) /* (AA23) VOUT0_DATA11 */
+			AM62X_IOPAD(0x00e8, PIN_OUTPUT, 0) /* (AB25) VOUT0_DATA12 */
+			AM62X_IOPAD(0x00ec, PIN_OUTPUT, 0) /* (AA24) VOUT0_DATA13 */
+			AM62X_IOPAD(0x00f0, PIN_OUTPUT, 0) /* (Y22) VOUT0_DATA14 */
+			AM62X_IOPAD(0x00f4, PIN_OUTPUT, 0) /* (AA21) VOUT0_DATA15 */
+			/*RED*/
+			AM62X_IOPAD(0x005c, PIN_OUTPUT, 1) /* (R24) GPMC0_AD8.VOUT0_DATA16 */
+			AM62X_IOPAD(0x0060, PIN_OUTPUT, 1) /* (R25) GPMC0_AD9.VOUT0_DATA17 */
+			AM62X_IOPAD(0x0064, PIN_OUTPUT, 1) /* (T25) GPMC0_AD10.VOUT0_DATA18 */
+			AM62X_IOPAD(0x0068, PIN_OUTPUT, 1) /* (R21) GPMC0_AD11.VOUT0_DATA19 */
+			AM62X_IOPAD(0x006c, PIN_OUTPUT, 1) /* (T22) GPMC0_AD12.VOUT0_DATA20 */
+			AM62X_IOPAD(0x0070, PIN_OUTPUT, 1) /* (T24) GPMC0_AD13.VOUT0_DATA21 */
+			AM62X_IOPAD(0x0074, PIN_OUTPUT, 1) /* (U25) GPMC0_AD14.VOUT0_DATA22 */
+			AM62X_IOPAD(0x0078, PIN_OUTPUT, 1) /* (U24) GPMC0_AD15.VOUT0_DATA23 */
+		>;
+	};
+
+	gpio0_pins_default: gpio0-pins-default {
+		pinctrl-single,pins = <
+			//AM62X_IOPAD(0x00a4, PIN_INPUT_PULLDOWN, 7) /* (M22) GPMC0_DIR.GPIO0_40 */ /* TS_IRQ */
+		>;
+	};
+
+	gpio1_pins_default: gpio1-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x0194, PIN_OUTPUT_PULLDOWN, 7)	/* (E18) MCASP0_AXR3.GPIO1_7*/  /* RELAY EN 4 */
+			AM62X_IOPAD(0x0198, PIN_OUTPUT_PULLDOWN, 7)	/* (E18) MCASP0_AXR2.GPIO1_8*/  /* RELAY EN 3 */
+			AM62X_IOPAD(0x019c, PIN_OUTPUT_PULLDOWN, 7)	/* (E18) MCASP0_AXR1.GPIO1_9*/  /* RELAY EN 2 */
+			AM62X_IOPAD(0x01a0, PIN_OUTPUT_PULLDOWN, 7)	/* (E18) MCASP0_AXR0.GPIO1_10*/ /* RELAY EN 1 */ 
+			// AM62X_IOPAD(0x01ac, PIN_OUTPUT_PULLUP, 7)	/* (E19) MCASP0_AFSR.GPIO1_13*/ /* BACKLIGHT_EN */ 
+			AM62X_IOPAD(0x01b4, PIN_OUTPUT_PULLDOWN, 7)	/* (A13) SPI0_CS0.GPIO1_15*/ 	/* UART2 TRS */ 
+			AM62X_IOPAD(0x01bc, PIN_OUTPUT_PULLDOWN, 7)	/* (A14) SPI0_CLK.GPIO1_17*/ 	/* UART6 TRS */ 
+		>;
+	};
+
+	local_i2c1_pins_default: local-i2c1-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x01e8, PIN_INPUT_PULLUP, 0) /* (B17) I2C1_SCL */
+			AM62X_IOPAD(0x01ec, PIN_INPUT_PULLUP, 0) /* (A17) I2C1_SDA */
+		>;
+	};
+
+	local_i2c2_pins_default: local-i2c2-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x00b0, PIN_INPUT_PULLUP, 1) /* (K22) GPMC0_CSn2.I2C2_SCL */
+			AM62X_IOPAD(0x00b4, PIN_INPUT_PULLUP, 1) /* (K24) GPMC0_CSn3.I2C2_SDA */
+		>;
+	};
+
+	mdio0_pins_default: mdio0-pins-default {
+		pinctrl-single,pins = <
+			// AM62X_IOPAD(0x0160, PIN_OUTPUT, 7) /* (AD24) MDIO0_MDC.GPIO0_86 */
+			// AM62X_IOPAD(0x015c, PIN_INPUT, 7) /* (AB22) MDIO0_MDIO.GPIO0_85 */
+			AM62X_IOPAD(0x0160, PIN_OUTPUT, 0) /* (AD24) MDIO0_MDC */
+			AM62X_IOPAD(0x015c, PIN_INPUT, 0) /* (AB22) MDIO0_MDIO */
+		>;
+	};
+
+	rgmii1_pins_default: rgmii1-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x014c, PIN_INPUT, 0) /* (AB17) RGMII1_RD0 */
+			AM62X_IOPAD(0x0150, PIN_INPUT, 0) /* (AC17) RGMII1_RD1 */
+			AM62X_IOPAD(0x0154, PIN_INPUT, 0) /* (AB16) RGMII1_RD2 */
+			AM62X_IOPAD(0x0158, PIN_INPUT, 0) /* (AA15) RGMII1_RD3 */
+			AM62X_IOPAD(0x0148, PIN_INPUT, 0) /* (AD17) RGMII1_RXC */
+			AM62X_IOPAD(0x0144, PIN_INPUT, 0) /* (AE17) RGMII1_RX_CTL */
+			AM62X_IOPAD(0x0134, PIN_OUTPUT, 0) /* (AE20) RGMII1_TD0 */
+			AM62X_IOPAD(0x0138, PIN_OUTPUT, 0) /* (AD20) RGMII1_TD1 */
+			AM62X_IOPAD(0x013c, PIN_OUTPUT, 0) /* (AE18) RGMII1_TD2 */
+			AM62X_IOPAD(0x0140, PIN_OUTPUT, 0) /* (AD18) RGMII1_TD3 */
+			AM62X_IOPAD(0x0130, PIN_OUTPUT, 0) /* (AE19) RGMII1_TXC */
+			AM62X_IOPAD(0x012c, PIN_OUTPUT, 0) /* (AD19) RGMII1_TX_CTL */
+			// AM62X_IOPAD(0x0038, PIN_OUTPUT_PULLUP, 7) /* (E24) OSPI0_CSn3.GPIO0_14 */ /* ETH_RESETn */
+			// AM62X_IOPAD(0x0004, PIN_INPUT_PULLUP, 7) /* (G25) OSPI0_LBCLKO.GPIO0_1 */
+			AM62X_IOPAD(0x0094, PIN_INPUT, 7) /* (N20) GPMC0_DIR.GPIO0_36 */
+			AM62X_IOPAD(0x00a4, PIN_OUTPUT, 7) /* (M22) GPMC0_DIR.GPIO0_40 */ /* ETH_RESETn */
+		>;
+	};
+
+	rgmii2_pins_default: rgmii2-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x184, PIN_INPUT, 0) /* (AE23) RGMII2_RD0 */
+			AM62X_IOPAD(0x188, PIN_INPUT, 0) /* (AB20) RGMII2_RD1 */
+			AM62X_IOPAD(0x18c, PIN_INPUT, 0) /* (AC21) RGMII2_RD2 */
+			AM62X_IOPAD(0x190, PIN_INPUT, 0) /* (AE22) RGMII2_RD3 */
+			AM62X_IOPAD(0x180, PIN_INPUT, 0) /* (AD23) RGMII2_RXC */
+			AM62X_IOPAD(0x17c, PIN_INPUT, 0) /* (AD22) RGMII2_RX_CTL */
+			AM62X_IOPAD(0x16c, PIN_OUTPUT, 0) /* (Y18) RGMII2_TD0 */
+			AM62X_IOPAD(0x170, PIN_OUTPUT, 0) /* (AA18) RGMII2_TD1 */
+			AM62X_IOPAD(0x174, PIN_OUTPUT, 0) /* (AD21) RGMII2_TD2 */
+			AM62X_IOPAD(0x178, PIN_OUTPUT, 0) /* (AC20) RGMII2_TD3 */
+			AM62X_IOPAD(0x168, PIN_OUTPUT, 0) /* (AE21) RGMII2_TXC */
+			AM62X_IOPAD(0x164, PIN_OUTPUT, 0) /* (AA19) RGMII2_TX_CTL */
+			AM62X_IOPAD(0x0034, PIN_OUTPUT, 7) /* (H21) OSPI0_CSn2.GPIO0_13 */
+			AM62X_IOPAD(0x0008, PIN_INPUT_PULLUP, 7) /* (J24) OSPI0_DQS.GPIO1_16 */
+		>;
+	};
+
+	lcd_pwm_backlight_pins_default: lcd-pwm-backlight-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x01ac, PIN_OUTPUT, 6)	/* (E19) MCASP0_AFSR.EHRPWM0_A*/ /* BACKLIGHT_EN */ 
+		>;
+	};
+
+	uart2_pins_default: uart2-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x01d0, PIN_INPUT, 3) /* (A15) UART2_RXD */
+			AM62X_IOPAD(0x01d4, PIN_OUTPUT, 3) /* (B15) UART2_TXD */
+			AM62X_IOPAD(0x01c0, PIN_OUTPUT, 7) /* (B13) SPI0_D0.GPIO1_18 */
+		>;
+	};
+
+	uart4_pins_default: uart4-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x0124, PIN_INPUT, 3) /* (A23) UART4_RXD */
+			AM62X_IOPAD(0x0128, PIN_OUTPUT, 3) /* (B23) UART4_TXD */
+			AM62X_IOPAD(0x01b8, PIN_OUTPUT, 7) /* (C13) SPI0_CS1.GPIO1_16 */
+		>;
+	};
+
+	uart6_pins_default: uart6-pins-default {
+		pinctrl-single,pins = <
+			AM62X_IOPAD(0x009c, PIN_INPUT, 3) /* (V25) UART6_RXD */
+			AM62X_IOPAD(0x00a0, PIN_OUTPUT, 3) /* (K25) UART6_TXD */
+			AM62X_IOPAD(0x01c4, PIN_OUTPUT, 7) /* (B14) SPI0_D1.GPIO1_19 */
+		>;
+	};
+};
+
+
+/* cbass_main */
+/* cbass_wkup */
+/* NETWORK */
+
+&cpsw3g {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rgmii1_pins_default>, <&rgmii2_pins_default>;
+	assigned-clocks = <&k3_clks 157 70>, <&k3_clks 157 20>;
+	assigned-clock-parents = <&k3_clks 157 72>, <&k3_clks 157 22>;
+};
+
+&cpsw_port1 {
+	status = "okay";
+	phy-mode = "rgmii-rxid";
+	phy-handle = <&cpsw3g_phy0>;
+};
+
+&cpsw_port2 {
+	status = "disabled";
+};
+
+&cpsw3g_mdio {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mdio0_pins_default>;
+
+	cpsw3g_phy0: ethernet-phy@0 {
+		reg = <0>;
+		interrupt-parent = <&main_gpio0>;
+		interrupts = <36 IRQ_TYPE_EDGE_FALLING>;
+		reset-assert-us = <10000>;
+		reset-deassert-us = <50000>;
+		reset-gpios = <&main_gpio0 40 GPIO_ACTIVE_LOW>;
+	};
+
+};
+
+/* GPIO */
+&main_gpio0 {
+	pinctrl-names = "default";
+	pinctrl-0 = < 	&gpio0_pins_stratus
+					&gpio0_pins_default>;
+	gpio-line-names = "", "PHY0_IRQ", "PHY1_IRQ", "", "", "", "", "",	/* 0-7 */
+		"", "", "", "", "NOR_PWR_EN", "PHY1_RST", "PHY0_RST",			/* 8-14 */
+		"", "", "", "", "", "", "LSM6D_IRQ",		/* 15-21 */
+		"", "",	/* 22-23 */
+		"", "",	/* 24-25 */
+		"", "", "", "", "", "SW_CTL", "", "", "", "", "", "",	/* 26-37 */
+		"", "", "TS_IRQ", "", "", "", "", "", "", "",		/* 38-47 */
+		"", "", "", "";			/* 48-51 */
+};
+
+&main_gpio1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&gpio1_pins_default>;
+	gpio-line-names = "", "", "", "", "", "", "", "RELAY4_EN",	/* 0-7 */
+		"RELAY3_EN", "RELAY2_EN", "RELAY1_EN", "", "", "", "",			/* 8-14 */
+		"RS1_TRS", "", "RS2_TRS", "", "", "", "",		/* 15-21 */
+		"", "",	/* 22-23 */
+		"", "",	/* 24-25 */
+		"", "", "", "", "", "", "", "", "", "", "", "",	/* 26-37 */
+		"", "", "", "", "", "", "", "", "", "",		/* 38-47 */
+		"", "", "", "";			/* 48-51 */
+};
+
+&mcu_gpio0 {
+	gpio-line-names = "", "", "", "",			/* 0-3 */
+		"", "", "", "",					/* 4-7 */
+		"", "", "", "",					/* 8-11 */
+		"", "", "", "",					/* 12-15 */
+		"", "", "", "",	/* 16-19 */
+		"", "", "", "";					/* 20-23 */
+};
+
+/* I2C */
+/* SDIO (EMMC/SD) */
+&epwm0{
+	status = "okay";	
+};
+
+&main_uart1 {
+	/* Main UART1 is used by TIFS firmware */
+	status = "reserved";
+};
+
+
+&main_uart2 {
+	bootph-all;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart2_pins_default>;
+	status = "okay";
+	rts-gpio = <&main_gpio1 18 GPIO_ACTIVE_HIGH>;
+	rs485-rts-active-high;
+	rs485-rts-delay = <0 0>;
+	linux,rs485-enabled-at-boot-time;
+};
+
+
+&main_uart4 {
+	bootph-all;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4_pins_default>;
+	status = "okay";
+	rts-gpio = <&main_gpio1 16 GPIO_ACTIVE_HIGH>;
+	rs485-rts-active-high;
+	rs485-rts-delay = <0 0>;
+	linux,rs485-enabled-at-boot-time;
+};
+
+&main_uart6 {
+	bootph-all;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart6_pins_default>;
+	status = "okay";
+	rts-gpio = <&main_gpio1 19 GPIO_ACTIVE_HIGH>;
+	rs485-rts-active-high;
+	rs485-rts-delay = <0 0>;
+	linux,rs485-enabled-at-boot-time;
+};
+
+/* RS485 BOARD DETECT */
+&main_i2c1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&local_i2c1_pins_default>;
+	clock-frequency = <400000>;
+	status = "okay";
+
+};
+
+/* RELAY BOARD DETECT */
+&main_i2c2 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&local_i2c2_pins_default>;
+	clock-frequency = <400000>;
+	status = "okay"; 
+
+	touchscreen: touchscreen@4d {
+		compatible = "microchip,ar1021-i2c";
+		reg = <0x4d>;
+		// interrupt-parent = <&main_gpio0>;
+		// interrupts = <40 IRQ_TYPE_EDGE_RISING>;
+		touchscreen-size-x=<800>;
+		touchscreen-size-y=<480>;
+		touchscreen-inverted-y;
+	};
+};
+
+/* DISPLAY SUB SYSTEM (LCD) */
+
+&dss {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&dss0_pins_default>;
+};
+
+&dss_ports {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	/* VP2: DPI Output */
+	port@1 {
+		reg = <1>;
+
+		dpi1_out: endpoint {
+			remote-endpoint = <&lcd_in>;
+		};
+	};
+};
+

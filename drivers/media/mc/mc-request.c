@@ -254,12 +254,12 @@ media_request_get_by_fd(struct media_device *mdev, int request_fd)
 		return ERR_PTR(-EBADR);
 
 	f = fdget(request_fd);
-	if (!f.file)
+	if (!fd_file(f))
 		goto err_no_req_fd;
 
-	if (f.file->f_op != &request_fops)
+	if (fd_file(f)->f_op != &request_fops)
 		goto err_fput;
-	req = f.file->private_data;
+	req = fd_file(f)->private_data;
 	if (req->mdev != mdev)
 		goto err_fput;
 
@@ -414,7 +414,8 @@ int media_request_object_bind(struct media_request *req,
 
 	spin_lock_irqsave(&req->lock, flags);
 
-	if (WARN_ON(req->state != MEDIA_REQUEST_STATE_UPDATING))
+	if (WARN_ON(req->state != MEDIA_REQUEST_STATE_UPDATING &&
+		    req->state != MEDIA_REQUEST_STATE_QUEUED))
 		goto unlock;
 
 	obj->req = req;

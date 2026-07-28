@@ -74,7 +74,7 @@ bus supply voltage.
 
 The shunt value in micro-ohms can be set via platform data or device tree at
 compile-time or via the shunt_resistor attribute in sysfs at run-time. Please
-refer to the Documentation/devicetree/bindings/hwmon/ina2xx.txt for bindings
+refer to the Documentation/devicetree/bindings/hwmon/ti,ina2xx.yaml for bindings
 if the device tree is used.
 
 Additionally ina226 supports update_interval attribute as described in
@@ -99,6 +99,10 @@ Sysfs entries for ina226, ina230 and ina231 only
 ------------------------------------------------
 
 ======================= ====================================================
+curr1_lcrit		Critical low current
+curr1_crit		Critical high current
+curr1_lcrit_alarm	Current critical low alarm
+curr1_crit_alarm	Current critical high alarm
 in0_lcrit		Critical low shunt voltage
 in0_crit		Critical high shunt voltage
 in0_lcrit_alarm		Shunt voltage critical low alarm

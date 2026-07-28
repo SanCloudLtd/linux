@@ -3,6 +3,7 @@
  *
  * Copyright (c) 2005-2006, 2013-2018 Ericsson AB
  * Copyright (c) 2005-2007, 2010-2013, Wind River Systems
+ * Copyright (c) 2020, Red Hat Inc
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -71,7 +72,6 @@ struct tipc_node;
 struct tipc_bearer;
 struct tipc_bc_base;
 struct tipc_link;
-struct tipc_name_table;
 struct tipc_topsrv;
 struct tipc_monitor;
 #ifdef CONFIG_TIPC_CRYPTO
@@ -125,9 +125,6 @@ struct tipc_net {
 	/* Name table */
 	spinlock_t nametbl_lock;
 	struct name_table *nametbl;
-
-	/* Name dist queue */
-	struct list_head dist_queue;
 
 	/* Topology subscription server */
 	struct tipc_topsrv *topsrv;
@@ -199,7 +196,7 @@ static inline int less(u16 left, u16 right)
 	return less_eq(left, right) && (mod(right) != mod(left));
 }
 
-static inline int in_range(u16 val, u16 min, u16 max)
+static inline int tipc_in_range(u16 val, u16 min, u16 max)
 {
 	return !less(val, min) && !more(val, max);
 }
@@ -207,6 +204,17 @@ static inline int in_range(u16 val, u16 min, u16 max)
 static inline u32 tipc_net_hash_mixes(struct net *net, int tn_rand)
 {
 	return net_hash_mix(&init_net) ^ net_hash_mix(net) ^ tn_rand;
+}
+
+static inline u32 hash128to32(char *bytes)
+{
+	__be32 *tmp = (__be32 *)bytes;
+	u32 res;
+
+	res = ntohl(tmp[0] ^ tmp[1] ^ tmp[2] ^ tmp[3]);
+	if (likely(res))
+		return res;
+	return  ntohl(tmp[0] | tmp[1] | tmp[2] | tmp[3]);
 }
 
 #ifdef CONFIG_SYSCTL

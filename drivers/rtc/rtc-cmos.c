@@ -231,7 +231,7 @@ static int cmos_read_time(struct device *dev, struct rtc_time *t)
 	if (!pm_trace_rtc_valid())
 		return -EIO;
 
-	ret = mc146818_get_time(t);
+	ret = mc146818_get_time(t, 1000);
 	if (ret < 0) {
 		dev_err_ratelimited(dev, "unable to read current time\n");
 		return ret;
@@ -292,7 +292,7 @@ static int cmos_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 
 	/* This not only a rtc_op, but also called directly */
 	if (!is_valid_irq(cmos->irq))
-		return -EIO;
+		return -ETIMEDOUT;
 
 	/* Basic alarms only support hour, minute, and seconds fields.
 	 * Some also support day and month, for alarms up to a year in
@@ -307,7 +307,7 @@ static int cmos_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 	 *
 	 * Use the mc146818_avoid_UIP() function to avoid this.
 	 */
-	if (!mc146818_avoid_UIP(cmos_read_alarm_callback, &p))
+	if (!mc146818_avoid_UIP(cmos_read_alarm_callback, 10, &p))
 		return -EIO;
 
 	if (!(p.rtc_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
@@ -556,8 +556,8 @@ static int cmos_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	 *
 	 * Use mc146818_avoid_UIP() to avoid this.
 	 */
-	if (!mc146818_avoid_UIP(cmos_set_alarm_callback, &p))
-		return -EIO;
+	if (!mc146818_avoid_UIP(cmos_set_alarm_callback, 10, &p))
+		return -ETIMEDOUT;
 
 	cmos->alarm_expires = rtc_tm_to_time64(&t->time);
 
@@ -629,12 +629,6 @@ static const struct rtc_class_ops cmos_rtc_ops = {
 	.alarm_irq_enable	= cmos_alarm_irq_enable,
 };
 
-static const struct rtc_class_ops cmos_rtc_ops_no_alarm = {
-	.read_time		= cmos_read_time,
-	.set_time		= cmos_set_time,
-	.proc			= cmos_procfs,
-};
-
 /*----------------------------------------------------------------*/
 
 /*
@@ -649,21 +643,19 @@ static int cmos_nvram_read(void *priv, unsigned int off, void *val,
 			   size_t count)
 {
 	unsigned char *buf = val;
-	int	retval;
 
 	off += NVRAM_OFFSET;
-	spin_lock_irq(&rtc_lock);
-	for (retval = 0; count; count--, off++, retval++) {
+	for (; count; count--, off++, buf++) {
+		guard(spinlock_irq)(&rtc_lock);
 		if (off < 128)
-			*buf++ = CMOS_READ(off);
+			*buf = CMOS_READ(off);
 		else if (can_bank2)
-			*buf++ = cmos_read_bank2(off);
+			*buf = cmos_read_bank2(off);
 		else
-			break;
+			return -EIO;
 	}
-	spin_unlock_irq(&rtc_lock);
 
-	return retval;
+	return 0;
 }
 
 static int cmos_nvram_write(void *priv, unsigned int off, void *val,
@@ -671,7 +663,6 @@ static int cmos_nvram_write(void *priv, unsigned int off, void *val,
 {
 	struct cmos_rtc	*cmos = priv;
 	unsigned char	*buf = val;
-	int		retval;
 
 	/* NOTE:  on at least PCs and Ataris, the boot firmware uses a
 	 * checksum on part of the NVRAM data.  That's currently ignored
@@ -679,23 +670,23 @@ static int cmos_nvram_write(void *priv, unsigned int off, void *val,
 	 * NVRAM to update, updating checksums is also part of its job.
 	 */
 	off += NVRAM_OFFSET;
-	spin_lock_irq(&rtc_lock);
-	for (retval = 0; count; count--, off++, retval++) {
+	for (; count; count--, off++, buf++) {
 		/* don't trash RTC registers */
 		if (off == cmos->day_alrm
 				|| off == cmos->mon_alrm
 				|| off == cmos->century)
-			buf++;
-		else if (off < 128)
-			CMOS_WRITE(*buf++, off);
-		else if (can_bank2)
-			cmos_write_bank2(*buf++, off);
-		else
-			break;
-	}
-	spin_unlock_irq(&rtc_lock);
+			continue;
 
-	return retval;
+		guard(spinlock_irq)(&rtc_lock);
+		if (off < 128)
+			CMOS_WRITE(*buf, off);
+		else if (can_bank2)
+			cmos_write_bank2(*buf, off);
+		else
+			return -EIO;
+	}
+
+	return 0;
 }
 
 /*----------------------------------------------------------------*/
@@ -706,8 +697,12 @@ static irqreturn_t cmos_interrupt(int irq, void *p)
 {
 	u8		irqstat;
 	u8		rtc_control;
+	unsigned long	flags;
 
-	spin_lock(&rtc_lock);
+	/* We cannot use spin_lock() here, as cmos_interrupt() is also called
+	 * in a non-irq context.
+	 */
+	spin_lock_irqsave(&rtc_lock, flags);
 
 	/* When the HPET interrupt handler calls us, the interrupt
 	 * status is passed as arg1 instead of the irq number.  But
@@ -741,7 +736,7 @@ static irqreturn_t cmos_interrupt(int irq, void *p)
 			hpet_mask_rtc_irq_bit(RTC_AIE);
 		CMOS_READ(RTC_INTR_FLAGS);
 	}
-	spin_unlock(&rtc_lock);
+	spin_unlock_irqrestore(&rtc_lock, flags);
 
 	if (is_intr(irqstat)) {
 		rtc_update_irq(p, 1, irqstat);
@@ -824,16 +819,22 @@ static void rtc_wake_off(struct device *dev)
 }
 
 #ifdef CONFIG_X86
-/* Enable use_acpi_alarm mode for Intel platforms no earlier than 2015 */
 static void use_acpi_alarm_quirks(void)
 {
-	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+	switch (boot_cpu_data.x86_vendor) {
+	case X86_VENDOR_INTEL:
+		if (dmi_get_bios_year() < 2015)
+			return;
+		break;
+	case X86_VENDOR_AMD:
+	case X86_VENDOR_HYGON:
+		if (dmi_get_bios_year() < 2021)
+			return;
+		break;
+	default:
 		return;
-
+	}
 	if (!is_hpet_enabled())
-		return;
-
-	if (dmi_get_bios_year() < 2015)
 		return;
 
 	use_acpi_alarm = true;
@@ -918,6 +919,10 @@ static inline void cmos_check_acpi_rtc_status(struct device *dev,
 #else
 #define	INITSECTION	__init
 #endif
+
+#define SECS_PER_DAY	(24 * 60 * 60)
+#define SECS_PER_MONTH	(28 * SECS_PER_DAY)
+#define SECS_PER_YEAR	(365 * SECS_PER_DAY)
 
 static int INITSECTION
 cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
@@ -1025,6 +1030,13 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 		goto cleanup0;
 	}
 
+	if (cmos_rtc.mon_alrm)
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_YEAR - 1;
+	else if (cmos_rtc.day_alrm)
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_MONTH - 1;
+	else
+		cmos_rtc.rtc->alarm_offset_max = SECS_PER_DAY - 1;
+
 	rename_region(ports, dev_name(&cmos_rtc.rtc->dev));
 
 	if (!mc146818_does_rtc_work()) {
@@ -1087,21 +1099,22 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 			dev_dbg(dev, "IRQ %d is already in use\n", rtc_irq);
 			goto cleanup1;
 		}
-
-		cmos_rtc.rtc->ops = &cmos_rtc_ops;
 	} else {
-		cmos_rtc.rtc->ops = &cmos_rtc_ops_no_alarm;
+		clear_bit(RTC_FEATURE_ALARM, cmos_rtc.rtc->features);
 	}
 
-	cmos_rtc.rtc->nvram_old_abi = true;
-	retval = rtc_register_device(cmos_rtc.rtc);
+	cmos_rtc.rtc->ops = &cmos_rtc_ops;
+
+	retval = devm_rtc_register_device(cmos_rtc.rtc);
 	if (retval)
 		goto cleanup2;
 
+	/* Set the sync offset for the periodic 11min update correct */
+	cmos_rtc.rtc->set_offset_nsec = NSEC_PER_SEC / 2;
+
 	/* export at least the first block of NVRAM */
 	nvmem_cfg.size = address_space - NVRAM_OFFSET;
-	if (rtc_nvmem_register(cmos_rtc.rtc, &nvmem_cfg))
-		dev_err(dev, "nvmem registration failed\n");
+	devm_rtc_nvmem_register(cmos_rtc.rtc, &nvmem_cfg);
 
 	/*
 	 * Everything has gone well so far, so by default register a handler for
@@ -1291,9 +1304,7 @@ static void cmos_check_wkalrm(struct device *dev)
 	 * ACK the rtc irq here
 	 */
 	if (t_now >= cmos->alarm_expires && cmos_use_acpi_alarm()) {
-		local_irq_disable();
 		cmos_interrupt(0, (void *)cmos->rtc);
-		local_irq_enable();
 		return;
 	}
 
@@ -1494,10 +1505,9 @@ static int __init cmos_platform_probe(struct platform_device *pdev)
 	return cmos_do_probe(&pdev->dev, resource, irq);
 }
 
-static int cmos_platform_remove(struct platform_device *pdev)
+static void cmos_platform_remove(struct platform_device *pdev)
 {
 	cmos_do_remove(&pdev->dev);
-	return 0;
 }
 
 static void cmos_platform_shutdown(struct platform_device *pdev)
@@ -1519,7 +1529,7 @@ static void cmos_platform_shutdown(struct platform_device *pdev)
 MODULE_ALIAS("platform:rtc_cmos");
 
 static struct platform_driver cmos_platform_driver = {
-	.remove		= cmos_platform_remove,
+	.remove_new	= cmos_platform_remove,
 	.shutdown	= cmos_platform_shutdown,
 	.driver = {
 		.name		= driver_name,

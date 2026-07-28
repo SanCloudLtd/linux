@@ -193,49 +193,41 @@ struct ti_sci_clk_ops {
 			u64 min_freq, u64 target_freq, u64 max_freq);
 	int (*get_freq)(const struct ti_sci_handle *handle, u32 did, u32 cid,
 			u64 *current_freq);
+	int (*set_spread_spectrum)(const struct ti_sci_handle *handle,
+				   u32 dev_id, u32 clk_id, u32 modfreq_hz,
+				   u32 mod_depth, u8 spread_type);
+	bool (*restore_clk)(void);
 };
-
-/* TISCI LPM wake up sources */
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_I2C0	0x00
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_UART0	0x10
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_MCU_GPIO0	0x20
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_ICEMELTER0	0x30
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_TIMER0	0x40
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_TIMER1	0x41
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_WKUP_RTC0	0x50
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_RESET		0x60
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_USB0		0x70
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_USB1		0x71
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_MAIN_IO		0x80
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_MCU_IO		0x81
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_CAN_IO		0x82
-#define TISCI_MSG_VALUE_LPM_WAKE_SOURCE_INVALID		0xFF
 
 /* TISCI LPM IO isolation control values */
 #define TISCI_MSG_VALUE_IO_ENABLE			1
 #define TISCI_MSG_VALUE_IO_DISABLE			0
 
+/* TISCI LPM constraint state values */
+#define TISCI_MSG_CONSTRAINT_SET			1
+#define TISCI_MSG_CONSTRAINT_CLR			0
+
 /**
  * struct ti_sci_pm_ops - Low Power Mode (LPM) control operations
- * @prepare_sleep: Prepare to enter low power mode
- *		- mode: Low power mode to enter.
- *		- ctx_lo: Low 32-bits of physical address for context save.
- *		- ctx_hi: High 32-bits of physical address for context save.
- *		- ctx_lo: 'true' if frequency change is desired.
- *		- debug_flags: JTAG control flags for debug.
  * @lpm_wake_reason: Get the wake up source that woke the SoC from LPM
  *		- source: The wake up source that woke soc from LPM.
  *		- timestamp: Timestamp at which soc woke.
- * @set_io_isolation: Enable or disable IO isolation
- *		- state: The desired state of the IO isolation.
+ * @set_device_constraint: Set LPM constraint on behalf of a device
+ *		- id: Device Identifier
+ *		- state: The desired state of device constraint: set or clear.
+ * @set_latency_constraint: Set LPM resume latency constraint
+ *		- latency: maximum acceptable latency to wake up from low power mode
+ *		- state: The desired state of latency constraint: set or clear.
+ * @lpm_abort: Abort entry to LPM
  */
 struct ti_sci_pm_ops {
-	int (*prepare_sleep)(const struct ti_sci_handle *handle, u8 mode,
-			     u32 ctx_lo, u32 ctx_hi, u32 flags);
 	int (*lpm_wake_reason)(const struct ti_sci_handle *handle,
-			       u32 *source, u64 *timestamp);
-	int (*set_io_isolation)(const struct ti_sci_handle *handle,
-				u8 state);
+			       u32 *source, u64 *timestamp, u8 *pin, u8 *mode);
+	int (*set_device_constraint)(const struct ti_sci_handle *handle,
+				     u32 id, u8 state);
+	int (*set_latency_constraint)(const struct ti_sci_handle *handle,
+				      u16 latency, u8 state);
+	int (*lpm_abort)(const struct ti_sci_handle *handle);
 };
 
 /**

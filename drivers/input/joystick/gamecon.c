@@ -11,9 +11,6 @@
  *	Raphael Assenat
  */
 
-/*
- */
-
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kernel.h>
@@ -953,7 +950,7 @@ static void gc_attach(struct parport *pp)
 		return;
 	}
 
-	gc = kzalloc(sizeof(struct gc), GFP_KERNEL);
+	gc = kzalloc(sizeof(*gc), GFP_KERNEL);
 	if (!gc) {
 		pr_err("Not enough memory\n");
 		goto err_unreg_pardev;
@@ -1019,7 +1016,6 @@ static struct parport_driver gc_parport_driver = {
 	.name = "gamecon",
 	.match_port = gc_attach,
 	.detach = gc_detach,
-	.devmodel = true,
 };
 
 static int __init gc_init(void)

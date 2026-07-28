@@ -11,7 +11,7 @@
 #include "ipoib.h"
 #include "hfi.h"
 
-static u32 qpn_from_mac(u8 *mac_arr)
+static u32 qpn_from_mac(const u8 *mac_arr)
 {
 	return (u32)mac_arr[1] << 16 | mac_arr[2] << 8 | mac_arr[3];
 }
@@ -20,8 +20,6 @@ static int hfi1_ipoib_dev_init(struct net_device *dev)
 {
 	struct hfi1_ipoib_dev_priv *priv = hfi1_ipoib_priv(dev);
 	int ret;
-
-	priv->netstats = netdev_alloc_pcpu_stats(struct pcpu_sw_netstats);
 
 	ret = priv->netdev_ops->ndo_init(dev);
 	if (ret)
@@ -93,30 +91,12 @@ static int hfi1_ipoib_dev_stop(struct net_device *dev)
 	return priv->netdev_ops->ndo_stop(dev);
 }
 
-static void hfi1_ipoib_dev_get_stats64(struct net_device *dev,
-				       struct rtnl_link_stats64 *storage)
-{
-	struct hfi1_ipoib_dev_priv *priv = hfi1_ipoib_priv(dev);
-
-	netdev_stats_to_stats64(storage, &dev->stats);
-	dev_fetch_sw_netstats(storage, priv->netstats);
-}
-
 static const struct net_device_ops hfi1_ipoib_netdev_ops = {
 	.ndo_init         = hfi1_ipoib_dev_init,
 	.ndo_uninit       = hfi1_ipoib_dev_uninit,
 	.ndo_open         = hfi1_ipoib_dev_open,
 	.ndo_stop         = hfi1_ipoib_dev_stop,
-	.ndo_get_stats64  = hfi1_ipoib_dev_get_stats64,
 };
-
-static int hfi1_ipoib_send(struct net_device *dev,
-			   struct sk_buff *skb,
-			   struct ib_ah *address,
-			   u32 dqpn)
-{
-	return hfi1_ipoib_send_dma(dev, skb, address, dqpn);
-}
 
 static int hfi1_ipoib_mcast_attach(struct net_device *dev,
 				   struct ib_device *device,
@@ -181,8 +161,6 @@ static void hfi1_ipoib_netdev_dtor(struct net_device *dev)
 
 	hfi1_ipoib_txreq_deinit(priv);
 	hfi1_ipoib_rxq_deinit(priv->netdev);
-
-	free_percpu(priv->netstats);
 }
 
 static void hfi1_ipoib_set_id(struct net_device *dev, int id)
@@ -197,7 +175,7 @@ static void hfi1_ipoib_set_id(struct net_device *dev, int id)
 }
 
 static int hfi1_ipoib_setup_rn(struct ib_device *device,
-			       u8 port_num,
+			       u32 port_num,
 			       struct net_device *netdev,
 			       void *param)
 {
@@ -207,6 +185,7 @@ static int hfi1_ipoib_setup_rn(struct ib_device *device,
 	int rc;
 
 	rn->send = hfi1_ipoib_send;
+	rn->tx_timeout = hfi1_ipoib_tx_timeout;
 	rn->attach_mcast = hfi1_ipoib_mcast_attach;
 	rn->detach_mcast = hfi1_ipoib_mcast_detach;
 	rn->set_id = hfi1_ipoib_set_id;
@@ -240,12 +219,13 @@ static int hfi1_ipoib_setup_rn(struct ib_device *device,
 
 	netdev->priv_destructor = hfi1_ipoib_netdev_dtor;
 	netdev->needs_free_netdev = true;
+	netdev->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
 
 	return 0;
 }
 
 int hfi1_ipoib_rn_get_params(struct ib_device *device,
-			     u8 port_num,
+			     u32 port_num,
 			     enum rdma_netdev_t type,
 			     struct rdma_netdev_alloc_params *params)
 {

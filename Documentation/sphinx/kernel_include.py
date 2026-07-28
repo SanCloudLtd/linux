@@ -34,12 +34,14 @@ u"""
 import os.path
 
 from docutils import io, nodes, statemachine
-from docutils.utils.error_reporting import SafeString, ErrorString
 from docutils.parsers.rst import directives
 from docutils.parsers.rst.directives.body import CodeBlock, NumberLines
 from docutils.parsers.rst.directives.misc import Include
 
 __version__  = '1.0'
+
+def ErrorString(exc):  # Shamelessly stolen from docutils
+    return f'{exc.__class__.__name}: {exc}'
 
 # ==============================================================================
 def setup(app):
@@ -59,6 +61,7 @@ class KernelInclude(Include):
     u"""KernelInclude (``kernel-include``) directive"""
 
     def run(self):
+        env = self.state.document.settings.env
         path = os.path.realpath(
             os.path.expandvars(self.arguments[0]))
 
@@ -69,6 +72,8 @@ class KernelInclude(Include):
                 % (self.name, path))
 
         self.arguments[0] = path
+
+        env.note_dependency(os.path.abspath(path))
 
         #return super(KernelInclude, self).run() # won't work, see HINTs in _run()
         return self._run()
@@ -94,7 +99,6 @@ class KernelInclude(Include):
         # HINT: this is the only line I had to change / commented out:
         #path = utils.relative_path(None, path)
 
-        path = nodes.reprunicode(path)
         encoding = self.options.get(
             'encoding', self.state.document.settings.input_encoding)
         e_handler=self.state.document.settings.input_encoding_error_handler
@@ -109,7 +113,7 @@ class KernelInclude(Include):
             raise self.severe('Problems with "%s" directive path:\n'
                               'Cannot encode input file path "%s" '
                               '(wrong locale?).' %
-                              (self.name, SafeString(path)))
+                              (self.name, path))
         except IOError as error:
             raise self.severe('Problems with "%s" directive path:\n%s.' %
                       (self.name, ErrorString(error)))

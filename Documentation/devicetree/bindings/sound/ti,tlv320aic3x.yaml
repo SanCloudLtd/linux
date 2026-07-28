@@ -61,6 +61,7 @@ properties:
       GPIO specification for the active low RESET input.
 
   gpio-reset:
+    $ref: /schemas/types.yaml#/definitions/uint32-matrix
     maxItems: 1
     description:
       Deprecated, please use reset-gpios instead.
@@ -109,6 +110,13 @@ properties:
 
   '#sound-dai-cells':
     const: 0
+
+  clocks:
+    maxItems: 1
+
+  port:
+    $ref: audio-graph-port.yaml#
+    unevaluatedProperties: false
 
 required:
   - compatible

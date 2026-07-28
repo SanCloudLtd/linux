@@ -514,7 +514,7 @@ struct i2c_vbi_ram_value {
  * and so on. There are 16 possible locations from 0 to 15.
  */
 
-static struct i2c_vbi_ram_value vbi_ram_default[] = {
+static const struct i2c_vbi_ram_value vbi_ram_default[] = {
 
 	/*
 	 * FIXME: Current api doesn't handle all VBI types, those not
@@ -964,7 +964,7 @@ static int tvp5150_enable(struct v4l2_subdev *sd)
 
 	/*
 	 * Enable the YCbCr and clock outputs. In discrete sync mode
-	 * (non-BT.656) additionally enable the the sync outputs.
+	 * (non-BT.656) additionally enable the sync outputs.
 	 */
 	switch (decoder->mbus_type) {
 	case V4L2_MBUS_PARALLEL:
@@ -1035,7 +1035,7 @@ tvp5150_get_pad_crop(struct tvp5150 *decoder,
 		return &decoder->rect;
 	case V4L2_SUBDEV_FORMAT_TRY:
 #if defined(CONFIG_VIDEO_V4L2_SUBDEV_API)
-		return v4l2_subdev_get_try_crop(&decoder->sd, sd_state, pad);
+		return v4l2_subdev_state_get_crop(sd_state, pad);
 #else
 		return ERR_PTR(-EINVAL);
 #endif
@@ -1198,8 +1198,10 @@ static int tvp5150_get_mbus_config(struct v4l2_subdev *sd,
 	struct tvp5150 *decoder = to_tvp5150(sd);
 
 	cfg->type = decoder->mbus_type;
-	cfg->flags = V4L2_MBUS_MASTER | V4L2_MBUS_PCLK_SAMPLE_RISING
-		   | V4L2_MBUS_FIELD_EVEN_LOW | V4L2_MBUS_DATA_ACTIVE_HIGH;
+	cfg->bus.parallel.flags = V4L2_MBUS_MASTER
+				| V4L2_MBUS_PCLK_SAMPLE_RISING
+				| V4L2_MBUS_FIELD_EVEN_LOW
+				| V4L2_MBUS_DATA_ACTIVE_HIGH;
 
 	return 0;
 }
@@ -1207,8 +1209,8 @@ static int tvp5150_get_mbus_config(struct v4l2_subdev *sd,
 /****************************************************************************
 			V4L2 subdev pad ops
  ****************************************************************************/
-static int tvp5150_init_cfg(struct v4l2_subdev *sd,
-			    struct v4l2_subdev_state *sd_state)
+static int tvp5150_init_state(struct v4l2_subdev *sd,
+			      struct v4l2_subdev_state *sd_state)
 {
 	struct tvp5150 *decoder = to_tvp5150(sd);
 	v4l2_std_id std;
@@ -1283,7 +1285,7 @@ static int tvp5150_disable_all_input_links(struct tvp5150 *decoder)
 	int err;
 
 	for (i = 0; i < TVP5150_NUM_PADS - 1; i++) {
-		connector_pad = media_entity_remote_pad(&decoder->pads[i]);
+		connector_pad = media_pad_remote_pad_first(&decoder->pads[i]);
 		if (!connector_pad)
 			continue;
 
@@ -1413,8 +1415,7 @@ static const struct media_entity_operations tvp5150_sd_media_ops = {
  ****************************************************************************/
 static int __maybe_unused tvp5150_runtime_suspend(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct tvp5150 *decoder = to_tvp5150(sd);
 
 	if (decoder->irq)
@@ -1427,8 +1428,7 @@ static int __maybe_unused tvp5150_runtime_suspend(struct device *dev)
 
 static int __maybe_unused tvp5150_runtime_resume(struct device *dev)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct tvp5150 *decoder = to_tvp5150(sd);
 
 	if (decoder->irq)
@@ -1450,11 +1450,9 @@ static int tvp5150_s_stream(struct v4l2_subdev *sd, int enable)
 	       TVP5150_MISC_CTL_CLOCK_OE;
 
 	if (enable) {
-		ret = pm_runtime_get_sync(sd->dev);
-		if (ret < 0) {
-			pm_runtime_put_noidle(sd->dev);
+		ret = pm_runtime_resume_and_get(sd->dev);
+		if (ret < 0)
 			return ret;
-		}
 
 		tvp5150_enable(sd);
 
@@ -1677,15 +1675,7 @@ err:
 
 static int tvp5150_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
 {
-	int ret;
-
-	ret = pm_runtime_get_sync(sd->dev);
-	if (ret < 0) {
-		pm_runtime_put_noidle(sd->dev);
-		return ret;
-	}
-
-	return 0;
+	return pm_runtime_resume_and_get(sd->dev);
 }
 
 static int tvp5150_close(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
@@ -1732,7 +1722,6 @@ static const struct v4l2_subdev_vbi_ops tvp5150_vbi_ops = {
 };
 
 static const struct v4l2_subdev_pad_ops tvp5150_pad_ops = {
-	.init_cfg = tvp5150_init_cfg,
 	.enum_mbus_code = tvp5150_enum_mbus_code,
 	.enum_frame_size = tvp5150_enum_frame_size,
 	.set_fmt = tvp5150_fill_fmt,
@@ -1751,6 +1740,7 @@ static const struct v4l2_subdev_ops tvp5150_ops = {
 };
 
 static const struct v4l2_subdev_internal_ops tvp5150_internal_ops = {
+	.init_state = tvp5150_init_state,
 	.registered = tvp5150_registered,
 	.open = tvp5150_open,
 	.close = tvp5150_close,
@@ -1822,12 +1812,12 @@ static const struct regmap_access_table tvp5150_readable_table = {
 	.n_yes_ranges = ARRAY_SIZE(tvp5150_readable_ranges),
 };
 
-static struct regmap_config tvp5150_config = {
+static const struct regmap_config tvp5150_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.max_register = 0xff,
 
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 
 	.rd_table = &tvp5150_readable_table,
 	.volatile_reg = tvp5150_volatile_reg,
@@ -2078,6 +2068,10 @@ static int tvp5150_parse_dt(struct tvp5150 *decoder, struct device_node *np)
 		tvpc->ent.name = devm_kasprintf(dev, GFP_KERNEL, "%s %s",
 						v4l2c->name, v4l2c->label ?
 						v4l2c->label : "");
+		if (!tvpc->ent.name) {
+			ret = -ENOMEM;
+			goto err_free;
+		}
 	}
 
 	ep_np = of_graph_get_endpoint_by_regs(np, TVP5150_PAD_VID_OUT, 0);
@@ -2240,7 +2234,7 @@ err:
 	return res;
 }
 
-static int tvp5150_remove(struct i2c_client *c)
+static void tvp5150_remove(struct i2c_client *c)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(c);
 	struct tvp5150 *decoder = to_tvp5150(sd);
@@ -2260,8 +2254,6 @@ static int tvp5150_remove(struct i2c_client *c)
 	v4l2_ctrl_handler_free(&decoder->hdl);
 	pm_runtime_disable(&c->dev);
 	pm_runtime_set_suspended(&c->dev);
-
-	return 0;
 }
 
 /* ----------------------------------------------------------------------- */
@@ -2273,7 +2265,7 @@ static const struct dev_pm_ops tvp5150_pm_ops = {
 };
 
 static const struct i2c_device_id tvp5150_id[] = {
-	{ "tvp5150", 0 },
+	{ "tvp5150" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, tvp5150_id);
@@ -2292,7 +2284,7 @@ static struct i2c_driver tvp5150_driver = {
 		.name	= "tvp5150",
 		.pm	= &tvp5150_pm_ops,
 	},
-	.probe_new	= tvp5150_probe,
+	.probe		= tvp5150_probe,
 	.remove		= tvp5150_remove,
 	.id_table	= tvp5150_id,
 };

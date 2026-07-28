@@ -414,10 +414,10 @@ struct smscore_registry_entry_t {
 
 static struct list_head g_smscore_notifyees;
 static struct list_head g_smscore_devices;
-static struct mutex g_smscore_deviceslock;
+static DEFINE_MUTEX(g_smscore_deviceslock);
 
 static struct list_head g_smscore_registry;
-static struct mutex g_smscore_registrylock;
+static DEFINE_MUTEX(g_smscore_registrylock);
 
 static int default_mode = DEVICE_MODE_NONE;
 
@@ -429,13 +429,13 @@ static struct smscore_registry_entry_t *smscore_find_registry(char *devpath)
 	struct smscore_registry_entry_t *entry;
 	struct list_head *next;
 
-	kmutex_lock(&g_smscore_registrylock);
+	mutex_lock(&g_smscore_registrylock);
 	for (next = g_smscore_registry.next;
 	     next != &g_smscore_registry;
 	     next = next->next) {
 		entry = (struct smscore_registry_entry_t *) next;
 		if (!strncmp(entry->devpath, devpath, sizeof(entry->devpath))) {
-			kmutex_unlock(&g_smscore_registrylock);
+			mutex_unlock(&g_smscore_registrylock);
 			return entry;
 		}
 	}
@@ -446,7 +446,7 @@ static struct smscore_registry_entry_t *smscore_find_registry(char *devpath)
 		list_add(&entry->entry, &g_smscore_registry);
 	} else
 		pr_err("failed to create smscore_registry.\n");
-	kmutex_unlock(&g_smscore_registrylock);
+	mutex_unlock(&g_smscore_registrylock);
 	return entry;
 }
 
@@ -527,7 +527,7 @@ int smscore_register_hotplug(hotplug_t hotplug)
 	struct list_head *next, *first;
 	int rc = 0;
 
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 	notifyee = kmalloc(sizeof(*notifyee), GFP_KERNEL);
 	if (notifyee) {
 		/* now notify callback about existing devices */
@@ -548,7 +548,7 @@ int smscore_register_hotplug(hotplug_t hotplug)
 	} else
 		rc = -ENOMEM;
 
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 
 	return rc;
 }
@@ -564,7 +564,7 @@ void smscore_unregister_hotplug(hotplug_t hotplug)
 {
 	struct list_head *next, *first;
 
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 
 	first = &g_smscore_notifyees;
 
@@ -579,7 +579,7 @@ void smscore_unregister_hotplug(hotplug_t hotplug)
 		}
 	}
 
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 }
 EXPORT_SYMBOL_GPL(smscore_unregister_hotplug);
 
@@ -732,9 +732,9 @@ int smscore_register_device(struct smsdevice_params_t *params,
 	smscore_registry_settype(dev->devpath, params->device_type);
 
 	/* add device to devices list */
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 	list_add(&dev->entry, &g_smscore_devices);
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 
 	*coredev = dev;
 
@@ -839,7 +839,7 @@ static int smscore_configure_board(struct smscore_device_t *coredev)
 		mtu_msg.x_msg_header.msg_flags = 0;
 		mtu_msg.x_msg_header.msg_type = MSG_SMS_SET_MAX_TX_MSG_LEN_REQ;
 		mtu_msg.x_msg_header.msg_length = sizeof(mtu_msg);
-		mtu_msg.msg_data[0] = board->mtu;
+		mtu_msg.msg_data = board->mtu;
 
 		coredev->sendrequest_handler(coredev->context, &mtu_msg,
 					     sizeof(mtu_msg));
@@ -852,7 +852,7 @@ static int smscore_configure_board(struct smscore_device_t *coredev)
 		SMS_INIT_MSG(&crys_msg.x_msg_header,
 				MSG_SMS_NEW_CRYSTAL_REQ,
 				sizeof(crys_msg));
-		crys_msg.msg_data[0] = board->crystal;
+		crys_msg.msg_data = board->crystal;
 
 		coredev->sendrequest_handler(coredev->context, &crys_msg,
 					     sizeof(crys_msg));
@@ -890,14 +890,14 @@ int smscore_start_device(struct smscore_device_t *coredev)
 		return rc;
 	}
 
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 
 	rc = smscore_notify_callbacks(coredev, coredev->device, 1);
 	smscore_init_ir(coredev);
 
 	pr_debug("device %p started, rc %d\n", coredev, rc);
 
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 
 	return rc;
 }
@@ -1132,8 +1132,7 @@ static char *smscore_get_fw_filename(struct smscore_device_t *coredev,
  * return: 0 on success, <0 on error.
  */
 static int smscore_load_firmware_from_file(struct smscore_device_t *coredev,
-					   int mode,
-					   loadfirmware_t loadfirmware_handler)
+					   int mode)
 {
 	int rc = -ENOENT;
 	u8 *fw_buf;
@@ -1147,8 +1146,7 @@ static int smscore_load_firmware_from_file(struct smscore_device_t *coredev,
 	}
 	pr_debug("Firmware name: %s\n", fw_filename);
 
-	if (!loadfirmware_handler &&
-	    !(coredev->device_flags & SMS_DEVICE_FAMILY2))
+	if (!(coredev->device_flags & SMS_DEVICE_FAMILY2))
 		return -EINVAL;
 
 	rc = request_firmware(&fw, fw_filename, coredev->device);
@@ -1166,10 +1164,8 @@ static int smscore_load_firmware_from_file(struct smscore_device_t *coredev,
 		memcpy(fw_buf, fw->data, fw->size);
 		fw_buf_size = fw->size;
 
-		rc = (coredev->device_flags & SMS_DEVICE_FAMILY2) ?
-			smscore_load_firmware_family2(coredev, fw_buf, fw_buf_size)
-			: loadfirmware_handler(coredev->context, fw_buf,
-			fw_buf_size);
+		rc = smscore_load_firmware_family2(coredev, fw_buf,
+						   fw_buf_size);
 	}
 
 	kfree(fw_buf);
@@ -1193,7 +1189,7 @@ void smscore_unregister_device(struct smscore_device_t *coredev)
 	int num_buffers = 0;
 	int retry = 0;
 
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 
 	/* Release input device (IR) resources */
 	sms_ir_exit(coredev);
@@ -1220,9 +1216,9 @@ void smscore_unregister_device(struct smscore_device_t *coredev)
 
 		pr_debug("waiting for %d buffer(s)\n",
 			 coredev->num_buffers - num_buffers);
-		kmutex_unlock(&g_smscore_deviceslock);
+		mutex_unlock(&g_smscore_deviceslock);
 		msleep(100);
-		kmutex_lock(&g_smscore_deviceslock);
+		mutex_lock(&g_smscore_deviceslock);
 	}
 
 	pr_debug("freed %d buffers\n", num_buffers);
@@ -1241,7 +1237,7 @@ void smscore_unregister_device(struct smscore_device_t *coredev)
 	list_del(&coredev->entry);
 	kfree(coredev);
 
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 
 	pr_debug("device %p destroyed\n", coredev);
 }
@@ -1306,7 +1302,7 @@ static int smscore_init_device(struct smscore_device_t *coredev, int mode)
 	msg = (struct sms_msg_data *)SMS_ALIGN_ADDRESS(buffer);
 	SMS_INIT_MSG(&msg->x_msg_header, MSG_SMS_INIT_DEVICE_REQ,
 			sizeof(struct sms_msg_data));
-	msg->msg_data[0] = mode;
+	msg->msg_data = mode;
 
 	rc = smscore_sendrequest_and_wait(coredev, msg,
 			msg->x_msg_header. msg_length,
@@ -1353,8 +1349,7 @@ int smscore_set_device_mode(struct smscore_device_t *coredev, int mode)
 		}
 
 		if (!(coredev->modes_supported & (1 << mode))) {
-			rc = smscore_load_firmware_from_file(coredev,
-							     mode, NULL);
+			rc = smscore_load_firmware_from_file(coredev, mode);
 			if (rc >= 0)
 				pr_debug("firmware download success\n");
 		} else {
@@ -1394,7 +1389,7 @@ int smscore_set_device_mode(struct smscore_device_t *coredev, int mode)
 
 			SMS_INIT_MSG(&msg->x_msg_header, MSG_SMS_INIT_DEVICE_REQ,
 				     sizeof(struct sms_msg_data));
-			msg->msg_data[0] = mode;
+			msg->msg_data = mode;
 
 			rc = smscore_sendrequest_and_wait(
 				coredev, msg, msg->x_msg_header.msg_length,
@@ -1554,7 +1549,7 @@ void smscore_onresponse(struct smscore_device_t *coredev,
 			struct sms_msg_data *validity = (struct sms_msg_data *) phdr;
 
 			pr_debug("MSG_SMS_DATA_VALIDITY_RES, checksum = 0x%x\n",
-				validity->msg_data[0]);
+				validity->msg_data);
 			complete(&coredev->data_validity_done);
 			break;
 		}
@@ -2119,17 +2114,14 @@ static int __init smscore_module_init(void)
 {
 	INIT_LIST_HEAD(&g_smscore_notifyees);
 	INIT_LIST_HEAD(&g_smscore_devices);
-	kmutex_init(&g_smscore_deviceslock);
-
 	INIT_LIST_HEAD(&g_smscore_registry);
-	kmutex_init(&g_smscore_registrylock);
 
 	return 0;
 }
 
 static void __exit smscore_module_exit(void)
 {
-	kmutex_lock(&g_smscore_deviceslock);
+	mutex_lock(&g_smscore_deviceslock);
 	while (!list_empty(&g_smscore_notifyees)) {
 		struct smscore_device_notifyee_t *notifyee =
 			(struct smscore_device_notifyee_t *)
@@ -2138,9 +2130,9 @@ static void __exit smscore_module_exit(void)
 		list_del(&notifyee->entry);
 		kfree(notifyee);
 	}
-	kmutex_unlock(&g_smscore_deviceslock);
+	mutex_unlock(&g_smscore_deviceslock);
 
-	kmutex_lock(&g_smscore_registrylock);
+	mutex_lock(&g_smscore_registrylock);
 	while (!list_empty(&g_smscore_registry)) {
 		struct smscore_registry_entry_t *entry =
 			(struct smscore_registry_entry_t *)
@@ -2149,7 +2141,7 @@ static void __exit smscore_module_exit(void)
 		list_del(&entry->entry);
 		kfree(entry);
 	}
-	kmutex_unlock(&g_smscore_registrylock);
+	mutex_unlock(&g_smscore_registrylock);
 
 	pr_debug("\n");
 }
@@ -2158,7 +2150,7 @@ module_init(smscore_module_init);
 module_exit(smscore_module_exit);
 
 MODULE_DESCRIPTION("Siano MDTV Core module");
-MODULE_AUTHOR("Siano Mobile Silicon, Inc. (uris@siano-ms.com)");
+MODULE_AUTHOR("Siano Mobile Silicon, Inc. <uris@siano-ms.com>");
 MODULE_LICENSE("GPL");
 
 /* This should match what's defined at smscoreapi.h */

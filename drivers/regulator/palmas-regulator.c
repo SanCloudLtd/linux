@@ -19,7 +19,6 @@
 #include <linux/regmap.h>
 #include <linux/mfd/palmas.h>
 #include <linux/of.h>
-#include <linux/of_platform.h>
 #include <linux/regulator/of_regulator.h>
 
 static const struct linear_range smps_low_ranges[] = {
@@ -1016,7 +1015,6 @@ static int tps65917_ldo_registration(struct palmas_pmic *pmic,
 	struct palmas_reg_init *reg_init;
 	struct palmas_regs_info *rinfo;
 	struct regulator_desc *desc;
-	unsigned int reg;
 
 	for (id = ddata->ldo_begin; id < ddata->max_reg; id++) {
 		if (pdata && pdata->reg_init[id])
@@ -1065,31 +1063,6 @@ static int tps65917_ldo_registration(struct palmas_pmic *pmic,
 						TPS65917_LDO1_CTRL_BYPASS_EN;
 				desc->bypass_mask =
 						TPS65917_LDO1_CTRL_BYPASS_EN;
-
-				/*
-				 * OTP Values are set to bypass enable.
-				 * Switch to disable so that use count
-				 * does not go negative while directly
-				 * disabling bypass.
-				 */
-				ret = palmas_ldo_read(pmic->palmas,
-						      rinfo->ctrl_addr, &reg);
-				if (ret) {
-					dev_err(pmic->dev,
-						"Error reading %s ctrl_addr reg, ret = %d\n",
-						rinfo->name, ret);
-					return ret;
-				}
-				reg &= ~TPS65917_LDO1_CTRL_BYPASS_EN;
-				ret = palmas_ldo_write(pmic->palmas,
-						       rinfo->ctrl_addr, reg);
-				if (ret) {
-					dev_err(pmic->dev,
-						"Error disabling bypass mode for %s, ret = %d\n",
-						rinfo->name, ret);
-					return ret;
-				}
-
 			}
 		} else {
 			desc->n_voltages = 1;
@@ -1621,22 +1594,19 @@ static const struct of_device_id of_palmas_match_tbl[] = {
 static int palmas_regulators_probe(struct platform_device *pdev)
 {
 	struct palmas *palmas = dev_get_drvdata(pdev->dev.parent);
-	struct palmas_pmic_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct palmas_pmic_platform_data *pdata;
 	struct device_node *node = pdev->dev.of_node;
 	struct palmas_pmic_driver_data *driver_data;
 	struct regulator_config config = { };
 	struct palmas_pmic *pmic;
 	const char *pdev_name;
-	const struct of_device_id *match;
 	int ret = 0;
 	unsigned int reg;
 
-	match = of_match_device(of_match_ptr(of_palmas_match_tbl), &pdev->dev);
-
-	if (!match)
+	driver_data = (struct palmas_pmic_driver_data *)device_get_match_data(&pdev->dev);
+	if (!driver_data)
 		return -ENODATA;
 
-	driver_data = (struct palmas_pmic_driver_data *)match->data;
 	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return -ENOMEM;
@@ -1692,6 +1662,7 @@ static int palmas_regulators_probe(struct platform_device *pdev)
 static struct platform_driver palmas_driver = {
 	.driver = {
 		.name = "palmas-pmic",
+		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 		.of_match_table = of_palmas_match_tbl,
 	},
 	.probe = palmas_regulators_probe,

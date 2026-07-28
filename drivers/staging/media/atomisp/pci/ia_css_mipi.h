@@ -25,39 +25,6 @@
 #include "ia_css_stream_format.h"
 #include "ia_css_input_port.h"
 
-/* Backward compatible for CSS API 2.0 only
- * TO BE REMOVED when all drivers move to CSS API 2.1.
- */
-/* @brief Specify a CSS MIPI frame buffer.
- *
- * @param[in]	size_mem_words	The frame size in memory words (32B).
- * @param[in]	contiguous	Allocate memory physically contiguously or not.
- * @return		The error code.
- *
- * \deprecated{Use ia_css_mipi_buffer_config instead.}
- *
- * Specifies a CSS MIPI frame buffer: size in memory words (32B).
- */
-int
-ia_css_mipi_frame_specify(const unsigned int	size_mem_words,
-			  const bool contiguous);
-
-/* @brief Register size of a CSS MIPI frame for check during capturing.
- *
- * @param[in]	port	CSI-2 port this check is registered.
- * @param[in]	size_mem_words	The frame size in memory words (32B).
- * @return		Return the error in case of failure. E.g. MAX_NOF_ENTRIES REACHED
- *
- * Register size of a CSS MIPI frame to check during capturing. Up to
- *		IA_CSS_MIPI_SIZE_CHECK_MAX_NOF_ENTRIES entries per port allowed. Entries are reset
- *		when stream is stopped.
- *
- *
- */
-int
-ia_css_mipi_frame_enable_check_on_size(const enum mipi_port_id port,
-				       const unsigned int	size_mem_words);
-
 /* @brief Calculate the size of a mipi frame.
  *
  * @param[in]	width		The width (in pixels) of the frame.

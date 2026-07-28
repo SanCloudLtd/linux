@@ -26,8 +26,6 @@
 #include <linux/slab.h>
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
-#include <linux/of_device.h>
-#include <linux/of_address.h>
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/io.h>
@@ -454,10 +452,9 @@ static int omap_rng_probe(struct platform_device *pdev)
 	}
 
 	pm_runtime_enable(&pdev->dev);
-	ret = pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to runtime_get device: %d\n", ret);
-		pm_runtime_put_noidle(&pdev->dev);
 		goto err_ioremap;
 	}
 
@@ -512,7 +509,7 @@ err_ioremap:
 	return ret;
 }
 
-static int omap_rng_remove(struct platform_device *pdev)
+static void omap_rng_remove(struct platform_device *pdev)
 {
 	struct omap_rng_dev *priv = platform_get_drvdata(pdev);
 
@@ -524,8 +521,6 @@ static int omap_rng_remove(struct platform_device *pdev)
 
 	clk_disable_unprepare(priv->clk);
 	clk_disable_unprepare(priv->clk_reg);
-
-	return 0;
 }
 
 static int __maybe_unused omap_rng_suspend(struct device *dev)
@@ -543,10 +538,9 @@ static int __maybe_unused omap_rng_resume(struct device *dev)
 	struct omap_rng_dev *priv = dev_get_drvdata(dev);
 	int ret;
 
-	ret = pm_runtime_get_sync(dev);
+	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
 		dev_err(dev, "Failed to runtime_get device: %d\n", ret);
-		pm_runtime_put_noidle(dev);
 		return ret;
 	}
 
@@ -564,10 +558,11 @@ static struct platform_driver omap_rng_driver = {
 		.of_match_table = of_match_ptr(omap_rng_of_match),
 	},
 	.probe		= omap_rng_probe,
-	.remove		= omap_rng_remove,
+	.remove_new	= omap_rng_remove,
 };
 
 module_platform_driver(omap_rng_driver);
 MODULE_ALIAS("platform:omap_rng");
 MODULE_AUTHOR("Deepak Saxena (and others)");
+MODULE_DESCRIPTION("RNG driver for TI OMAP CPU family");
 MODULE_LICENSE("GPL");

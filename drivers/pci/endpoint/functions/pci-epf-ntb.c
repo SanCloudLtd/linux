@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * Endpoint Function Driver to implement Non-Transparent Bridge functionality
  *
  * Copyright (C) 2020 Texas Instruments
@@ -140,9 +140,9 @@ static struct pci_epf_header epf_ntb_header = {
 static int epf_ntb_link_up(struct epf_ntb *ntb, bool link_up)
 {
 	enum pci_epc_interface_type type;
-	enum pci_epc_irq_type irq_type;
 	struct epf_ntb_epc *ntb_epc;
 	struct epf_ntb_ctrl *ctrl;
+	unsigned int irq_type;
 	struct pci_epc *epc;
 	u8 func_no, vfunc_no;
 	bool is_msix;
@@ -159,7 +159,7 @@ static int epf_ntb_link_up(struct epf_ntb *ntb, bool link_up)
 			ctrl->link_status |= LINK_STATUS_UP;
 		else
 			ctrl->link_status &= ~LINK_STATUS_UP;
-		irq_type = is_msix ? PCI_EPC_IRQ_MSIX : PCI_EPC_IRQ_MSI;
+		irq_type = is_msix ? PCI_IRQ_MSIX : PCI_IRQ_MSI;
 		ret = pci_epc_raise_irq(epc, func_no, vfunc_no, irq_type, 1);
 		if (ret) {
 			dev_err(&epc->dev,
@@ -703,7 +703,8 @@ reset_handler:
 
 /**
  * epf_ntb_peer_spad_bar_clear() - Clear Peer Scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  *+-----------------+------->+------------------+        +-----------------+
  *|       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -748,6 +749,7 @@ static void epf_ntb_peer_spad_bar_clear(struct epf_ntb_epc *ntb_epc)
 /**
  * epf_ntb_peer_spad_bar_set() - Set peer scratchpad BAR
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @type: PRIMARY interface or SECONDARY interface
  *
  *+-----------------+------->+------------------+        +-----------------+
  *|       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -817,7 +819,8 @@ static int epf_ntb_peer_spad_bar_set(struct epf_ntb *ntb,
 
 /**
  * epf_ntb_config_sspad_bar_clear() - Clear Config + Self scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  * +-----------------+------->+------------------+        +-----------------+
  * |       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -861,7 +864,8 @@ static void epf_ntb_config_sspad_bar_clear(struct epf_ntb_epc *ntb_epc)
 
 /**
  * epf_ntb_config_sspad_bar_set() - Set Config + Self scratchpad BAR
- * @ntb: NTB device that facilitates communication between HOST1 and HOST2
+ * @ntb_epc: EPC associated with one of the HOST which holds peer's outbound
+ *	     address.
  *
  * +-----------------+------->+------------------+        +-----------------+
  * |       BAR0      |        |  CONFIG REGION   |        |       BAR0      |
@@ -1008,13 +1012,13 @@ static int epf_ntb_config_spad_bar_alloc(struct epf_ntb *ntb,
 
 	epc_features = ntb_epc->epc_features;
 	barno = ntb_epc->epf_ntb_bar[BAR_CONFIG];
-	size = epc_features->bar_fixed_size[barno];
+	size = epc_features->bar[barno].fixed_size;
 	align = epc_features->align;
 
 	peer_ntb_epc = ntb->epc[!type];
 	peer_epc_features = peer_ntb_epc->epc_features;
 	peer_barno = ntb_epc->epf_ntb_bar[BAR_PEER_SPAD];
-	peer_size = peer_epc_features->bar_fixed_size[peer_barno];
+	peer_size = peer_epc_features->bar[peer_barno].fixed_size;
 
 	/* Check if epc_features is populated incorrectly */
 	if ((!IS_ALIGNED(size, align)))
@@ -1063,7 +1067,7 @@ static int epf_ntb_config_spad_bar_alloc(struct epf_ntb *ntb,
 	else if (size < ctrl_size + spad_size)
 		return -EINVAL;
 
-	base = pci_epf_alloc_space(epf, size, barno, align, type);
+	base = pci_epf_alloc_space(epf, size, barno, epc_features, type);
 	if (!base) {
 		dev_err(dev, "%s intf: Config/Status/SPAD alloc region fail\n",
 			pci_epc_interface_string(type));
@@ -1258,7 +1262,7 @@ static void epf_ntb_db_mw_bar_cleanup(struct epf_ntb *ntb,
 }
 
 /**
- * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capaiblity
+ * epf_ntb_configure_interrupt() - Configure MSI/MSI-X capability
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
  * @type: PRIMARY interface or SECONDARY interface
  *
@@ -1325,6 +1329,7 @@ static int epf_ntb_configure_interrupt(struct epf_ntb *ntb,
 
 /**
  * epf_ntb_alloc_peer_mem() - Allocate memory in peer's outbound address space
+ * @dev: The PCI device.
  * @ntb_epc: EPC associated with one of the HOST whose BAR holds peer's outbound
  *   address
  * @bar: BAR of @ntb_epc in for which memory has to be allocated (could be
@@ -1676,7 +1681,6 @@ static int epf_ntb_init_epc_bar_interface(struct epf_ntb *ntb,
  * epf_ntb_init_epc_bar() - Identify BARs to be used for each of the NTB
  * constructs (scratchpad region, doorbell, memorywindow)
  * @ntb: NTB device that facilitates communication between HOST1 and HOST2
- * @type: PRIMARY interface or SECONDARY interface
  *
  * Wrapper to epf_ntb_init_epc_bar_interface() to identify the free BARs
  * to be used for each of BAR_CONFIG, BAR_PEER_SPAD, BAR_DB_MW1, BAR_MW2,
@@ -1755,11 +1759,13 @@ static int epf_ntb_epc_init_interface(struct epf_ntb *ntb,
 		goto err_db_mw_bar_init;
 	}
 
-	ret = pci_epc_write_header(epc, func_no, vfunc_no, epf->header);
-	if (ret) {
-		dev_err(dev, "%s intf: Configuration header write failed\n",
-			pci_epc_interface_string(type));
-		goto err_write_header;
+	if (vfunc_no <= 1) {
+		ret = pci_epc_write_header(epc, func_no, vfunc_no, epf->header);
+		if (ret) {
+			dev_err(dev, "%s intf: Configuration header write failed\n",
+				pci_epc_interface_string(type));
+			goto err_write_header;
+		}
 	}
 
 	INIT_DELAYED_WORK(&ntb->epc[type]->cmd_handler, epf_ntb_cmd_handler);
@@ -1931,7 +1937,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 									\
-	return sprintf(page, "%d\n", ntb->_name);			\
+	return sysfs_emit(page, "%d\n", ntb->_name);			\
 }
 
 #define EPF_NTB_W(_name)						\
@@ -1941,11 +1947,9 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct config_group *group = to_config_group(item);		\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 	u32 val;							\
-	int ret;							\
 									\
-	ret = kstrtou32(page, 0, &val);					\
-	if (ret)							\
-		return ret;						\
+	if (kstrtou32(page, 0, &val) < 0)				\
+		return -EINVAL;						\
 									\
 	ntb->_name = val;						\
 									\
@@ -1962,7 +1966,7 @@ static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 									\
 	sscanf(#_name, "mw%d", &win_no);				\
 									\
-	return sprintf(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
+	return sysfs_emit(page, "%lld\n", ntb->mws_size[win_no - 1]);	\
 }
 
 #define EPF_NTB_MW_W(_name)						\
@@ -1974,11 +1978,9 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct device *dev = &ntb->epf->dev;				\
 	int win_no;							\
 	u64 val;							\
-	int ret;							\
 									\
-	ret = kstrtou64(page, 0, &val);					\
-	if (ret)							\
-		return ret;						\
+	if (kstrtou64(page, 0, &val) < 0)				\
+		return -EINVAL;						\
 									\
 	if (sscanf(#_name, "mw%d", &win_no) != 1)			\
 		return -EINVAL;						\
@@ -1999,11 +2001,9 @@ static ssize_t epf_ntb_num_mws_store(struct config_item *item,
 	struct config_group *group = to_config_group(item);
 	struct epf_ntb *ntb = to_epf_ntb(group);
 	u32 val;
-	int ret;
 
-	ret = kstrtou32(page, 0, &val);
-	if (ret)
-		return ret;
+	if (kstrtou32(page, 0, &val) < 0)
+		return -EINVAL;
 
 	if (val > MAX_MW)
 		return -EINVAL;
@@ -2054,6 +2054,8 @@ static const struct config_item_type ntb_group_type = {
 /**
  * epf_ntb_add_cfs() - Add configfs directory specific to NTB
  * @epf: NTB endpoint function device
+ * @group: A pointer to the config_group structure referencing a group of
+ *	   config_items of a specific type that belong to a specific sub-system.
  *
  * Add configfs directory specific to NTB. This directory will hold
  * NTB specific properties like db_count, spad_count, num_mws etc.,
@@ -2073,11 +2075,13 @@ static struct config_group *epf_ntb_add_cfs(struct pci_epf *epf,
 /**
  * epf_ntb_probe() - Probe NTB function driver
  * @epf: NTB endpoint function device
+ * @id: NTB endpoint function device ID
  *
  * Probe NTB function driver when endpoint function bus detects a NTB
  * endpoint function.
  */
-static int epf_ntb_probe(struct pci_epf *epf)
+static int epf_ntb_probe(struct pci_epf *epf,
+			 const struct pci_epf_device_id *id)
 {
 	struct epf_ntb *ntb;
 	struct device *dev;
@@ -2095,7 +2099,7 @@ static int epf_ntb_probe(struct pci_epf *epf)
 	return 0;
 }
 
-static struct pci_epf_ops epf_ntb_ops = {
+static const struct pci_epf_ops epf_ntb_ops = {
 	.bind	= epf_ntb_bind,
 	.unbind	= epf_ntb_unbind,
 	.add_cfs = epf_ntb_add_cfs,

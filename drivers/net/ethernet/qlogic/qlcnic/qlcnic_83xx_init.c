@@ -746,7 +746,7 @@ static int qlcnic_83xx_idc_unknown_state(struct qlcnic_adapter *adapter)
 }
 
 /**
- * qlcnic_83xx_idc_cold_state
+ * qlcnic_83xx_idc_cold_state_handler
  *
  * @adapter: adapter structure
  *
@@ -1354,10 +1354,10 @@ static int qlcnic_83xx_copy_fw_file(struct qlcnic_adapter *adapter)
 	struct qlc_83xx_fw_info *fw_info = adapter->ahw->fw_info;
 	const struct firmware *fw = fw_info->fw;
 	u32 dest, *p_cache, *temp;
-	int i, ret = -EIO;
 	__le32 *temp_le;
 	u8 data[16];
 	size_t size;
+	int i, ret;
 	u64 addr;
 
 	temp = vzalloc(fw->size);
@@ -2092,8 +2092,8 @@ static int qlcnic_83xx_run_post(struct qlcnic_adapter *adapter)
 		return -EINVAL;
 	}
 
-	strncpy(fw_info->fw_file_name, QLC_83XX_POST_FW_FILE_NAME,
-		QLC_FW_FILE_NAME_LEN);
+	strscpy(fw_info->fw_file_name, QLC_83XX_POST_FW_FILE_NAME,
+		sizeof(fw_info->fw_file_name));
 
 	ret = request_firmware(&fw_info->fw, fw_info->fw_file_name, dev);
 	if (ret) {
@@ -2396,12 +2396,12 @@ static int qlcnic_83xx_get_fw_info(struct qlcnic_adapter *adapter)
 		switch (pdev->device) {
 		case PCI_DEVICE_ID_QLOGIC_QLE834X:
 		case PCI_DEVICE_ID_QLOGIC_QLE8830:
-			strncpy(fw_info->fw_file_name, QLC_83XX_FW_FILE_NAME,
-				QLC_FW_FILE_NAME_LEN);
+			strscpy(fw_info->fw_file_name, QLC_83XX_FW_FILE_NAME,
+				sizeof(fw_info->fw_file_name));
 			break;
 		case PCI_DEVICE_ID_QLOGIC_QLE844X:
-			strncpy(fw_info->fw_file_name, QLC_84XX_FW_FILE_NAME,
-				QLC_FW_FILE_NAME_LEN);
+			strscpy(fw_info->fw_file_name, QLC_84XX_FW_FILE_NAME,
+				sizeof(fw_info->fw_file_name));
 			break;
 		default:
 			dev_err(&pdev->dev, "%s: Invalid device id\n",
@@ -2432,7 +2432,7 @@ static void qlcnic_83xx_init_rings(struct qlcnic_adapter *adapter)
 	qlcnic_set_sds_ring_count(adapter, rx_cnt);
 }
 
-int qlcnic_83xx_init(struct qlcnic_adapter *adapter, int pci_using_dac)
+int qlcnic_83xx_init(struct qlcnic_adapter *adapter)
 {
 	struct qlcnic_hardware_context *ahw = adapter->ahw;
 	int err = 0;
@@ -2466,7 +2466,7 @@ int qlcnic_83xx_init(struct qlcnic_adapter *adapter, int pci_using_dac)
 		goto exit;
 
 	if (qlcnic_sriov_vf_check(adapter)) {
-		err = qlcnic_sriov_vf_init(adapter, pci_using_dac);
+		err = qlcnic_sriov_vf_init(adapter);
 		if (err)
 			goto detach_mbx;
 		else

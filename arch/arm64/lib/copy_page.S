@@ -17,14 +17,7 @@
  *	x0 - dest
  *	x1 - src
  */
-SYM_FUNC_START_PI(copy_page)
-alternative_if ARM64_HAS_NO_HW_PREFETCH
-	// Prefetch three cache lines ahead.
-	prfm	pldl1strm, [x1, #128]
-	prfm	pldl1strm, [x1, #256]
-	prfm	pldl1strm, [x1, #384]
-alternative_else_nop_endif
-
+SYM_FUNC_START(__pi_copy_page)
 	ldp	x2, x3, [x1]
 	ldp	x4, x5, [x1, #16]
 	ldp	x6, x7, [x1, #32]
@@ -38,10 +31,6 @@ alternative_else_nop_endif
 	add	x1, x1, #128
 1:
 	tst	x0, #(PAGE_SIZE - 1)
-
-alternative_if ARM64_HAS_NO_HW_PREFETCH
-	prfm	pldl1strm, [x1, #384]
-alternative_else_nop_endif
 
 	stnp	x2, x3, [x0, #-256]
 	ldp	x2, x3, [x1]
@@ -75,5 +64,6 @@ alternative_else_nop_endif
 	stnp	x16, x17, [x0, #112 - 256]
 
 	ret
-SYM_FUNC_END_PI(copy_page)
+SYM_FUNC_END(__pi_copy_page)
+SYM_FUNC_ALIAS(copy_page, __pi_copy_page)
 EXPORT_SYMBOL(copy_page)

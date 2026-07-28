@@ -44,12 +44,11 @@ static inline int is_hsr_l2ptp(struct sk_buff *skb)
  */
 static bool is_supervision_frame(struct hsr_priv *hsr, struct sk_buff *skb)
 {
-	struct hsrv1_ethhdr_vlan_sp *hsr_v1_vlan_hdr;
-	struct hsr_sup_tag *hsr_sup_tag;
-	struct hsrv1_ethhdr_sp *hsr_v1_hdr;
 	struct ethhdr *eth_hdr;
-	bool vlan = false;
-	__be16 proto;
+	struct hsr_sup_tag *hsr_sup_tag;
+	struct hsrv1_ethhdr_sp *hsr_V1_hdr;
+	struct hsr_sup_tlv *hsr_sup_tlv;
+	u16 total_length = 0;
 
 	WARN_ON_ONCE(!skb_mac_header_was_set(skb));
 	eth_hdr = (struct ethhdr *)skb_mac_header(skb);
@@ -59,52 +58,102 @@ static bool is_supervision_frame(struct hsr_priv *hsr, struct sk_buff *skb)
 			      hsr->sup_multicast_addr))
 		return false;
 
-	if (skb_vlan_tagged(skb)) {
-		proto = vlan_get_protocol(skb);
-		vlan = true;
-	} else {
-		proto = eth_hdr->h_proto;
-	}
-
 	/* Correct ether type?. */
 	if (!(eth_hdr->h_proto == htons(ETH_P_PRP) ||
 	      eth_hdr->h_proto == htons(ETH_P_HSR)))
 		return false;
 
 	/* Get the supervision header from correct location. */
-	if (proto == htons(ETH_P_HSR)) { /* Okay HSRv1. */
-		if (!vlan) {
-			hsr_v1_hdr = (struct hsrv1_ethhdr_sp *)eth_hdr;
-			if (hsr_v1_hdr->hsr.encap_proto != htons(ETH_P_PRP))
-				return false;
-			hsr_sup_tag = &hsr_v1_hdr->hsr_sup;
-		} else {
-			hsr_v1_vlan_hdr =
-				(struct hsrv1_ethhdr_vlan_sp *)eth_hdr;
-			if (hsr_v1_vlan_hdr->hsr.encap_proto !=
-						htons(ETH_P_PRP))
-				return false;
-			hsr_sup_tag = &hsr_v1_vlan_hdr->hsr_sup;
-		}
+	if (eth_hdr->h_proto == htons(ETH_P_HSR)) { /* Okay HSRv1. */
+		total_length = sizeof(struct hsrv1_ethhdr_sp);
+		if (!pskb_may_pull(skb, total_length))
+			return false;
+
+		hsr_V1_hdr = (struct hsrv1_ethhdr_sp *)skb_mac_header(skb);
+		if (hsr_V1_hdr->hsr.encap_proto != htons(ETH_P_PRP))
+			return false;
+
+		hsr_sup_tag = &hsr_V1_hdr->hsr_sup;
 	} else {
-		if (!vlan)
-			hsr_sup_tag =
-			&((struct hsrv0_ethhdr_sp *)eth_hdr)->hsr_sup;
-		else
-			hsr_sup_tag =
-			&((struct hsrv0_ethhdr_vlan_sp *)eth_hdr)->hsr_sup;
+		total_length = sizeof(struct hsrv0_ethhdr_sp);
+		if (!pskb_may_pull(skb, total_length))
+			return false;
+
+		hsr_sup_tag =
+		     &((struct hsrv0_ethhdr_sp *)skb_mac_header(skb))->hsr_sup;
 	}
 
-	if (hsr_sup_tag->HSR_TLV_type != HSR_TLV_ANNOUNCE &&
-	    hsr_sup_tag->HSR_TLV_type != HSR_TLV_LIFE_CHECK &&
-	    hsr_sup_tag->HSR_TLV_type != PRP_TLV_LIFE_CHECK_DD &&
-	    hsr_sup_tag->HSR_TLV_type != PRP_TLV_LIFE_CHECK_DA)
+	if (hsr_sup_tag->tlv.HSR_TLV_type != HSR_TLV_ANNOUNCE &&
+	    hsr_sup_tag->tlv.HSR_TLV_type != HSR_TLV_LIFE_CHECK &&
+	    hsr_sup_tag->tlv.HSR_TLV_type != PRP_TLV_LIFE_CHECK_DD &&
+	    hsr_sup_tag->tlv.HSR_TLV_type != PRP_TLV_LIFE_CHECK_DA)
 		return false;
-	if (hsr_sup_tag->HSR_TLV_length != 12 &&
-	    hsr_sup_tag->HSR_TLV_length != sizeof(struct hsr_sup_payload))
+	if (hsr_sup_tag->tlv.HSR_TLV_length != 12 &&
+	    hsr_sup_tag->tlv.HSR_TLV_length != sizeof(struct hsr_sup_payload))
+		return false;
+
+	/* Get next tlv */
+	total_length += hsr_sup_tag->tlv.HSR_TLV_length;
+	if (!pskb_may_pull(skb, total_length))
+		return false;
+	skb_pull(skb, total_length);
+	hsr_sup_tlv = (struct hsr_sup_tlv *)skb->data;
+	skb_push(skb, total_length);
+
+	/* if this is a redbox supervision frame we need to verify
+	 * that more data is available
+	 */
+	if (hsr_sup_tlv->HSR_TLV_type == PRP_TLV_REDBOX_MAC) {
+		/* tlv length must be a length of a mac address */
+		if (hsr_sup_tlv->HSR_TLV_length != sizeof(struct hsr_sup_payload))
+			return false;
+
+		/* make sure another tlv follows */
+		total_length += sizeof(struct hsr_sup_tlv) + hsr_sup_tlv->HSR_TLV_length;
+		if (!pskb_may_pull(skb, total_length))
+			return false;
+
+		/* get next tlv */
+		skb_pull(skb, total_length);
+		hsr_sup_tlv = (struct hsr_sup_tlv *)skb->data;
+		skb_push(skb, total_length);
+	}
+
+	/* end of tlvs must follow at the end */
+	if (hsr_sup_tlv->HSR_TLV_type == HSR_TLV_EOT &&
+	    hsr_sup_tlv->HSR_TLV_length != 0)
 		return false;
 
 	return true;
+}
+
+static bool is_proxy_supervision_frame(struct hsr_priv *hsr,
+				       struct sk_buff *skb)
+{
+	struct hsr_sup_payload *payload;
+	struct ethhdr *eth_hdr;
+	u16 total_length = 0;
+
+	eth_hdr = (struct ethhdr *)skb_mac_header(skb);
+
+	/* Get the HSR protocol revision. */
+	if (eth_hdr->h_proto == htons(ETH_P_HSR))
+		total_length = sizeof(struct hsrv1_ethhdr_sp);
+	else
+		total_length = sizeof(struct hsrv0_ethhdr_sp);
+
+	if (!pskb_may_pull(skb, total_length + sizeof(struct hsr_sup_payload)))
+		return false;
+
+	skb_pull(skb, total_length);
+	payload = (struct hsr_sup_payload *)skb->data;
+	skb_push(skb, total_length);
+
+	/* For RedBox (HSR-SAN) check if we have received the supervision
+	 * frame with MAC addresses from own ProxyNodeTable.
+	 */
+	return hsr_is_node_in_db(&hsr->proxy_node_db,
+				 payload->macaddress_A);
 }
 
 static struct sk_buff *create_stripped_skb_hsr(struct sk_buff *skb_in,
@@ -157,12 +206,12 @@ struct sk_buff *hsr_get_untagged_frame(struct hsr_frame_info *frame,
 struct sk_buff *prp_get_untagged_frame(struct hsr_frame_info *frame,
 				       struct hsr_port *port)
 {
-	struct hsr_priv *hsr = port->hsr;
-
 	if (!frame->skb_std) {
 		if (frame->skb_prp) {
-			if (!hsr->rx_offloaded) {
-				/* trim the skb by len - HSR_HLEN to exclude RCT */
+			if (!port->hsr->fwd_offloaded) {
+				/* trim the skb by
+				 * len - HSR_HLEN to exclude RCT
+				 */
 				skb_trim(frame->skb_prp,
 					 frame->skb_prp->len - HSR_HLEN);
 			}
@@ -181,30 +230,8 @@ struct sk_buff *prp_get_untagged_frame(struct hsr_frame_info *frame,
 	return skb_clone(frame->skb_std, GFP_ATOMIC);
 }
 
-/* only prp skb should be passed in */
-static void prp_update_lre_error_stats(struct sk_buff *skb,
-				       struct hsr_port *port)
-{
-	int lan_id;
-	struct prp_rct *trailer = skb_get_PRP_rct(skb);
-
-	if (!trailer) {
-		INC_CNT_RX_ERROR_AB(port->type, port->hsr);
-		return;
-	}
-
-	lan_id = get_prp_lan_id(trailer);
-
-	if (port->type == HSR_PT_SLAVE_A) {
-		if (lan_id & 1)
-			INC_CNT_RX_WRONG_LAN_AB(port->type, port->hsr);
-	} else {
-		if (!(lan_id & 1))
-			INC_CNT_RX_WRONG_LAN_AB(port->type, port->hsr);
-	}
-}
-
-static void prp_set_lan_id(struct prp_rct *trailer, struct hsr_port *port)
+static void prp_set_lan_id(struct prp_rct *trailer,
+			   struct hsr_port *port)
 {
 	int lane_id;
 
@@ -316,27 +343,13 @@ struct sk_buff *hsr_create_tagged_frame(struct hsr_frame_info *frame,
 	struct hsr_ethhdr *hsr_ethhdr;
 	unsigned char *dst, *src;
 	struct sk_buff *skb;
-	u16 s;
 	int movelen;
+	u16 s;
 
 	if (frame->skb_hsr) {
-		u8 *pc;
 		struct hsr_ethhdr *hsr_ethhdr =
 			(struct hsr_ethhdr *)skb_mac_header(frame->skb_hsr);
 
-		/* This case is for SV frame created by this device */
-		pc = (u8 *)hsr_ethhdr;
-		if (frame->is_vlan)
-			/* This 4-byte shift (size of a vlan tag) does not
-			 * mean that the ethhdr starts there. But rather it
-			 * provides the proper environment for accessing
-			 * the fields, such as hsr_tag etc., just like
-			 * when the vlan tag is not there. This is because
-			 * the hsr tag is after the vlan tag.
-			 */
-			hsr_ethhdr = (struct hsr_ethhdr *)(pc + VLAN_HLEN);
-		else
-			hsr_ethhdr = (struct hsr_ethhdr *)pc;
 		/* set the lane id properly */
 		hsr_set_path_id(hsr_ethhdr, port);
 		return skb_clone(frame->skb_hsr, GFP_ATOMIC);
@@ -366,6 +379,7 @@ struct sk_buff *hsr_create_tagged_frame(struct hsr_frame_info *frame,
 	/* skb_put_padto free skb on error and hsr_fill_tag returns NULL in
 	 * that case
 	 */
+
 	skb = hsr_fill_tag(skb, frame, port, port->hsr->prot_version);
 	if (!skb)
 		return NULL;
@@ -373,7 +387,8 @@ struct sk_buff *hsr_create_tagged_frame(struct hsr_frame_info *frame,
 	if (REDINFO_T(skb) == DIRECTED_TX)
 		return skb;
 
-	skb_shinfo(skb)->tx_flags |= skb_shinfo(frame->skb_std)->tx_flags & SKBTX_ANY_TSTAMP;
+	skb_shinfo(skb)->tx_flags |= skb_shinfo(frame->skb_std)->tx_flags &
+				     SKBTX_ANY_TSTAMP;
 	skb->sk = frame->skb_std->sk;
 
 	/* TODO: should check socket option instead? */
@@ -387,6 +402,7 @@ struct sk_buff *hsr_create_tagged_frame(struct hsr_frame_info *frame,
 		sred->lsdu_size = s & 0xfff;
 		sred->pathid = (s >> 12) & 0xf;
 		sred->seqnr = hsr_get_skb_sequence_nr(skb);
+		frame->is_l2ptp = true;
 	}
 
 	return skb;
@@ -414,15 +430,12 @@ struct sk_buff *prp_create_tagged_frame(struct hsr_frame_info *frame,
 	skb = skb_copy_expand(frame->skb_std, skb_headroom(frame->skb_std),
 			      skb_tailroom(frame->skb_std) + HSR_HLEN,
 			      GFP_ATOMIC);
-	prp_fill_rct(skb, frame, port);
-
-	return skb;
+	return prp_fill_rct(skb, frame, port);
 }
 
-static void hsr_deliver_master(struct sk_buff *skb, struct hsr_node *node_src,
-			       struct hsr_port *port)
+static void hsr_deliver_master(struct sk_buff *skb, struct hsr_port *port,
+			       struct hsr_node *node_src)
 {
-	struct hsr_priv *hsr = port->hsr;
 	struct net_device *dev = port->dev;
 	bool was_multicast_frame;
 	int res, recv_len;
@@ -432,7 +445,7 @@ static void hsr_deliver_master(struct sk_buff *skb, struct hsr_node *node_src,
 	 * interfaces of the remote node and hence no need to substitute
 	 * the source MAC address.
 	 */
-	if (!port->hsr->rx_offloaded)
+	if (!port->hsr->fwd_offloaded)
 		hsr_addr_subst_source(node_src, skb);
 	skb_pull(skb, ETH_HLEN);
 	recv_len = skb->len;
@@ -444,14 +457,13 @@ static void hsr_deliver_master(struct sk_buff *skb, struct hsr_node *node_src,
 		dev->stats.rx_bytes += recv_len;
 		if (was_multicast_frame)
 			dev->stats.multicast++;
-		INC_CNT_TX_C(hsr);
 	}
 }
 
 static int hsr_xmit(struct sk_buff *skb, struct hsr_port *port,
 		    struct hsr_frame_info *frame)
 {
-	if (!port->hsr->rx_offloaded &&
+	if (!port->hsr->fwd_offloaded &&
 	    frame->port_rcv->type == HSR_PT_MASTER) {
 		hsr_addr_subst_dest(frame->node_src, skb, port);
 
@@ -460,25 +472,81 @@ static int hsr_xmit(struct sk_buff *skb, struct hsr_port *port,
 		 */
 		ether_addr_copy(eth_hdr(skb)->h_source, port->dev->dev_addr);
 	}
-	INC_CNT_TX_AB(port->type, port->hsr);
+
+	/* When HSR node is used as RedBox - the frame received from HSR ring
+	 * requires source MAC address (SA) replacement to one which can be
+	 * recognized by SAN devices (otherwise, frames are dropped by switch)
+	 */
+	if (port->type == HSR_PT_INTERLINK)
+		ether_addr_copy(eth_hdr(skb)->h_source,
+				port->hsr->macaddress_redbox);
+
 	return dev_queue_xmit(skb);
 }
 
 bool prp_drop_frame(struct hsr_frame_info *frame, struct hsr_port *port)
 {
 	return ((frame->port_rcv->type == HSR_PT_SLAVE_A &&
-		 port->type ==  HSR_PT_SLAVE_B) ||
+		 port->type == HSR_PT_SLAVE_B) ||
 		(frame->port_rcv->type == HSR_PT_SLAVE_B &&
-		 port->type ==  HSR_PT_SLAVE_A));
+		 port->type == HSR_PT_SLAVE_A));
 }
 
 bool hsr_drop_frame(struct hsr_frame_info *frame, struct hsr_port *port)
 {
+	struct sk_buff *skb;
+
 	if (port->dev->features & NETIF_F_HW_HSR_FWD)
 		return prp_drop_frame(frame, port);
 
+	/* RedBox specific frames dropping policies
+	 *
+	 * Do not send HSR supervisory frames to SAN devices
+	 */
+	if (frame->is_supervision && port->type == HSR_PT_INTERLINK)
+		return true;
+
+	/* Do not forward to other HSR port (A or B) unicast frames which
+	 * are addressed to interlink port (and are in the ProxyNodeTable).
+	 */
+	skb = frame->skb_hsr;
+	if (skb && prp_drop_frame(frame, port) &&
+	    is_unicast_ether_addr(eth_hdr(skb)->h_dest) &&
+	    hsr_is_node_in_db(&port->hsr->proxy_node_db,
+			      eth_hdr(skb)->h_dest)) {
+		return true;
+	}
+
+	/* Do not forward to port C (Interlink) frames from nodes A and B
+	 * if DA is in NodeTable.
+	 */
+	if ((frame->port_rcv->type == HSR_PT_SLAVE_A ||
+	     frame->port_rcv->type == HSR_PT_SLAVE_B) &&
+	    port->type == HSR_PT_INTERLINK) {
+		skb = frame->skb_hsr;
+		if (skb && is_unicast_ether_addr(eth_hdr(skb)->h_dest) &&
+		    hsr_is_node_in_db(&port->hsr->node_db,
+				      eth_hdr(skb)->h_dest)) {
+			return true;
+		}
+	}
+
+	/* Do not forward to port A and B unicast frames received on the
+	 * interlink port if it is addressed to one of nodes registered in
+	 * the ProxyNodeTable.
+	 */
+	if ((port->type == HSR_PT_SLAVE_A || port->type == HSR_PT_SLAVE_B) &&
+	    frame->port_rcv->type == HSR_PT_INTERLINK) {
+		skb = frame->skb_std;
+		if (skb && is_unicast_ether_addr(eth_hdr(skb)->h_dest) &&
+		    hsr_is_node_in_db(&port->hsr->proxy_node_db,
+				      eth_hdr(skb)->h_dest)) {
+			return true;
+		}
+	}
+
 	return false;
-};
+}
 
 static void stripped_skb_get_shared_info(struct sk_buff *skb_stripped,
 					 struct hsr_frame_info *frame)
@@ -530,7 +598,6 @@ hsr_directed_tx_ports(struct hsr_frame_info *frame)
 
 	return 0;
 }
-
 /* Forward the frame through all devices except:
  * - Back through the receiving device
  * - If it's a HSR frame: through a device where it has passed before
@@ -545,9 +612,9 @@ hsr_directed_tx_ports(struct hsr_frame_info *frame)
  */
 static void hsr_forward_do(struct hsr_frame_info *frame)
 {
-	struct sk_buff *skb = NULL;
 	unsigned int dir_ports = 0;
 	struct hsr_port *port;
+	struct sk_buff *skb;
 	bool sent = false;
 
 	hsr_for_each_port(frame->port_rcv->hsr, port) {
@@ -576,28 +643,19 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 		 * device and thus discard duplicate detection. For PRP, frame
 		 * could be from a SAN for which bypass duplicate discard here.
 		 */
-		if (!port->hsr->rx_offloaded && !frame->is_from_san &&
-		    hsr_register_frame_out(port, frame->node_src,
-					   frame->sequence_nr))
+		if (!port->hsr->fwd_offloaded && !frame->is_from_san &&
+		    hsr->proto_ops->register_frame_out &&
+		    hsr->proto_ops->register_frame_out(port, frame))
 			continue;
 
-		/* In LRE offloaded case, don't expect supervision frames from
-		 * slave ports for host as they get processed at the h/w or
-		 * firmware.
-		 */
-		if (frame->is_supervision &&
-		    port->type == HSR_PT_MASTER && !port->hsr->rx_offloaded) {
-			if (frame->skb_hsr)
-				skb = frame->skb_hsr;
-			else if (frame->skb_prp)
-				skb = frame->skb_prp;
-			if (skb)
-				hsr_handle_sup_frame(frame);
+		if (frame->is_supervision && port->type == HSR_PT_MASTER &&
+		    !frame->is_proxy_supervision && !port->hsr->fwd_offloaded) {
+			hsr_handle_sup_frame(frame);
 			continue;
 		}
 
 		/* Check if frame is to be dropped. Eg. for PRP no forward
-		 * between ports.
+		 * between ports, or sending HSR supervision to RedBox.
 		 */
 		if (hsr->proto_ops->drop_frame &&
 		    hsr->proto_ops->drop_frame(frame, port))
@@ -606,8 +664,8 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 		dir_ports = hsr_directed_tx_ports(frame);
 		if (dir_ports && !(dir_ports & BIT(port->type - 1)))
 			continue;
-
-		if (port->type != HSR_PT_MASTER) {
+		if (port->type == HSR_PT_SLAVE_A ||
+		    port->type == HSR_PT_SLAVE_B) {
 			skb = hsr->proto_ops->create_tagged_frame(frame, port);
 		} else {
 			skb = hsr->proto_ops->get_untagged_frame(frame, port);
@@ -616,19 +674,18 @@ static void hsr_forward_do(struct hsr_frame_info *frame)
 
 		if (!skb) {
 			frame->port_rcv->dev->stats.rx_dropped++;
-			if (frame->port_rcv->type == HSR_PT_SLAVE_A ||
-			    frame->port_rcv->type ==  HSR_PT_SLAVE_B)
-				INC_CNT_RX_ERROR_AB(frame->port_rcv->type,
-						 port->hsr);
 			continue;
 		}
 
 		skb->dev = port->dev;
 		if (port->type == HSR_PT_MASTER) {
-			hsr_deliver_master(skb, frame->node_src, port);
+			hsr_deliver_master(skb, port, frame->node_src);
 		} else {
-			if (!hsr_xmit(skb, port, frame))
-				sent = true;
+			if (!hsr_xmit(skb, port, frame)) {
+				if (port->type == HSR_PT_SLAVE_A ||
+				    port->type == HSR_PT_SLAVE_B)
+					sent = true;
+			}
 		}
 	}
 }
@@ -662,18 +719,18 @@ static void handle_std_frame(struct sk_buff *skb,
 	frame->skb_prp = NULL;
 	frame->skb_std = skb;
 
-	if (port->type != HSR_PT_MASTER) {
+	if (port->type != HSR_PT_MASTER)
 		frame->is_from_san = true;
-	} else {
-		if ((REDINFO_T(skb) == DIRECTED_TX) &&
-		    (REDINFO_LSDU_SIZE(skb))) {
-			frame->sequence_nr = REDINFO_SEQNR(skb);
-		} else {
-			/* Sequence nr for the master node */
-			lockdep_assert_held(&hsr->seqnr_lock);
-			frame->sequence_nr = hsr->sequence_nr;
-			hsr->sequence_nr++;
-		}
+
+	if ((REDINFO_T(skb) == DIRECTED_TX) &&
+	    (REDINFO_LSDU_SIZE(skb))) {
+		frame->sequence_nr = REDINFO_SEQNR(skb);
+	} else if (port->type == HSR_PT_MASTER ||
+		   port->type == HSR_PT_INTERLINK) {
+		/* Sequence nr for the master/interlink node */
+		lockdep_assert_held(&hsr->seqnr_lock);
+		frame->sequence_nr = hsr->sequence_nr;
+		hsr->sequence_nr++;
 	}
 }
 
@@ -728,36 +785,37 @@ static int fill_frame_info(struct hsr_frame_info *frame,
 {
 	struct hsr_priv *hsr = port->hsr;
 	struct hsr_vlan_ethhdr *vlan_hdr;
+	struct list_head *n_db;
 	struct ethhdr *ethhdr;
 	__be16 proto;
 	int ret;
 
 	/* Check if skb contains ethhdr */
-	if (!hsr->rx_offloaded && skb->mac_len < sizeof(struct ethhdr))
+	if (skb->mac_len < sizeof(struct ethhdr))
 		return -EINVAL;
 
 	memset(frame, 0, sizeof(*frame));
-	frame->is_supervision = is_supervision_frame(hsr, skb);
+	frame->is_supervision = is_supervision_frame(port->hsr, skb);
+	if (frame->is_supervision && hsr->redbox)
+		frame->is_proxy_supervision =
+			is_proxy_supervision_frame(port->hsr, skb);
+
+	n_db = &hsr->node_db;
+	if (port->type == HSR_PT_INTERLINK)
+		n_db = &hsr->proxy_node_db;
 
 	/* When offloaded, don't expect Supervision frame which
 	 * is terminated at h/w or f/w that offload the LRE
 	 */
-	if (frame->is_supervision && hsr->rx_offloaded &&
+	if (frame->is_supervision && hsr->fwd_offloaded &&
 	    port->type != HSR_PT_MASTER)
 		return -1;
-
-	if (frame->is_supervision) {
-		if (port->type == HSR_PT_SLAVE_A)
-			INC_CNT_RX_SUP_A(hsr);
-		else if (port->type == HSR_PT_SLAVE_B)
-			INC_CNT_RX_SUP_B(hsr);
-	}
 
 	/* For Offloaded case, there is no need for node list since
 	 * firmware/hardware implements LRE function.
 	 */
-	if (!hsr->rx_offloaded) {
-		frame->node_src = hsr_get_node(port, &hsr->node_db, skb,
+	if (!hsr->fwd_offloaded) {
+		frame->node_src = hsr_get_node(port, n_db, skb,
 					       frame->is_supervision,
 					       port->type);
 		/* Unknown node and !is_supervision, or no mem */
@@ -773,7 +831,12 @@ static int fill_frame_info(struct hsr_frame_info *frame,
 		frame->is_vlan = true;
 
 	if (frame->is_vlan) {
-		vlan_hdr = (struct hsr_vlan_ethhdr *)ethhdr;
+		/* Note: skb->mac_len might be wrong here. */
+		if (!pskb_may_pull(skb,
+				   skb_mac_offset(skb) +
+				   offsetofend(struct hsr_vlan_ethhdr, vlanhdr)))
+			return -EINVAL;
+		vlan_hdr = (struct hsr_vlan_ethhdr *)skb_mac_header(skb);
 		proto = vlan_hdr->vlanhdr.h_vlan_encapsulated_proto;
 	}
 
@@ -796,24 +859,15 @@ void hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 	rcu_read_lock();
 	if (fill_frame_info(&frame, skb, port) < 0)
 		goto out_drop;
-
-	/* Check for LAN_ID only for PRP */
-	if (frame.skb_prp) {
-		if (port->type == HSR_PT_SLAVE_A  ||
-		    port->type == HSR_PT_SLAVE_B)
-			prp_update_lre_error_stats(frame.skb_prp, port);
-	}
-
 	/* No need to register frame when rx offload is supported */
-	if (!port->hsr->rx_offloaded)
-		hsr_register_frame_in(frame.node_src, port,
-				      frame.sequence_nr);
+	if (!port->hsr->fwd_offloaded)
+		hsr_register_frame_in(frame.node_src, port, frame.sequence_nr);
 	hsr_forward_do(&frame);
 	rcu_read_unlock();
 	/* Gets called for ingress frames as well as egress from master port.
 	 * So check and increment stats for master port only here.
 	 */
-	if (port->type == HSR_PT_MASTER) {
+	if (port->type == HSR_PT_MASTER || port->type == HSR_PT_INTERLINK) {
 		port->dev->stats.tx_packets++;
 		port->dev->stats.tx_bytes += skb->len;
 	}
@@ -824,7 +878,6 @@ void hsr_forward_skb(struct sk_buff *skb, struct hsr_port *port)
 	return;
 
 out_drop:
-	INC_CNT_RX_ERROR_AB(port->type, port->hsr);
 	rcu_read_unlock();
 	port->dev->stats.tx_dropped++;
 	kfree_skb(skb);

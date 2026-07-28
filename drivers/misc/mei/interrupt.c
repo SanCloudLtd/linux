@@ -72,7 +72,7 @@ static void mei_irq_discard_msg(struct mei_device *dev, struct mei_msg_hdr *hdr,
 		discard_len = 0;
 	}
 	/*
-	 * no need to check for size as it is guarantied
+	 * no need to check for size as it is guaranteed
 	 * that length fits into rd_msg_buf
 	 */
 	mei_read_slots(dev, dev->rd_msg_buf, discard_len);
@@ -98,9 +98,12 @@ static int mei_cl_irq_read_msg(struct mei_cl *cl,
 	struct mei_device *dev = cl->dev;
 	struct mei_cl_cb *cb;
 
+	struct mei_ext_hdr_vtag *vtag_hdr = NULL;
+	struct mei_ext_hdr_gsc_f2h *gsc_f2h = NULL;
+
 	size_t buf_sz;
 	u32 length;
-	int ext_len;
+	u32 ext_len;
 
 	length = mei_hdr->length;
 	ext_len = 0;
@@ -122,18 +125,24 @@ static int mei_cl_irq_read_msg(struct mei_cl *cl,
 	}
 
 	if (mei_hdr->extended) {
-		struct mei_ext_hdr *ext;
-		struct mei_ext_hdr *vtag = NULL;
-
-		ext = mei_ext_begin(meta);
+		struct mei_ext_hdr *ext = mei_ext_begin(meta);
 		do {
 			switch (ext->type) {
 			case MEI_EXT_HDR_VTAG:
-				vtag = ext;
+				vtag_hdr = (struct mei_ext_hdr_vtag *)ext;
+				break;
+			case MEI_EXT_HDR_GSC:
+				gsc_f2h = (struct mei_ext_hdr_gsc_f2h *)ext;
+				cb->ext_hdr = kzalloc(sizeof(*gsc_f2h), GFP_KERNEL);
+				if (!cb->ext_hdr) {
+					cb->status = -ENOMEM;
+					goto discard;
+				}
 				break;
 			case MEI_EXT_HDR_NONE:
 				fallthrough;
 			default:
+				cl_err(dev, cl, "unknown extended header\n");
 				cb->status = -EPROTO;
 				break;
 			}
@@ -141,20 +150,44 @@ static int mei_cl_irq_read_msg(struct mei_cl *cl,
 			ext = mei_ext_next(ext);
 		} while (!mei_ext_last(meta, ext));
 
-		if (!vtag) {
-			cl_dbg(dev, cl, "vtag not found in extended header.\n");
+		if (!vtag_hdr && !gsc_f2h) {
+			cl_dbg(dev, cl, "no vtag or gsc found in extended header.\n");
+			cb->status = -EPROTO;
+			goto discard;
+		}
+	}
+
+	if (vtag_hdr) {
+		cl_dbg(dev, cl, "vtag: %d\n", vtag_hdr->vtag);
+		if (cb->vtag && cb->vtag != vtag_hdr->vtag) {
+			cl_err(dev, cl, "mismatched tag: %d != %d\n",
+			       cb->vtag, vtag_hdr->vtag);
+			cb->status = -EPROTO;
+			goto discard;
+		}
+		cb->vtag = vtag_hdr->vtag;
+	}
+
+	if (gsc_f2h) {
+		u32 ext_hdr_len = mei_ext_hdr_len(&gsc_f2h->hdr);
+
+		if (!dev->hbm_f_gsc_supported) {
+			cl_err(dev, cl, "gsc extended header is not supported\n");
 			cb->status = -EPROTO;
 			goto discard;
 		}
 
-		cl_dbg(dev, cl, "vtag: %d\n", vtag->ext_payload[0]);
-		if (cb->vtag && cb->vtag != vtag->ext_payload[0]) {
-			cl_err(dev, cl, "mismatched tag: %d != %d\n",
-			       cb->vtag, vtag->ext_payload[0]);
+		if (length) {
+			cl_err(dev, cl, "no data allowed in cb with gsc\n");
 			cb->status = -EPROTO;
 			goto discard;
 		}
-		cb->vtag = vtag->ext_payload[0];
+		if (ext_hdr_len > sizeof(*gsc_f2h)) {
+			cl_err(dev, cl, "gsc extended header is too big %u\n", ext_hdr_len);
+			cb->status = -EPROTO;
+			goto discard;
+		}
+		memcpy(cb->ext_hdr, gsc_f2h, ext_hdr_len);
 	}
 
 	if (!mei_cl_is_connected(cl)) {
@@ -331,7 +364,6 @@ int mei_irq_read_handler(struct mei_device *dev,
 	struct mei_ext_meta_hdr *meta_hdr = NULL;
 	struct mei_cl *cl;
 	int ret;
-	u32 ext_meta_hdr_u32;
 	u32 hdr_size_left;
 	u32 hdr_size_ext;
 	int i;
@@ -367,14 +399,12 @@ int mei_irq_read_handler(struct mei_device *dev,
 
 	if (mei_hdr->extended) {
 		if (!dev->rd_msg_hdr[1]) {
-			ext_meta_hdr_u32 = mei_read_hdr(dev);
-			dev->rd_msg_hdr[1] = ext_meta_hdr_u32;
+			dev->rd_msg_hdr[1] = mei_read_hdr(dev);
 			dev->rd_msg_hdr_count++;
 			(*slots)--;
-			dev_dbg(dev->dev, "extended header is %08x\n",
-				ext_meta_hdr_u32);
+			dev_dbg(dev->dev, "extended header is %08x\n", dev->rd_msg_hdr[1]);
 		}
-		meta_hdr = ((struct mei_ext_meta_hdr *)dev->rd_msg_hdr + 1);
+		meta_hdr = ((struct mei_ext_meta_hdr *)&dev->rd_msg_hdr[1]);
 		if (check_add_overflow((u32)sizeof(*meta_hdr),
 				       mei_slots2data(meta_hdr->size),
 				       &hdr_size_ext)) {
@@ -545,6 +575,16 @@ int mei_irq_write_handler(struct mei_device *dev, struct list_head *cmpl_list)
 			if (ret)
 				return ret;
 			break;
+		case MEI_FOP_DMA_MAP:
+			ret = mei_cl_irq_dma_map(cl, cb, cmpl_list);
+			if (ret)
+				return ret;
+			break;
+		case MEI_FOP_DMA_UNMAP:
+			ret = mei_cl_irq_dma_unmap(cl, cb, cmpl_list);
+			if (ret)
+				return ret;
+			break;
 		default:
 			BUG();
 		}
@@ -586,9 +626,9 @@ static void mei_connect_timeout(struct mei_cl *cl)
 /**
  * mei_schedule_stall_timer - re-arm stall_timer work
  *
- * Schedule stall timer
- *
  * @dev: the device structure
+ *
+ * Schedule stall timer
  */
 void mei_schedule_stall_timer(struct mei_device *dev)
 {

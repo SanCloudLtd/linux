@@ -10,6 +10,7 @@
 #include <asm/pgalloc.h>
 #include <asm/tlb.h>
 #include <asm/dma.h>
+#include <asm/code-patching.h>
 
 #include <mm/mmu_decl.h>
 
@@ -28,10 +29,10 @@ int __meminit vmemmap_create_mapping(unsigned long start,
 		_PAGE_KERNEL_RW;
 
 	/* PTEs only contain page size encodings up to 32M */
-	BUG_ON(mmu_psize_defs[mmu_vmemmap_psize].enc > 0xf);
+	BUG_ON(mmu_psize_defs[mmu_vmemmap_psize].shift - 10 > 0xf);
 
 	/* Encode the size in the PTE */
-	flags |= mmu_psize_defs[mmu_vmemmap_psize].enc << 8;
+	flags |= (mmu_psize_defs[mmu_vmemmap_psize].shift - 10) << 8;
 
 	/* For each PTE for that area, map things. Note that we don't
 	 * increment phys because all PTEs are of the large size and
@@ -70,7 +71,7 @@ static void __init *early_alloc_pgtable(unsigned long size)
  * map_kernel_page adds an entry to the ioremap page table
  * and adds an entry to the HPT, possibly bolting it
  */
-int __ref map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
+int __ref map_kernel_page(unsigned long ea, phys_addr_t pa, pgprot_t prot)
 {
 	pgd_t *pgdp;
 	p4d_t *p4dp;
@@ -114,4 +115,18 @@ int __ref map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
 
 	smp_wmb();
 	return 0;
+}
+
+void __patch_exception(int exc, unsigned long addr)
+{
+	unsigned int *ibase = &interrupt_base_book3e;
+
+	/*
+	 * Our exceptions vectors start with a NOP and -then- a branch
+	 * to deal with single stepping from userspace which stops on
+	 * the second instruction. Thus we need to patch the second
+	 * instruction of the exception, not the first one.
+	 */
+
+	patch_branch(ibase + (exc / 4) + 1, addr, 0);
 }

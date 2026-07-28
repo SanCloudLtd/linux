@@ -22,7 +22,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/cpufeature.h>
-#include <crypto/sha.h>
+#include <crypto/sha1.h>
 #include <asm/cpacf.h>
 
 #include "sha.h"
@@ -38,6 +38,7 @@ static int s390_sha1_init(struct shash_desc *desc)
 	sctx->state[4] = SHA1_H4;
 	sctx->count = 0;
 	sctx->func = CPACF_KIMD_SHA_1;
+	sctx->first_message_part = 0;
 
 	return 0;
 }
@@ -62,6 +63,7 @@ static int s390_sha1_import(struct shash_desc *desc, const void *in)
 	memcpy(sctx->state, ictx->state, sizeof(ictx->state));
 	memcpy(sctx->buf, ictx->buffer, sizeof(ictx->buffer));
 	sctx->func = CPACF_KIMD_SHA_1;
+	sctx->first_message_part = 0;
 	return 0;
 }
 
@@ -95,7 +97,7 @@ static void __exit sha1_s390_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-module_cpu_feature_match(MSA, sha1_s390_init);
+module_cpu_feature_match(S390_CPU_FEATURE_MSA, sha1_s390_init);
 module_exit(sha1_s390_fini);
 
 MODULE_ALIAS_CRYPTO("sha1");

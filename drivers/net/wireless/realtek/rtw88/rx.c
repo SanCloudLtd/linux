@@ -6,6 +6,7 @@
 #include "rx.h"
 #include "ps.h"
 #include "debug.h"
+#include "fw.h"
 
 void rtw_rx_stats(struct rtw_dev *rtwdev, struct ieee80211_vif *vif,
 		  struct sk_buff *skb)
@@ -138,6 +139,54 @@ static void rtw_rx_addr_match(struct rtw_dev *rtwdev,
 	rtw_iterate_vifs_atomic(rtwdev, rtw_rx_addr_match_iter, &data);
 }
 
+static void rtw_set_rx_freq_by_pktstat(struct rtw_rx_pkt_stat *pkt_stat,
+				       struct ieee80211_rx_status *rx_status)
+{
+	rx_status->freq = pkt_stat->freq;
+	rx_status->band = pkt_stat->band;
+}
+
+void rtw_update_rx_freq_from_ie(struct rtw_dev *rtwdev, struct sk_buff *skb,
+				struct ieee80211_rx_status *rx_status,
+				struct rtw_rx_pkt_stat *pkt_stat)
+{
+	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)skb->data;
+	int channel = rtwdev->hal.current_channel;
+	size_t hdr_len, ielen;
+	int channel_number;
+	u8 *variable;
+
+	if (!test_bit(RTW_FLAG_SCANNING, rtwdev->flags))
+		goto fill_rx_status;
+
+	if (ieee80211_is_beacon(mgmt->frame_control)) {
+		variable = mgmt->u.beacon.variable;
+		hdr_len = offsetof(struct ieee80211_mgmt,
+				   u.beacon.variable);
+	} else if (ieee80211_is_probe_resp(mgmt->frame_control)) {
+		variable = mgmt->u.probe_resp.variable;
+		hdr_len = offsetof(struct ieee80211_mgmt,
+				   u.probe_resp.variable);
+	} else {
+		goto fill_rx_status;
+	}
+
+	if (skb->len > hdr_len)
+		ielen = skb->len - hdr_len;
+	else
+		goto fill_rx_status;
+
+	channel_number = cfg80211_get_ies_channel_number(variable, ielen,
+							 NL80211_BAND_2GHZ);
+	if (channel_number != -1)
+		channel = channel_number;
+
+fill_rx_status:
+	rtw_set_rx_freq_band(pkt_stat, channel);
+	rtw_set_rx_freq_by_pktstat(pkt_stat, rx_status);
+}
+EXPORT_SYMBOL(rtw_update_rx_freq_from_ie);
+
 void rtw_rx_fill_rx_status(struct rtw_dev *rtwdev,
 			   struct rtw_rx_pkt_stat *pkt_stat,
 			   struct ieee80211_hdr *hdr,
@@ -150,6 +199,9 @@ void rtw_rx_fill_rx_status(struct rtw_dev *rtwdev,
 	memset(rx_status, 0, sizeof(*rx_status));
 	rx_status->freq = hw->conf.chandef.chan->center_freq;
 	rx_status->band = hw->conf.chandef.chan->band;
+	if (rtw_fw_feature_check(&rtwdev->fw, FW_FEATURE_SCAN_OFFLOAD) &&
+	    test_bit(RTW_FLAG_SCANNING, rtwdev->flags))
+		rtw_set_rx_freq_by_pktstat(pkt_stat, rx_status);
 	if (pkt_stat->crc_err)
 		rx_status->flag |= RX_FLAG_FAILED_FCS_CRC;
 	if (pkt_stat->decrypted)

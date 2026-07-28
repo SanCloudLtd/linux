@@ -15,24 +15,31 @@
 #include <linux/platform_device.h>
 #include <linux/soc/ti/k3-ringacc.h>
 #include <net/devlink.h>
+#include <net/xdp.h>
+#include <net/xdp_sock_drv.h>
 #include "am65-cpsw-qos.h"
 
 struct am65_cpts;
 
 #define HOST_PORT_NUM		0
 
-#define AM65_CPSW_MAX_TX_QUEUES	8
-#define AM65_CPSW_MAX_RX_QUEUES	1
-#define AM65_CPSW_MAX_RX_FLOWS	1
+#define AM65_CPSW_MAX_QUEUES	8	/* both TX & RX */
+
+#define AM65_CPSW_MIN_PACKET_SIZE	VLAN_ETH_ZLEN
+#define AM65_CPSW_MAX_PACKET_SIZE	2024
 
 #define AM65_CPSW_PORT_VLAN_REG_OFFSET	0x014
+
+#define AM65_CPSW_RX_DMA_ATTR	(DMA_ATTR_SKIP_CPU_SYNC |\
+				 DMA_ATTR_WEAK_ORDERING)
 
 struct am65_cpsw_slave_data {
 	bool				mac_only;
 	struct cpsw_sl			*mac_sl;
-	struct device_node		*phy_node;
+	struct device_node		*port_np;
 	phy_interface_t			phy_if;
 	struct phy			*ifphy;
+	struct phy			*serdes_phy;
 	bool				rx_pause;
 	bool				tx_pause;
 	u8				mac_addr[ETH_ALEN];
@@ -56,9 +63,20 @@ struct am65_cpsw_port {
 	bool				rx_ts_enabled;
 	struct am65_cpsw_qos		qos;
 	struct devlink_port		devlink_port;
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry			*debugfs_port;
+#endif
+	struct bpf_prog			*xdp_prog;
+	struct xdp_rxq_info		xdp_rxq[AM65_CPSW_MAX_QUEUES];
 	/* Only for suspend resume context */
 	u32				vid_context;
+};
+
+enum am65_cpsw_tx_buf_type {
+	AM65_CPSW_TX_BUF_TYPE_SKB,
+	AM65_CPSW_TX_BUF_TYPE_XDP_TX,
+	AM65_CPSW_TX_BUF_TYPE_XDP_NDO,
+	AM65_CPSW_TX_BUF_TYPE_XSK_TX,
 };
 
 struct am65_cpsw_host {
@@ -81,8 +99,43 @@ struct am65_cpsw_tx_chn {
 	int irq;
 	u32 id;
 	u32 descs_num;
+	unsigned char dsize_log2;
 	char tx_chn_name[128];
-	u32  rate_mbps;
+	u32 rate_mbps;
+	struct xsk_buff_pool *xsk_pool;
+	int xsk_port_id;
+	bool irq_disabled;
+};
+
+struct am65_cpsw_rx_flow {
+	u32 id;
+	struct napi_struct napi_rx;
+	struct am65_cpsw_common	*common;
+	int irq;
+	bool irq_disabled;
+	struct hrtimer rx_hrtimer;
+	unsigned long rx_pace_timeout;
+	struct page_pool *page_pool;
+	struct xsk_buff_pool *xsk_pool;
+	int xsk_port_id;
+	char name[32];
+};
+
+struct am65_cpsw_tx_swdata {
+	struct net_device *ndev;
+	union {
+		struct sk_buff *skb;
+		struct xdp_frame *xdpf;
+		struct xsk_buff_pool *xsk_pool;
+	};
+};
+
+struct am65_cpsw_swdata {
+	u32 flow_id;
+	union {
+		struct page *page;
+		struct xdp_buff *xdp;
+	};
 };
 
 struct am65_cpsw_rx_chn {
@@ -91,12 +144,13 @@ struct am65_cpsw_rx_chn {
 	struct k3_cppi_desc_pool *desc_pool;
 	struct k3_udma_glue_rx_channel *rx_chn;
 	u32 descs_num;
-	int irq;
+	unsigned char dsize_log2;
+	struct am65_cpsw_rx_flow flows[AM65_CPSW_MAX_QUEUES];
 };
 
 #define AM65_CPSW_QUIRK_I2027_NO_TX_CSUM BIT(0)
-#define AM64_CPSW_QUIRK_CUT_THRU BIT(1)
-#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(2)
+#define AM64_CPSW_QUIRK_DMA_RX_TDOWN_IRQ BIT(1)
+#define AM64_CPSW_QUIRK_CUT_THRU	 BIT(2)
 
 struct am65_cpsw_pdata {
 	u32	quirks;
@@ -134,15 +188,12 @@ struct am65_cpsw_common {
 	u32			tx_ch_rate_msk;
 	u32			rx_flow_id_base;
 
-	struct am65_cpsw_tx_chn	tx_chns[AM65_CPSW_MAX_TX_QUEUES];
+	struct am65_cpsw_tx_chn	tx_chns[AM65_CPSW_MAX_QUEUES];
 	struct completion	tdown_complete;
 	atomic_t		tdown_cnt;
 
+	int			rx_ch_num_flows;
 	struct am65_cpsw_rx_chn	rx_chns;
-	struct napi_struct	napi_rx;
-	bool			rx_irq_disabled;
-	struct hrtimer rx_hrtimer;
-	unsigned long rx_pace_timeout;
 
 	u32			nuss_ver;
 	u32			cpsw_ver;
@@ -150,7 +201,7 @@ struct am65_cpsw_common {
 	bool			pf_p0_rx_ptype_rrobin;
 	struct am65_cpts	*cpts;
 	int			est_enabled;
-	int			iet_enabled;
+	bool			iet_enabled;
 	unsigned int		cut_thru_enabled;
 
 	bool		is_emac_mode;
@@ -161,24 +212,24 @@ struct am65_cpsw_common {
 	struct notifier_block am65_cpsw_netdevice_nb;
 	unsigned char switch_id[MAX_PHYS_ITEM_ID_LEN];
 
+#if IS_ENABLED(CONFIG_DEBUG_FS)
 	struct dentry		*debugfs_root;
+#endif
 	/* only for suspend/resume context restore */
 	u32			*ale_context;
-};
-
-struct am65_cpsw_ndev_stats {
-	u64 tx_packets;
-	u64 tx_bytes;
-	u64 rx_packets;
-	u64 rx_bytes;
-	struct u64_stats_sync syncp;
+	/* XDP Zero Copy */
+	unsigned long		*xdp_zc_queues;
+	int			xsk_port_id[AM65_CPSW_MAX_QUEUES];
 };
 
 struct am65_cpsw_ndev_priv {
 	u32			msg_enable;
 	struct am65_cpsw_port	*port;
-	struct am65_cpsw_ndev_stats __percpu *stats;
 	bool offload_fwd_mark;
+	/* Serialize access to MAC Merge state between ethtool requests
+	 * and link state updates
+	 */
+	struct mutex		mm_lock;
 };
 
 #define am65_ndev_to_priv(ndev) \
@@ -190,8 +241,8 @@ struct am65_cpsw_ndev_priv {
 #define am65_common_get_host(common) (&(common)->host)
 #define am65_common_get_port(common, id) (&(common)->ports[(id) - 1])
 
-#define am65_cpsw_napi_to_common(pnapi) \
-	container_of(pnapi, struct am65_cpsw_common, napi_rx)
+#define am65_cpsw_napi_to_rx_flow(pnapi) \
+	container_of(pnapi, struct am65_cpsw_rx_flow, napi_rx)
 #define am65_cpsw_napi_to_tx_chn(pnapi) \
 	container_of(pnapi, struct am65_cpsw_tx_chn, napi_tx)
 
@@ -201,10 +252,9 @@ struct am65_cpsw_ndev_priv {
 
 extern const struct ethtool_ops am65_cpsw_ethtool_ops_slave;
 
-void am65_cpsw_nuss_adjust_link(struct net_device *ndev);
 void am65_cpsw_nuss_set_p0_ptype(struct am65_cpsw_common *common);
-void am65_cpsw_nuss_remove_tx_chns(struct am65_cpsw_common *common);
-int am65_cpsw_nuss_update_tx_chns(struct am65_cpsw_common *common, int num_tx);
+int am65_cpsw_nuss_update_tx_rx_chns(struct am65_cpsw_common *common,
+				     int num_tx, int num_rx);
 
 bool am65_cpsw_port_dev_check(const struct net_device *dev);
 
@@ -224,8 +274,20 @@ static inline int am65_cpsw_nuss_register_debugfs(struct am65_cpsw_common *commo
 }
 
 static inline void am65_cpsw_nuss_unregister_debugfs(struct am65_cpsw_common *common)
+{ }
+#endif /* CONFIG_DEBUG_FS */
+int am65_cpsw_create_rxq(struct am65_cpsw_common *common, int id);
+void am65_cpsw_destroy_rxq(struct am65_cpsw_common *common, int id, bool retain_page_pool);
+int am65_cpsw_create_txq(struct am65_cpsw_common *common, int id);
+void am65_cpsw_destroy_txq(struct am65_cpsw_common *common, int id);
+int am65_cpsw_xsk_setup_pool(struct net_device *ndev,
+			     struct xsk_buff_pool *pool, u16 qid);
+int am65_cpsw_xsk_wakeup(struct net_device *ndev, u32 qid, u32 flags);
+static inline bool am65_cpsw_xdp_is_enabled(struct am65_cpsw_port *port)
 {
+	return !!READ_ONCE(port->xdp_prog);
 }
-#endif
+struct xsk_buff_pool *am65_cpsw_xsk_get_pool(struct am65_cpsw_port *port,
+					     u32 qid);
 
 #endif /* AM65_CPSW_NUSS_H_ */

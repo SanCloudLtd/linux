@@ -43,7 +43,7 @@ MODULE_FIRMWARE(MS_RW_FIRMWARE);
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
 	.driver_info = (flags)}
 
-static struct usb_device_id ene_ub6250_usb_ids[] = {
+static const struct usb_device_id ene_ub6250_usb_ids[] = {
 #	include "unusual_ene_ub6250.h"
 	{ }		/* Terminating entry */
 };
@@ -65,7 +65,7 @@ MODULE_DEVICE_TABLE(usb, ene_ub6250_usb_ids);
 	.initFunction = init_function,	\
 }
 
-static struct us_unusual_dev ene_ub6250_unusual_dev_list[] = {
+static const struct us_unusual_dev ene_ub6250_unusual_dev_list[] = {
 #	include "unusual_ene_ub6250.h"
 	{ }		/* Terminating entry */
 };
@@ -858,6 +858,7 @@ static int ms_count_freeblock(struct us_data *us, u16 PhyBlock)
 		case MS_LB_NOT_USED:
 		case MS_LB_NOT_USED_ERASED:
 			Count++;
+			break;
 		default:
 			break;
 		}
@@ -938,7 +939,7 @@ static int ms_lib_process_bootblock(struct us_data *us, u16 PhyBlock, u8 *PageDa
 	struct ms_lib_type_extdat ExtraData;
 	struct ene_ub6250_info *info = (struct ene_ub6250_info *) us->extra;
 
-	PageBuffer = kmalloc(MS_BYTES_PER_PAGE, GFP_KERNEL);
+	PageBuffer = kzalloc(MS_BYTES_PER_PAGE * 2, GFP_KERNEL);
 	if (PageBuffer == NULL)
 		return (u32)-1;
 
@@ -1483,7 +1484,7 @@ static int ms_scsi_mode_sense(struct us_data *us, struct scsi_cmnd *srb)
 static int ms_scsi_read_capacity(struct us_data *us, struct scsi_cmnd *srb)
 {
 	u32   bl_num;
-	u16    bl_len;
+	u32    bl_len;
 	unsigned int offset = 0;
 	unsigned char    buf[8];
 	struct scatterlist *sg = NULL;

@@ -38,6 +38,15 @@ void mv_cesa_dma_step(struct mv_cesa_req *dreq)
 {
 	struct mv_cesa_engine *engine = dreq->engine;
 
+	spin_lock_bh(&engine->lock);
+	if (engine->chain_sw.first == dreq->chain.first) {
+		engine->chain_sw.first = NULL;
+		engine->chain_sw.last = NULL;
+	}
+	engine->chain_hw.first = dreq->chain.first;
+	engine->chain_hw.last = dreq->chain.last;
+	spin_unlock_bh(&engine->lock);
+
 	writel_relaxed(0, engine->regs + CESA_SA_CFG);
 
 	mv_cesa_set_int_mask(engine, CESA_SA_INT_ACC0_IDMA_DONE);
@@ -96,25 +105,27 @@ void mv_cesa_dma_prepare(struct mv_cesa_req *dreq,
 void mv_cesa_tdma_chain(struct mv_cesa_engine *engine,
 			struct mv_cesa_req *dreq)
 {
-	if (engine->chain.first == NULL && engine->chain.last == NULL) {
-		engine->chain.first = dreq->chain.first;
-		engine->chain.last  = dreq->chain.last;
-	} else {
-		struct mv_cesa_tdma_desc *last;
+	struct mv_cesa_tdma_desc *last = engine->chain_sw.last;
 
-		last = engine->chain.last;
+	/*
+	 * Break the DMA chain if the request being queued needs the IV
+	 * regs to be set before lauching the request.
+	 */
+	if (!last || dreq->chain.first->flags & CESA_TDMA_SET_STATE)
+		engine->chain_sw.first = dreq->chain.first;
+	else {
 		last->next = dreq->chain.first;
-		engine->chain.last = dreq->chain.last;
-
-		/*
-		 * Break the DMA chain if the CESA_TDMA_BREAK_CHAIN is set on
-		 * the last element of the current chain, or if the request
-		 * being queued needs the IV regs to be set before lauching
-		 * the request.
-		 */
-		if (!(last->flags & CESA_TDMA_BREAK_CHAIN) &&
-		    !(dreq->chain.first->flags & CESA_TDMA_SET_STATE))
-			last->next_dma = cpu_to_le32(dreq->chain.first->cur_dma);
+		last->next_dma = cpu_to_le32(dreq->chain.first->cur_dma);
+	}
+	last = dreq->chain.last;
+	engine->chain_sw.last = last;
+	/*
+	 * Break the DMA chain if the CESA_TDMA_BREAK_CHAIN is set on
+	 * the last element of the current chain.
+	 */
+	if (last->flags & CESA_TDMA_BREAK_CHAIN) {
+		engine->chain_sw.first = NULL;
+		engine->chain_sw.last = NULL;
 	}
 }
 
@@ -127,7 +138,7 @@ int mv_cesa_tdma_process(struct mv_cesa_engine *engine, u32 status)
 
 	tdma_cur = readl(engine->regs + CESA_TDMA_CUR);
 
-	for (tdma = engine->chain.first; tdma; tdma = next) {
+	for (tdma = engine->chain_hw.first; tdma; tdma = next) {
 		spin_lock_bh(&engine->lock);
 		next = tdma->next;
 		spin_unlock_bh(&engine->lock);
@@ -149,12 +160,12 @@ int mv_cesa_tdma_process(struct mv_cesa_engine *engine, u32 status)
 								 &backlog);
 
 			/* Re-chaining to the next request */
-			engine->chain.first = tdma->next;
+			engine->chain_hw.first = tdma->next;
 			tdma->next = NULL;
 
 			/* If this is the last request, clear the chain */
-			if (engine->chain.first == NULL)
-				engine->chain.last  = NULL;
+			if (engine->chain_hw.first == NULL)
+				engine->chain_hw.last  = NULL;
 			spin_unlock_bh(&engine->lock);
 
 			ctx = crypto_tfm_ctx(req->tfm);
@@ -168,7 +179,7 @@ int mv_cesa_tdma_process(struct mv_cesa_engine *engine, u32 status)
 									req);
 
 			if (backlog)
-				backlog->complete(backlog, -EINPROGRESS);
+				crypto_request_complete(backlog, -EINPROGRESS);
 		}
 
 		if (res || tdma->cur_dma == tdma_cur)
@@ -177,7 +188,7 @@ int mv_cesa_tdma_process(struct mv_cesa_engine *engine, u32 status)
 
 	/*
 	 * Save the last request in error to engine->req, so that the core
-	 * knows which request was fautly
+	 * knows which request was faulty
 	 */
 	if (res) {
 		spin_lock_bh(&engine->lock);
@@ -349,4 +360,54 @@ int mv_cesa_dma_add_op_transfers(struct mv_cesa_tdma_chain *chain,
 	} while (mv_cesa_req_dma_iter_next_transfer(dma_iter, sgiter, len));
 
 	return 0;
+}
+
+size_t mv_cesa_sg_copy(struct mv_cesa_engine *engine,
+		       struct scatterlist *sgl, unsigned int nents,
+		       unsigned int sram_off, size_t buflen, off_t skip,
+		       bool to_sram)
+{
+	unsigned int sg_flags = SG_MITER_ATOMIC;
+	struct sg_mapping_iter miter;
+	unsigned int offset = 0;
+
+	if (to_sram)
+		sg_flags |= SG_MITER_FROM_SG;
+	else
+		sg_flags |= SG_MITER_TO_SG;
+
+	sg_miter_start(&miter, sgl, nents, sg_flags);
+
+	if (!sg_miter_skip(&miter, skip))
+		return 0;
+
+	while ((offset < buflen) && sg_miter_next(&miter)) {
+		unsigned int len;
+
+		len = min(miter.length, buflen - offset);
+
+		if (to_sram) {
+			if (engine->pool)
+				memcpy(engine->sram_pool + sram_off + offset,
+				       miter.addr, len);
+			else
+				memcpy_toio(engine->sram + sram_off + offset,
+					    miter.addr, len);
+		} else {
+			if (engine->pool)
+				memcpy(miter.addr,
+				       engine->sram_pool + sram_off + offset,
+				       len);
+			else
+				memcpy_fromio(miter.addr,
+					      engine->sram + sram_off + offset,
+					      len);
+		}
+
+		offset += len;
+	}
+
+	sg_miter_stop(&miter);
+
+	return offset;
 }

@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright: 2017-2018 Cadence Design Systems, Inc.
- * Copyright (C) 2021 Texas Instruments Incorporated - https://www.ti.com/
  */
 
-#include <linux/bitops.h>
 #include <linux/bitfield.h>
+#include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/module.h>
-#include <linux/of_address.h>
-#include <linux/of_device.h>
-#include <linux/sys_soc.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
 
@@ -30,15 +27,11 @@
 #define DPHY_PMA_RCLK(reg)		(0x600 + (reg))
 #define DPHY_PMA_RDATA(lane, reg)	(0x700 + ((lane) * 0x100) + (reg))
 #define DPHY_PCS(reg)			(0xb00 + (reg))
-#define DPHY_ISO(reg)			(0xc00 + (reg))
-#define DPHY_WRAP(reg)			(0x1000 + (reg))
 
 #define DPHY_CMN_SSM			DPHY_PMA_CMN(0x20)
 #define DPHY_CMN_SSM_EN			BIT(0)
-#define DPHY_CMN_RX_BANDGAP_TIMER_MASK	GENMASK(8, 1)
+#define DPHY_CMN_SSM_CAL_WAIT_TIME	GENMASK(8, 1)
 #define DPHY_CMN_TX_MODE_EN		BIT(9)
-#define DPHY_CMN_RX_MODE_EN		BIT(10)
-#define DPHY_CMN_RX_BANDGAP_TIMER	0x14
 
 #define DPHY_CMN_PWM			DPHY_PMA_CMN(0x40)
 #define DPHY_CMN_PWM_DIV(x)		((x) << 20)
@@ -63,33 +56,6 @@
 #define DPHY_PSM_CFG_FROM_REG		BIT(0)
 #define DPHY_PSM_CLK_DIV(x)		((x) << 1)
 
-#define DPHY_POWER_ISLAND_EN_DATA	DPHY_PCS(0x8)
-#define DPHY_POWER_ISLAND_EN_DATA_VAL	0xaaaaaaaa
-#define DPHY_POWER_ISLAND_EN_CLK	DPHY_PCS(0xc)
-#define DPHY_POWER_ISLAND_EN_CLK_VAL	0xaa
-
-#define DPHY_LANE			DPHY_WRAP(0x0)
-#define DPHY_LANE_RESET_CMN_EN		BIT(23)
-
-#define DPHY_ISO_CL_CTRL_L		DPHY_ISO(0x10)
-#define DPHY_ISO_DL_CTRL_L0		DPHY_ISO(0x14)
-#define DPHY_ISO_DL_CTRL_L1		DPHY_ISO(0x20)
-#define DPHY_ISO_DL_CTRL_L2		DPHY_ISO(0x30)
-#define DPHY_ISO_DL_CTRL_L3		DPHY_ISO(0x3c)
-#define DPHY_ISO_LANE_READY_BIT		0
-#define DPHY_ISO_LANE_READY_TIMEOUT_MS	100UL
-
-#define DSI_HBP_FRAME_OVERHEAD		12
-#define DSI_HSA_FRAME_OVERHEAD		14
-#define DSI_HFP_FRAME_OVERHEAD		6
-#define DSI_HSS_VSS_VSE_FRAME_OVERHEAD	4
-#define DSI_BLANKING_FRAME_OVERHEAD	6
-#define DSI_NULL_FRAME_OVERHEAD		6
-#define DSI_EOT_PKT_SIZE		4
-
-#define DPHY_LANES_MIN			1
-#define DPHY_LANES_MAX			4
-
 #define DPHY_TX_J721E_WIZ_PLL_CTRL	0xF04
 #define DPHY_TX_J721E_WIZ_STATUS	0xF08
 #define DPHY_TX_J721E_WIZ_RST_CTRL	0xF0C
@@ -106,6 +72,7 @@ struct cdns_dphy_cfg {
 	u8 pll_ipdiv;
 	u8 pll_opdiv;
 	u16 pll_fbdiv;
+	u32 hs_clk_rate;
 	unsigned int nlanes;
 };
 
@@ -120,68 +87,36 @@ struct cdns_dphy;
 struct cdns_dphy_ops {
 	int (*probe)(struct cdns_dphy *dphy);
 	void (*remove)(struct cdns_dphy *dphy);
-	int (*power_on)(struct cdns_dphy *dphy);
-	int (*power_off)(struct cdns_dphy *dphy);
-	int (*validate)(struct cdns_dphy *dphy, enum phy_mode mode, int submode,
-			union phy_configure_opts *opts);
-	int (*configure)(struct cdns_dphy *dphy, union phy_configure_opts *opts);
 	void (*set_psm_div)(struct cdns_dphy *dphy, u8 div);
 	void (*set_clk_lane_cfg)(struct cdns_dphy *dphy,
 				 enum cdns_dphy_clk_lane_cfg cfg);
 	void (*set_pll_cfg)(struct cdns_dphy *dphy,
 			    const struct cdns_dphy_cfg *cfg);
 	unsigned long (*get_wakeup_time_ns)(struct cdns_dphy *dphy);
-};
-
-struct cdns_dphy_soc_data {
-	bool has_hw_cmn_rstb;
+	int (*wait_for_pll_lock)(struct cdns_dphy *dphy);
+	int (*wait_for_cmn_ready)(struct cdns_dphy *dphy);
 };
 
 struct cdns_dphy {
 	struct cdns_dphy_cfg cfg;
 	void __iomem *regs;
-	struct device *dev;
 	struct clk *psm_clk;
 	struct clk *pll_ref_clk;
 	const struct cdns_dphy_ops *ops;
 	struct phy *phy;
-};
-
-struct cdns_dphy_driver_data {
-	const struct cdns_dphy_ops *tx;
-	const struct cdns_dphy_ops *rx;
-};
-
-struct cdns_dphy_band {
-	unsigned int min_rate;
-	unsigned int max_rate;
+	bool is_configured;
+	bool is_powered;
 };
 
 /* Order of bands is important since the index is the band number. */
-struct cdns_dphy_band rx_bands[] = {
-	{80, 100}, {100, 120}, {120, 160}, {160, 200}, {200, 240},
-	{240, 280}, {280, 320}, {320, 360}, {360, 400}, {400, 480},
-	{480, 560}, {560, 640}, {640, 720}, {720, 800}, {800, 880},
-	{880, 1040}, {1040, 1200}, {1200, 1350}, {1350, 1500}, {1500, 1750},
-	{1750, 2000}, {2000, 2250}, {2250, 2500}
+static const unsigned int tx_bands[] = {
+	80, 100, 120, 160, 200, 240, 320, 390, 450, 510, 560, 640, 690, 770,
+	870, 950, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500
 };
 
-int num_rx_bands = ARRAY_SIZE(rx_bands);
-
-struct cdns_dphy_band tx_bands[] = {
-	{80, 100}, {100, 120}, {120, 160}, {160, 200}, {200, 240},
-	{240, 320}, {320, 390}, {390, 450}, {450, 510}, {510, 560},
-	{560, 640}, {640, 690}, {690, 770}, {770, 870}, {870, 950},
-	{950, 1000}, {1000, 1200}, {1200, 1400}, {1400, 1600}, {1600, 1800},
-	{1800, 2000}, {2000, 2200}, {2200, 2500}
-};
-
-int num_tx_bands = ARRAY_SIZE(tx_bands);
-
-static int cdns_dsi_get_dphy_pll_cfg(struct cdns_dphy *dphy,
-				     struct cdns_dphy_cfg *cfg,
-				     struct phy_configure_opts_mipi_dphy *opts,
-				     unsigned int *dsi_hfp_ext)
+static int cdns_dphy_get_pll_cfg(struct cdns_dphy *dphy,
+				 struct cdns_dphy_cfg *cfg,
+				 struct phy_configure_opts_mipi_dphy *opts)
 {
 	unsigned long pll_ref_hz = clk_get_rate(dphy->pll_ref_clk);
 	u64 dlane_bps;
@@ -201,7 +136,7 @@ static int cdns_dsi_get_dphy_pll_cfg(struct cdns_dphy *dphy,
 
 	dlane_bps = opts->hs_clk_rate;
 
-	if (dlane_bps > 2500000000UL || dlane_bps < 160000000UL)
+	if (dlane_bps > 2500000000UL || dlane_bps < 80000000UL)
 		return -EINVAL;
 	else if (dlane_bps >= 1250000000)
 		cfg->pll_opdiv = 1;
@@ -211,10 +146,15 @@ static int cdns_dsi_get_dphy_pll_cfg(struct cdns_dphy *dphy,
 		cfg->pll_opdiv = 4;
 	else if (dlane_bps >= 160000000)
 		cfg->pll_opdiv = 8;
+	else if (dlane_bps >= 80000000)
+		cfg->pll_opdiv = 16;
 
 	cfg->pll_fbdiv = DIV_ROUND_UP_ULL(dlane_bps * 2 * cfg->pll_opdiv *
 					  cfg->pll_ipdiv,
 					  pll_ref_hz);
+
+	cfg->hs_clk_rate = div_u64((u64)pll_ref_hz * cfg->pll_fbdiv,
+				   2 * cfg->pll_opdiv * cfg->pll_ipdiv);
 
 	return 0;
 }
@@ -253,6 +193,16 @@ static unsigned long cdns_dphy_get_wakeup_time_ns(struct cdns_dphy *dphy)
 	return dphy->ops->get_wakeup_time_ns(dphy);
 }
 
+static int cdns_dphy_wait_for_pll_lock(struct cdns_dphy *dphy)
+{
+	return dphy->ops->wait_for_pll_lock ? dphy->ops->wait_for_pll_lock(dphy) : 0;
+}
+
+static int cdns_dphy_wait_for_cmn_ready(struct cdns_dphy *dphy)
+{
+	return  dphy->ops->wait_for_cmn_ready ? dphy->ops->wait_for_cmn_ready(dphy) : 0;
+}
+
 static unsigned long cdns_dphy_ref_get_wakeup_time_ns(struct cdns_dphy *dphy)
 {
 	/* Default wakeup time is 800 ns (in a simulated environment). */
@@ -274,7 +224,7 @@ static void cdns_dphy_ref_set_pll_cfg(struct cdns_dphy *dphy,
 	writel(DPHY_CMN_FBDIV_FROM_REG |
 	       DPHY_CMN_FBDIV_VAL(fbdiv_low, fbdiv_high),
 	       dphy->regs + DPHY_CMN_FBDIV);
-	writel(DPHY_CMN_PWM_HIGH(6) | DPHY_CMN_PWM_LOW(0x101) |
+	writel(readl(dphy->regs + DPHY_CMN_PWM) | DPHY_CMN_PWM_HIGH(6) | DPHY_CMN_PWM_LOW(0x101) |
 	       DPHY_CMN_PWM_DIV(0x8),
 	       dphy->regs + DPHY_CMN_PWM);
 }
@@ -285,23 +235,89 @@ static void cdns_dphy_ref_set_psm_div(struct cdns_dphy *dphy, u8 div)
 	       dphy->regs + DPHY_PSM_CFG);
 }
 
-static int cdns_dphy_tx_config_from_opts(struct phy *phy,
-					 struct phy_configure_opts_mipi_dphy *opts,
-					 struct cdns_dphy_cfg *cfg)
+static unsigned long cdns_dphy_j721e_get_wakeup_time_ns(struct cdns_dphy *dphy)
+{
+	/* Minimum wakeup time as per MIPI D-PHY spec v1.2 */
+	return 1000000;
+}
+
+static void cdns_dphy_j721e_set_pll_cfg(struct cdns_dphy *dphy,
+					const struct cdns_dphy_cfg *cfg)
+{
+	/*
+	 * set the PWM and PLL Byteclk divider settings to recommended values
+	 * which is same as that of in ref ops
+	 */
+	writel(readl(dphy->regs + DPHY_CMN_PWM) | DPHY_CMN_PWM_HIGH(6) | DPHY_CMN_PWM_LOW(0x101) |
+	       DPHY_CMN_PWM_DIV(0x8),
+	       dphy->regs + DPHY_CMN_PWM);
+
+	writel((FIELD_PREP(DPHY_TX_J721E_WIZ_IPDIV, cfg->pll_ipdiv) |
+		FIELD_PREP(DPHY_TX_J721E_WIZ_OPDIV, cfg->pll_opdiv) |
+		FIELD_PREP(DPHY_TX_J721E_WIZ_FBDIV, cfg->pll_fbdiv)),
+		dphy->regs + DPHY_TX_J721E_WIZ_PLL_CTRL);
+
+	writel(DPHY_TX_J721E_WIZ_LANE_RSTB,
+	       dphy->regs + DPHY_TX_J721E_WIZ_RST_CTRL);
+}
+
+static void cdns_dphy_j721e_set_psm_div(struct cdns_dphy *dphy, u8 div)
+{
+	writel(div, dphy->regs + DPHY_TX_J721E_WIZ_PSM_FREQ);
+}
+
+static int cdns_dphy_j721e_wait_for_pll_lock(struct cdns_dphy *dphy)
+{
+	u32 status;
+
+	return readl_poll_timeout(dphy->regs + DPHY_TX_J721E_WIZ_PLL_CTRL, status,
+			       status & DPHY_TX_WIZ_PLL_LOCK, 0, POLL_TIMEOUT_US);
+}
+
+static int cdns_dphy_j721e_wait_for_cmn_ready(struct cdns_dphy *dphy)
+{
+	u32 status;
+
+	return readl_poll_timeout(dphy->regs + DPHY_TX_J721E_WIZ_STATUS, status,
+			       status & DPHY_TX_WIZ_O_CMN_READY, 0,
+			       POLL_TIMEOUT_US);
+}
+
+/*
+ * This is the reference implementation of DPHY hooks. Specific integration of
+ * this IP may have to re-implement some of them depending on how they decided
+ * to wire things in the SoC.
+ */
+static const struct cdns_dphy_ops ref_dphy_ops = {
+	.get_wakeup_time_ns = cdns_dphy_ref_get_wakeup_time_ns,
+	.set_pll_cfg = cdns_dphy_ref_set_pll_cfg,
+	.set_psm_div = cdns_dphy_ref_set_psm_div,
+};
+
+static const struct cdns_dphy_ops j721e_dphy_ops = {
+	.get_wakeup_time_ns = cdns_dphy_j721e_get_wakeup_time_ns,
+	.set_pll_cfg = cdns_dphy_j721e_set_pll_cfg,
+	.set_psm_div = cdns_dphy_j721e_set_psm_div,
+	.wait_for_pll_lock = cdns_dphy_j721e_wait_for_pll_lock,
+	.wait_for_cmn_ready = cdns_dphy_j721e_wait_for_cmn_ready,
+};
+
+static int cdns_dphy_config_from_opts(struct phy *phy,
+				      struct phy_configure_opts_mipi_dphy *opts,
+				      struct cdns_dphy_cfg *cfg)
 {
 	struct cdns_dphy *dphy = phy_get_drvdata(phy);
-	unsigned int dsi_hfp_ext = 0;
 	int ret;
 
 	ret = phy_mipi_dphy_config_validate(opts);
 	if (ret)
 		return ret;
 
-	ret = cdns_dsi_get_dphy_pll_cfg(dphy, cfg,
-					opts, &dsi_hfp_ext);
+	ret = cdns_dphy_get_pll_cfg(dphy, cfg, opts);
 	if (ret)
 		return ret;
 
+	opts->hs_clk_rate = cfg->hs_clk_rate;
 	opts->wakeup = cdns_dphy_get_wakeup_time_ns(dphy) / 1000;
 
 	return 0;
@@ -314,37 +330,61 @@ static int cdns_dphy_tx_get_band_ctrl(unsigned long hs_clk_rate)
 
 	rate = hs_clk_rate / 1000000UL;
 
-	if (rate < tx_bands[0].min_rate || rate >= tx_bands[num_tx_bands - 1].max_rate)
+	if (rate < tx_bands[0])
 		return -EOPNOTSUPP;
 
-	for (i = 0; i < num_tx_bands; i++) {
-		if (rate >= tx_bands[i].min_rate && rate < tx_bands[i].max_rate)
+	for (i = 0; i < ARRAY_SIZE(tx_bands) - 1; i++) {
+		if (rate >= tx_bands[i] && rate < tx_bands[i + 1])
 			return i;
 	}
 
-	/* Unreachable. */
-	WARN(1, "Reached unreachable code.");
-	return -EINVAL;
+	return -EOPNOTSUPP;
 }
 
-static int cdns_dphy_tx_configure(struct cdns_dphy *dphy,
-				  union phy_configure_opts *opts)
+static int cdns_dphy_validate(struct phy *phy, enum phy_mode mode, int submode,
+			      union phy_configure_opts *opts)
 {
 	struct cdns_dphy_cfg cfg = { 0 };
-	int ret, band_ctrl;
-	unsigned int reg;
 
-	ret = cdns_dphy_tx_config_from_opts(dphy->phy, &opts->mipi_dphy, &cfg);
-	if (ret)
-		return ret;
+	if (mode != PHY_MODE_MIPI_DPHY)
+		return -EINVAL;
+
+	return cdns_dphy_config_from_opts(phy, &opts->mipi_dphy, &cfg);
+}
+
+static int cdns_dphy_configure(struct phy *phy, union phy_configure_opts *opts)
+{
+	struct cdns_dphy *dphy = phy_get_drvdata(phy);
+	int ret;
+
+	ret = cdns_dphy_config_from_opts(phy, &opts->mipi_dphy, &dphy->cfg);
+	if (!ret)
+		dphy->is_configured = true;
+
+	return ret;
+}
+
+static int cdns_dphy_power_on(struct phy *phy)
+{
+	struct cdns_dphy *dphy = phy_get_drvdata(phy);
+	int ret;
+	u32 reg;
+
+	if (!dphy->is_configured || dphy->is_powered)
+		return -EINVAL;
+
+	clk_prepare_enable(dphy->psm_clk);
+	clk_prepare_enable(dphy->pll_ref_clk);
 
 	/*
 	 * Configure the internal PSM clk divider so that the DPHY has a
 	 * 1MHz clk (or something close).
 	 */
 	ret = cdns_dphy_setup_psm(dphy);
-	if (ret)
-		return ret;
+	if (ret) {
+		dev_err(&dphy->phy->dev, "Failed to setup PSM with error %d\n", ret);
+		goto err_power_on;
+	}
 
 	/*
 	 * Configure attach clk lanes to data lanes: the DPHY has 2 clk lanes
@@ -359,344 +399,60 @@ static int cdns_dphy_tx_configure(struct cdns_dphy *dphy,
 	 * Configure the DPHY PLL that will be used to generate the TX byte
 	 * clk.
 	 */
-	cdns_dphy_set_pll_cfg(dphy, &cfg);
+	cdns_dphy_set_pll_cfg(dphy, &dphy->cfg);
 
-	band_ctrl = cdns_dphy_tx_get_band_ctrl(opts->mipi_dphy.hs_clk_rate);
-	if (band_ctrl < 0)
-		return band_ctrl;
+	ret = cdns_dphy_tx_get_band_ctrl(dphy->cfg.hs_clk_rate);
+	if (ret < 0) {
+		dev_err(&dphy->phy->dev, "Failed to get band control value with error %d\n", ret);
+		goto err_power_on;
+	}
 
-	reg = FIELD_PREP(DPHY_BAND_CFG_LEFT_BAND, band_ctrl) |
-	      FIELD_PREP(DPHY_BAND_CFG_RIGHT_BAND, band_ctrl);
+	reg = FIELD_PREP(DPHY_BAND_CFG_LEFT_BAND, ret) |
+	      FIELD_PREP(DPHY_BAND_CFG_RIGHT_BAND, ret);
 	writel(reg, dphy->regs + DPHY_BAND_CFG);
 
-	return 0;
-}
-
-static int cdns_dphy_tx_validate(struct cdns_dphy *dphy, enum phy_mode mode,
-				 int submode, union phy_configure_opts *opts)
-{
-	struct cdns_dphy_cfg cfg = { 0 };
-
-	if (submode != PHY_MIPI_DPHY_SUBMODE_TX)
-		return -EINVAL;
-
-	return cdns_dphy_tx_config_from_opts(dphy->phy, &opts->mipi_dphy, &cfg);
-}
-
-static int cdns_dphy_tx_power_on(struct cdns_dphy *dphy)
-{
-	if (!dphy->psm_clk || !dphy->pll_ref_clk)
-		return -EINVAL;
-
-	clk_prepare_enable(dphy->psm_clk);
-	clk_prepare_enable(dphy->pll_ref_clk);
-
 	/* Start TX state machine. */
-	writel(DPHY_CMN_SSM_EN | DPHY_CMN_TX_MODE_EN,
+	reg = readl(dphy->regs + DPHY_CMN_SSM);
+	writel((reg & DPHY_CMN_SSM_CAL_WAIT_TIME) | DPHY_CMN_SSM_EN | DPHY_CMN_TX_MODE_EN,
 	       dphy->regs + DPHY_CMN_SSM);
 
-	return 0;
-}
+	ret = cdns_dphy_wait_for_pll_lock(dphy);
+	if (ret) {
+		dev_err(&dphy->phy->dev, "Failed to lock PLL with error %d\n", ret);
+		goto err_power_on;
+	}
 
-static int cdns_dphy_tx_power_off(struct cdns_dphy *dphy)
-{
+	ret = cdns_dphy_wait_for_cmn_ready(dphy);
+	if (ret) {
+		dev_err(&dphy->phy->dev, "O_CMN_READY signal failed to assert with error %d\n",
+			ret);
+		goto err_power_on;
+	}
+
+	dphy->is_powered = true;
+
+	return 0;
+
+err_power_on:
 	clk_disable_unprepare(dphy->pll_ref_clk);
 	clk_disable_unprepare(dphy->psm_clk);
 
-	return 0;
-}
-
-static unsigned long cdns_dphy_j721e_get_wakeup_time_ns(struct cdns_dphy *dphy)
-{
-	return 1000000;
-}
-
-static void cdns_dphy_j721e_set_pll_cfg(struct cdns_dphy *dphy,
-					const struct cdns_dphy_cfg *cfg)
-{
-	u32 status;
-
-	writel(DPHY_CMN_PWM_HIGH(6) | DPHY_CMN_PWM_LOW(0x101) |
-	       DPHY_CMN_PWM_DIV(0x8),
-	       dphy->regs + DPHY_CMN_PWM);
-
-	writel((FIELD_PREP(DPHY_TX_J721E_WIZ_IPDIV, cfg->pll_ipdiv) |
-		FIELD_PREP(DPHY_TX_J721E_WIZ_OPDIV, cfg->pll_opdiv) |
-		FIELD_PREP(DPHY_TX_J721E_WIZ_FBDIV, cfg->pll_fbdiv)),
-		dphy->regs + DPHY_TX_J721E_WIZ_PLL_CTRL);
-
-	writel(DPHY_TX_J721E_WIZ_LANE_RSTB,
-	       dphy->regs + DPHY_TX_J721E_WIZ_RST_CTRL);
-
-	readl_poll_timeout(dphy->regs + DPHY_TX_J721E_WIZ_PLL_CTRL, status,
-			   (status & DPHY_TX_WIZ_PLL_LOCK), 0, POLL_TIMEOUT_US);
-
-	readl_poll_timeout(dphy->regs + DPHY_TX_J721E_WIZ_STATUS, status,
-			   (status & DPHY_TX_WIZ_O_CMN_READY), 0,
-			   POLL_TIMEOUT_US);
-}
-
-static void cdns_dphy_j721e_set_psm_div(struct cdns_dphy *dphy, u8 div)
-{
-	writel(div, dphy->regs + DPHY_TX_J721E_WIZ_PSM_FREQ);
-}
-
-static const struct cdns_dphy_ops tx_ref_dphy_ops = {
-	.power_on = cdns_dphy_tx_power_on,
-	.power_off = cdns_dphy_tx_power_off,
-	.validate = cdns_dphy_tx_validate,
-	.configure = cdns_dphy_tx_configure,
-	.get_wakeup_time_ns = cdns_dphy_ref_get_wakeup_time_ns,
-	.set_pll_cfg = cdns_dphy_ref_set_pll_cfg,
-	.set_psm_div = cdns_dphy_ref_set_psm_div,
-};
-
-static const struct cdns_dphy_ops tx_j721e_dphy_ops = {
-	.power_on = cdns_dphy_tx_power_on,
-	.power_off = cdns_dphy_tx_power_off,
-	.validate = cdns_dphy_tx_validate,
-	.configure = cdns_dphy_tx_configure,
-	.get_wakeup_time_ns = cdns_dphy_j721e_get_wakeup_time_ns,
-	.set_pll_cfg = cdns_dphy_j721e_set_pll_cfg,
-	.set_psm_div = cdns_dphy_j721e_set_psm_div,
-};
-
-static int cdns_dphy_rx_power_on(struct cdns_dphy *dphy)
-{
-	/* Start RX state machine. */
-	writel(DPHY_CMN_SSM_EN | DPHY_CMN_RX_MODE_EN |
-	       FIELD_PREP(DPHY_CMN_RX_BANDGAP_TIMER_MASK,
-			  DPHY_CMN_RX_BANDGAP_TIMER),
-	       dphy->regs + DPHY_CMN_SSM);
-
-	return 0;
-}
-
-static int cdns_dphy_rx_power_off(struct cdns_dphy *dphy)
-{
-	writel(0, dphy->regs + DPHY_CMN_SSM);
-
-	return 0;
-}
-
-static int cdns_dphy_rx_get_band_ctrl(unsigned long hs_clk_rate)
-{
-	unsigned int rate;
-	int i;
-
-	rate = hs_clk_rate / 1000000UL;
-	/* Since CSI-2 clock is DDR, the bit rate is twice the clock rate. */
-	rate *= 2;
-
-	if (rate < rx_bands[0].min_rate || rate >= rx_bands[num_rx_bands - 1].max_rate)
-		return -EOPNOTSUPP;
-
-	for (i = 0; i < num_rx_bands; i++) {
-		if (rate >= rx_bands[i].min_rate && rate < rx_bands[i].max_rate)
-			return i;
-	}
-
-	/* Unreachable. */
-	WARN(1, "Reached unreachable code.");
-	return -EINVAL;
-}
-
-static int cdns_dphy_rx_wait_for_bit(void __iomem *addr, unsigned int bit)
-{
-	u32 val;
-
-	return readl_relaxed_poll_timeout(addr, val, val & BIT(bit), 10,
-					  DPHY_ISO_LANE_READY_TIMEOUT_MS * 1000);
-}
-
-static int cdns_dphy_rx_wait_lane_ready(struct cdns_dphy *dphy, int lanes)
-{
-	void __iomem *reg = dphy->regs;
-	u32 data_lane_ctrl[] = {DPHY_ISO_DL_CTRL_L0, DPHY_ISO_DL_CTRL_L1,
-				DPHY_ISO_DL_CTRL_L2, DPHY_ISO_DL_CTRL_L3};
-	int ret, i;
-
-	/* Data lanes. Minimum one lane is mandatory. */
-	if (lanes < DPHY_LANES_MIN || lanes > DPHY_LANES_MAX)
-		return -EINVAL;
-
-	/* Clock lane */
-	ret = cdns_dphy_rx_wait_for_bit(reg + DPHY_ISO_CL_CTRL_L,
-					DPHY_ISO_LANE_READY_BIT);
-	if (ret)
-		return ret;
-
-	for (i = 0; i < lanes; i++) {
-		ret = cdns_dphy_rx_wait_for_bit(reg + data_lane_ctrl[i],
-						DPHY_ISO_LANE_READY_BIT);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-
-static struct cdns_dphy_soc_data j721e_soc_data = {
-	.has_hw_cmn_rstb = true,
-};
-
-static const struct soc_device_attribute cdns_dphy_socinfo[] = {
-	{
-		.family = "J721E",
-		.revision = "SR1.0",
-		.data = &j721e_soc_data,
-	},
-	{/* sentinel */}
-};
-
-static int cdns_dphy_rx_configure(struct cdns_dphy *dphy,
-				  union phy_configure_opts *opts)
-{
-	const struct soc_device_attribute *soc;
-	const struct cdns_dphy_soc_data *soc_data = NULL;
-	unsigned int reg;
-	int band_ctrl, ret;
-
-	soc = soc_device_match(cdns_dphy_socinfo);
-	if (soc && soc->data)
-		soc_data = soc->data;
-	if (!soc || (soc_data && !soc_data->has_hw_cmn_rstb)) {
-		reg = DPHY_LANE_RESET_CMN_EN;
-		writel(reg, dphy->regs + DPHY_LANE);
-	}
-
-	band_ctrl = cdns_dphy_rx_get_band_ctrl(opts->mipi_dphy.hs_clk_rate);
-	if (band_ctrl < 0)
-		return band_ctrl;
-
-	reg = FIELD_PREP(DPHY_BAND_CFG_LEFT_BAND, band_ctrl) |
-	      FIELD_PREP(DPHY_BAND_CFG_RIGHT_BAND, band_ctrl);
-	writel(reg, dphy->regs + DPHY_BAND_CFG);
-
-	/*
-	 * Set the required power island phase 2 time. This is mandated by DPHY
-	 * specs.
-	 */
-	reg = DPHY_POWER_ISLAND_EN_DATA_VAL;
-	writel(reg, dphy->regs + DPHY_POWER_ISLAND_EN_DATA);
-	reg = DPHY_POWER_ISLAND_EN_CLK_VAL;
-	writel(reg, dphy->regs + DPHY_POWER_ISLAND_EN_CLK);
-
-	ret = cdns_dphy_rx_wait_lane_ready(dphy, opts->mipi_dphy.lanes);
-	if (ret) {
-		dev_err(dphy->dev, "DPHY wait for lane ready timeout\n");
-		return ret;
-	}
-
-	return 0;
-}
-
-static int cdns_dphy_rx_validate(struct cdns_dphy *dphy, enum phy_mode mode,
-				 int submode, union phy_configure_opts *opts)
-{
-	int ret;
-
-	if (submode != PHY_MIPI_DPHY_SUBMODE_RX)
-		return -EINVAL;
-
-	ret = cdns_dphy_rx_get_band_ctrl(opts->mipi_dphy.hs_clk_rate);
-	if (ret < 0)
-		return ret;
-
-	return phy_mipi_dphy_config_validate(&opts->mipi_dphy);
-}
-
-static const struct cdns_dphy_ops rx_ref_dphy_ops = {
-	.power_on = cdns_dphy_rx_power_on,
-	.power_off = cdns_dphy_rx_power_off,
-	.configure = cdns_dphy_rx_configure,
-	.validate = cdns_dphy_rx_validate,
-};
-
-/*
- * This is the reference implementation of DPHY hooks. Specific integration of
- * this IP may have to re-implement some of them depending on how they decided
- * to wire things in the SoC.
- */
-static const struct cdns_dphy_driver_data ref_dphy_ops = {
-	.tx = &tx_ref_dphy_ops,
-	.rx = &rx_ref_dphy_ops,
-};
-
-static const struct cdns_dphy_driver_data j721e_dphy_ops = {
-	.tx = &tx_j721e_dphy_ops,
-	.rx = &rx_ref_dphy_ops,
-};
-
-static int cdns_dphy_validate(struct phy *phy, enum phy_mode mode, int submode,
-			      union phy_configure_opts *opts)
-{
-	struct cdns_dphy *dphy = phy_get_drvdata(phy);
-
-	if (mode != PHY_MODE_MIPI_DPHY)
-		return -EINVAL;
-
-	if (dphy->ops->validate)
-		return dphy->ops->validate(dphy, mode, submode, opts);
-
-	return 0;
-}
-
-static int cdns_dphy_power_on(struct phy *phy)
-{
-	struct cdns_dphy *dphy = phy_get_drvdata(phy);
-
-	if (dphy->ops->power_on)
-		return dphy->ops->power_on(dphy);
-
-	return 0;
+	return ret;
 }
 
 static int cdns_dphy_power_off(struct phy *phy)
 {
 	struct cdns_dphy *dphy = phy_get_drvdata(phy);
+	u32 reg;
 
-	if (dphy->ops->power_off)
-		return dphy->ops->power_off(dphy);
+	clk_disable_unprepare(dphy->pll_ref_clk);
+	clk_disable_unprepare(dphy->psm_clk);
 
-	return 0;
-}
+	/* Stop TX state machine. */
+	reg = readl(dphy->regs + DPHY_CMN_SSM);
+	writel(reg & ~DPHY_CMN_SSM_EN, dphy->regs + DPHY_CMN_SSM);
 
-static int cdns_dphy_configure(struct phy *phy, union phy_configure_opts *opts)
-{
-	struct cdns_dphy *dphy = phy_get_drvdata(phy);
-
-	if (dphy->ops->configure)
-		return dphy->ops->configure(dphy, opts);
-
-	return 0;
-}
-
-static int cdns_dphy_set_mode(struct phy *phy, enum phy_mode mode, int submode)
-{
-	struct cdns_dphy *dphy = phy_get_drvdata(phy);
-	const struct cdns_dphy_driver_data *ddata;
-
-	ddata = of_device_get_match_data(dphy->dev);
-	if (!ddata)
-		return -EINVAL;
-
-	if (mode != PHY_MODE_MIPI_DPHY)
-		return -EINVAL;
-
-	if (submode == PHY_MIPI_DPHY_SUBMODE_TX) {
-		if (!ddata->tx)
-			return -EOPNOTSUPP;
-
-		dphy->ops = ddata->tx;
-	} else if (submode == PHY_MIPI_DPHY_SUBMODE_RX) {
-		if (!ddata->rx)
-			return -EOPNOTSUPP;
-
-		dphy->ops = ddata->rx;
-	} else {
-		return -EOPNOTSUPP;
-	}
+	dphy->is_powered = false;
 
 	return 0;
 }
@@ -706,27 +462,20 @@ static const struct phy_ops cdns_dphy_ops = {
 	.validate	= cdns_dphy_validate,
 	.power_on	= cdns_dphy_power_on,
 	.power_off	= cdns_dphy_power_off,
-	.set_mode	= cdns_dphy_set_mode,
 };
 
 static int cdns_dphy_probe(struct platform_device *pdev)
 {
 	struct phy_provider *phy_provider;
 	struct cdns_dphy *dphy;
-	const struct cdns_dphy_driver_data *ddata;
 	int ret;
 
 	dphy = devm_kzalloc(&pdev->dev, sizeof(*dphy), GFP_KERNEL);
 	if (!dphy)
 		return -ENOMEM;
 	dev_set_drvdata(&pdev->dev, dphy);
-	dphy->dev = &pdev->dev;
 
-	ddata = of_device_get_match_data(&pdev->dev);
-	if (!ddata)
-		return -EINVAL;
-
-	dphy->ops = ddata->tx;
+	dphy->ops = of_device_get_match_data(&pdev->dev);
 	if (!dphy->ops)
 		return -EINVAL;
 
@@ -734,11 +483,11 @@ static int cdns_dphy_probe(struct platform_device *pdev)
 	if (IS_ERR(dphy->regs))
 		return PTR_ERR(dphy->regs);
 
-	dphy->psm_clk = devm_clk_get_optional(dphy->dev, "psm");
+	dphy->psm_clk = devm_clk_get(&pdev->dev, "psm");
 	if (IS_ERR(dphy->psm_clk))
 		return PTR_ERR(dphy->psm_clk);
 
-	dphy->pll_ref_clk = devm_clk_get_optional(dphy->dev, "pll_ref");
+	dphy->pll_ref_clk = devm_clk_get(&pdev->dev, "pll_ref");
 	if (IS_ERR(dphy->pll_ref_clk))
 		return PTR_ERR(dphy->pll_ref_clk);
 
@@ -763,14 +512,12 @@ static int cdns_dphy_probe(struct platform_device *pdev)
 	return PTR_ERR_OR_ZERO(phy_provider);
 }
 
-static int cdns_dphy_remove(struct platform_device *pdev)
+static void cdns_dphy_remove(struct platform_device *pdev)
 {
 	struct cdns_dphy *dphy = dev_get_drvdata(&pdev->dev);
 
 	if (dphy->ops->remove)
 		dphy->ops->remove(dphy);
-
-	return 0;
 }
 
 static const struct of_device_id cdns_dphy_of_match[] = {
@@ -782,7 +529,7 @@ MODULE_DEVICE_TABLE(of, cdns_dphy_of_match);
 
 static struct platform_driver cdns_dphy_platform_driver = {
 	.probe		= cdns_dphy_probe,
-	.remove		= cdns_dphy_remove,
+	.remove_new	= cdns_dphy_remove,
 	.driver		= {
 		.name		= "cdns-mipi-dphy",
 		.of_match_table	= cdns_dphy_of_match,
@@ -791,6 +538,5 @@ static struct platform_driver cdns_dphy_platform_driver = {
 module_platform_driver(cdns_dphy_platform_driver);
 
 MODULE_AUTHOR("Maxime Ripard <maxime.ripard@bootlin.com>");
-MODULE_AUTHOR("Pratyush Yadav <p.yadav@ti.com>");
 MODULE_DESCRIPTION("Cadence MIPI D-PHY Driver");
 MODULE_LICENSE("GPL");

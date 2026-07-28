@@ -50,14 +50,16 @@ struct tbd_data_record_header {
 static int set_msr_configuration(struct i2c_client *client, uint8_t *bufptr,
 				 unsigned int size)
 {
-	/* The configuration data contains any number of sequences where
+	/*
+	 * The configuration data contains any number of sequences where
 	 * the first byte (that is, uint8_t) that marks the number of bytes
 	 * in the sequence to follow, is indeed followed by the indicated
 	 * number of bytes of actual data to be written to sensor.
 	 * By convention, the first two bytes of actual data should be
 	 * understood as an address in the sensor address space (hibyte
 	 * followed by lobyte) where the remaining data in the sequence
-	 * will be written. */
+	 * will be written.
+	 */
 
 	u8 *ptr = bufptr;
 
@@ -205,4 +207,5 @@ module_init(init_msrlisthelper);
 module_exit(exit_msrlisthelper);
 
 MODULE_AUTHOR("Jukka Kaartinen <jukka.o.kaartinen@intel.com>");
+MODULE_DESCRIPTION("Helper library to load, parse and apply large register lists");
 MODULE_LICENSE("GPL");

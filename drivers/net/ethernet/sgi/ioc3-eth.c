@@ -243,7 +243,7 @@ static int ioc3_set_mac_address(struct net_device *dev, void *addr)
 	struct ioc3_private *ip = netdev_priv(dev);
 	struct sockaddr *sa = addr;
 
-	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len);
+	eth_hw_addr_set(dev, sa->sa_data);
 
 	spin_lock_irq(&ip->ioc3_lock);
 	__ioc3_set_mac_address(dev);
@@ -820,7 +820,7 @@ static const struct net_device_ops ioc3_netdev_ops = {
 	.ndo_tx_timeout		= ioc3_timeout,
 	.ndo_get_stats		= ioc3_get_stats,
 	.ndo_set_rx_mode	= ioc3_set_multicast_list,
-	.ndo_do_ioctl		= ioc3_ioctl,
+	.ndo_eth_ioctl		= ioc3_ioctl,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= ioc3_set_mac_address,
 };
@@ -920,7 +920,7 @@ static int ioc3eth_probe(struct platform_device *pdev)
 
 	ioc3_mii_start(ip);
 	ioc3_ssram_disc(ip);
-	memcpy(dev->dev_addr, mac_addr, ETH_ALEN);
+	eth_hw_addr_set(dev, mac_addr);
 
 	/* The IOC3-specific entries in the device structure. */
 	dev->watchdog_timeo	= 5 * HZ;
@@ -962,7 +962,7 @@ out_free:
 	return err;
 }
 
-static int ioc3eth_remove(struct platform_device *pdev)
+static void ioc3eth_remove(struct platform_device *pdev)
 {
 	struct net_device *dev = platform_get_drvdata(pdev);
 	struct ioc3_private *ip = netdev_priv(dev);
@@ -973,8 +973,6 @@ static int ioc3eth_remove(struct platform_device *pdev)
 	unregister_netdev(dev);
 	del_timer_sync(&ip->ioc3_timer);
 	free_netdev(dev);
-
-	return 0;
 }
 
 
@@ -1158,9 +1156,9 @@ static inline unsigned int ioc3_hash(const unsigned char *addr)
 static void ioc3_get_drvinfo(struct net_device *dev,
 			     struct ethtool_drvinfo *info)
 {
-	strlcpy(info->driver, IOC3_NAME, sizeof(info->driver));
-	strlcpy(info->version, IOC3_VERSION, sizeof(info->version));
-	strlcpy(info->bus_info, pci_name(to_pci_dev(dev->dev.parent)),
+	strscpy(info->driver, IOC3_NAME, sizeof(info->driver));
+	strscpy(info->version, IOC3_VERSION, sizeof(info->version));
+	strscpy(info->bus_info, pci_name(to_pci_dev(dev->dev.parent)),
 		sizeof(info->bus_info));
 }
 
@@ -1275,7 +1273,7 @@ static void ioc3_set_multicast_list(struct net_device *dev)
 
 static struct platform_driver ioc3eth_driver = {
 	.probe  = ioc3eth_probe,
-	.remove = ioc3eth_remove,
+	.remove_new = ioc3eth_remove,
 	.driver = {
 		.name = "ioc3-eth",
 	}

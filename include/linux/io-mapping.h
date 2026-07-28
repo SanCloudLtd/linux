@@ -60,7 +60,34 @@ io_mapping_fini(struct io_mapping *mapping)
 	iomap_free(mapping->base, mapping->size);
 }
 
-/* Temporary mappings which are only valid in the current context */
+/* Atomic map/unmap */
+static inline void __iomem *
+io_mapping_map_atomic_wc(struct io_mapping *mapping,
+			 unsigned long offset)
+{
+	resource_size_t phys_addr;
+
+	BUG_ON(offset >= mapping->size);
+	phys_addr = mapping->base + offset;
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		preempt_disable();
+	else
+		migrate_disable();
+	pagefault_disable();
+	return __iomap_local_pfn_prot(PHYS_PFN(phys_addr), mapping->prot);
+}
+
+static inline void
+io_mapping_unmap_atomic(void __iomem *vaddr)
+{
+	kunmap_local_indexed((void __force *)vaddr);
+	pagefault_enable();
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		preempt_enable();
+	else
+		migrate_enable();
+}
+
 static inline void __iomem *
 io_mapping_map_local_wc(struct io_mapping *mapping, unsigned long offset)
 {
@@ -111,13 +138,7 @@ io_mapping_init_wc(struct io_mapping *iomap,
 
 	iomap->base = base;
 	iomap->size = size;
-#if defined(pgprot_noncached_wc) /* archs can't agree on a name ... */
-	iomap->prot = pgprot_noncached_wc(PAGE_KERNEL);
-#elif defined(pgprot_writecombine)
 	iomap->prot = pgprot_writecombine(PAGE_KERNEL);
-#else
-	iomap->prot = pgprot_noncached(PAGE_KERNEL);
-#endif
 
 	return iomap;
 }
@@ -142,7 +163,30 @@ io_mapping_unmap(void __iomem *vaddr)
 {
 }
 
-/* Temporary mappings which are only valid in the current context */
+/* Atomic map/unmap */
+static inline void __iomem *
+io_mapping_map_atomic_wc(struct io_mapping *mapping,
+			 unsigned long offset)
+{
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		preempt_disable();
+	else
+		migrate_disable();
+	pagefault_disable();
+	return io_mapping_map_wc(mapping, offset, PAGE_SIZE);
+}
+
+static inline void
+io_mapping_unmap_atomic(void __iomem *vaddr)
+{
+	io_mapping_unmap(vaddr);
+	pagefault_enable();
+	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
+		preempt_enable();
+	else
+		migrate_enable();
+}
+
 static inline void __iomem *
 io_mapping_map_local_wc(struct io_mapping *mapping, unsigned long offset)
 {
@@ -180,5 +224,8 @@ io_mapping_free(struct io_mapping *iomap)
 	io_mapping_fini(iomap);
 	kfree(iomap);
 }
+
+int io_mapping_map_user(struct io_mapping *iomap, struct vm_area_struct *vma,
+		unsigned long addr, unsigned long pfn, unsigned long size);
 
 #endif /* _LINUX_IO_MAPPING_H */

@@ -76,9 +76,9 @@ static int dmz_reclaim_align_wp(struct dmz_reclaim *zrc, struct dm_zone *zone,
 	 * pointer and the requested position.
 	 */
 	nr_blocks = block - wp_block;
-	ret = blkdev_issue_zeroout(dev->bdev,
-				   dmz_start_sect(zmd, zone) + dmz_blk2sect(wp_block),
-				   dmz_blk2sect(nr_blocks), GFP_NOIO, 0);
+	ret = blk_zone_issue_zeroout(dev->bdev,
+			dmz_start_sect(zmd, zone) + dmz_blk2sect(wp_block),
+			dmz_blk2sect(nr_blocks), GFP_NOIO);
 	if (ret) {
 		dmz_dev_err(dev,
 			    "Align zone %u wp %llu to %llu (wp+%u) blocks failed %d",
@@ -134,7 +134,7 @@ static int dmz_reclaim_copy(struct dmz_reclaim *zrc,
 	dst_zone_block = dmz_start_block(zmd, dst_zone);
 
 	if (dmz_is_seq(dst_zone))
-		set_bit(DM_KCOPYD_WRITE_SEQ, &flags);
+		flags |= BIT(DM_KCOPYD_WRITE_SEQ);
 
 	while (block < end_block) {
 		if (src_zone->dev->flags & DMZ_BDEV_DYING)

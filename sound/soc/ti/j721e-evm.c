@@ -23,8 +23,11 @@
  */
 #define J721E_CODEC_CONF_COUNT	5
 
-#define J721E_AUDIO_DOMAIN_CPB	0
-#define J721E_AUDIO_DOMAIN_IVI	1
+enum j721e_audio_domain_id {
+	J721E_AUDIO_DOMAIN_CPB = 0,
+	J721E_AUDIO_DOMAIN_IVI,
+	J721E_AUDIO_DOMAIN_LAST,
+};
 
 #define J721E_CLK_PARENT_48000	0
 #define J721E_CLK_PARENT_44100	1
@@ -78,7 +81,7 @@ struct j721e_priv {
 	u32 pll_rates[2];
 	unsigned int hsdiv_rates[2];
 
-	struct j721e_audio_domain audio_domains[2];
+	struct j721e_audio_domain audio_domains[J721E_AUDIO_DOMAIN_LAST];
 
 	struct mutex mutex;
 };
@@ -179,6 +182,8 @@ static int j721e_configure_refclk(struct j721e_priv *priv,
 		clk_id = J721E_CLK_PARENT_48000;
 	else if (!(rate % 11025) && priv->pll_rates[J721E_CLK_PARENT_44100])
 		clk_id = J721E_CLK_PARENT_44100;
+	else if (!(rate % 11025) && priv->pll_rates[J721E_CLK_PARENT_48000])
+		clk_id = J721E_CLK_PARENT_48000;
 	else
 		return ret;
 
@@ -199,9 +204,8 @@ static int j721e_configure_refclk(struct j721e_priv *priv,
 
 	if (domain->parent_clk_id == -1 || priv->hsdiv_rates[domain->parent_clk_id] != scki) {
 		dev_dbg(priv->dev,
-			"%s configuration for %u Hz: %s, %dxFS (SCKI: %u Hz)\n",
-			audio_domain == J721E_AUDIO_DOMAIN_CPB ? "CPB" : "IVI",
-			rate,
+			"domain%u configuration for %u Hz: %s, %dxFS (SCKI: %u Hz)\n",
+			audio_domain, rate,
 			clk_id == J721E_CLK_PARENT_48000 ? "PLL4" : "PLL15",
 			ratios_for_pcm3168a[i], scki);
 
@@ -249,11 +253,11 @@ static int j721e_rule_rate(struct snd_pcm_hw_params *params,
 
 static int j721e_audio_startup(struct snd_pcm_substream *substream)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
 	struct j721e_priv *priv = snd_soc_card_get_drvdata(rtd->card);
 	unsigned int domain_id = rtd->dai_link->id;
 	struct j721e_audio_domain *domain = &priv->audio_domains[domain_id];
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_dai *codec_dai;
 	unsigned int active_rate;
 	int ret = 0;
@@ -263,10 +267,11 @@ static int j721e_audio_startup(struct snd_pcm_substream *substream)
 
 	domain->active++;
 
-	if (priv->audio_domains[J721E_AUDIO_DOMAIN_CPB].rate)
-		active_rate = priv->audio_domains[J721E_AUDIO_DOMAIN_CPB].rate;
-	else
-		active_rate = priv->audio_domains[J721E_AUDIO_DOMAIN_IVI].rate;
+	for (i = 0; i < J721E_AUDIO_DOMAIN_LAST; i++) {
+		active_rate = priv->audio_domains[i].rate;
+		if (active_rate)
+			break;
+	}
 
 	if (active_rate)
 		ret = snd_pcm_hw_constraint_single(substream->runtime,
@@ -306,12 +311,12 @@ out:
 static int j721e_audio_hw_params(struct snd_pcm_substream *substream,
 				 struct snd_pcm_hw_params *params)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
 	struct snd_soc_card *card = rtd->card;
 	struct j721e_priv *priv = snd_soc_card_get_drvdata(card);
 	unsigned int domain_id = rtd->dai_link->id;
 	struct j721e_audio_domain *domain = &priv->audio_domains[domain_id];
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_dai *codec_dai;
 	unsigned int sysclk_rate;
 	int slot_width = 32;
@@ -373,7 +378,7 @@ out:
 
 static void j721e_audio_shutdown(struct snd_pcm_substream *substream)
 {
-	struct snd_soc_pcm_runtime *rtd = asoc_substream_to_rtd(substream);
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
 	struct j721e_priv *priv = snd_soc_card_get_drvdata(rtd->card);
 	unsigned int domain_id = rtd->dai_link->id;
 	struct j721e_audio_domain *domain = &priv->audio_domains[domain_id];
@@ -400,7 +405,7 @@ static int j721e_audio_init(struct snd_soc_pcm_runtime *rtd)
 	struct j721e_priv *priv = snd_soc_card_get_drvdata(rtd->card);
 	unsigned int domain_id = rtd->dai_link->id;
 	struct j721e_audio_domain *domain = &priv->audio_domains[domain_id];
-	struct snd_soc_dai *cpu_dai = asoc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct snd_soc_dai *codec_dai;
 	unsigned int sysclk_rate;
 	int i, ret;
@@ -461,13 +466,9 @@ static int j721e_get_clocks(struct device *dev,
 	int ret;
 
 	clocks->target = devm_clk_get(dev, prefix);
-	if (IS_ERR(clocks->target)) {
-		ret = PTR_ERR(clocks->target);
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "failed to acquire %s: %d\n",
-				prefix, ret);
-		return ret;
-	}
+	if (IS_ERR(clocks->target))
+		return dev_err_probe(dev, PTR_ERR(clocks->target),
+				     "failed to acquire %s\n", prefix);
 
 	clk_name = kasprintf(GFP_KERNEL, "%s-48000", prefix);
 	if (clk_name) {
@@ -650,7 +651,7 @@ static int j721e_soc_probe_cpb(struct j721e_priv *priv, int *link_idx,
 	 * Link 2: McASP10 <- pcm3168a_1 ADC
 	 */
 	comp_count = 6;
-	compnent = devm_kzalloc(priv->dev, comp_count * sizeof(*compnent),
+	compnent = devm_kcalloc(priv->dev, comp_count, sizeof(*compnent),
 				GFP_KERNEL);
 	if (!compnent) {
 		ret = -ENOMEM;
@@ -764,7 +765,7 @@ static int j721e_soc_probe_ivi(struct j721e_priv *priv, int *link_idx,
 	 *		   \ pcm3168a_b ADC
 	 */
 	comp_count = 8;
-	compnent = devm_kzalloc(priv->dev, comp_count * sizeof(*compnent),
+	compnent = devm_kcalloc(priv->dev, comp_count, sizeof(*compnent),
 				GFP_KERNEL);
 	if (!compnent) {
 		ret = -ENOMEM;
@@ -847,7 +848,7 @@ static int j721e_soc_probe(struct platform_device *pdev)
 	struct snd_soc_card *card;
 	const struct of_device_id *match;
 	struct j721e_priv *priv;
-	int link_cnt, conf_cnt, ret;
+	int link_cnt, conf_cnt, ret, i;
 
 	if (!node) {
 		dev_err(&pdev->dev, "of node is missing.\n");
@@ -871,8 +872,9 @@ static int j721e_soc_probe(struct platform_device *pdev)
 	if (!priv->dai_links)
 		return -ENOMEM;
 
-	priv->audio_domains[J721E_AUDIO_DOMAIN_CPB].parent_clk_id = -1;
-	priv->audio_domains[J721E_AUDIO_DOMAIN_IVI].parent_clk_id = -1;
+	for (i = 0; i < J721E_AUDIO_DOMAIN_LAST; i++)
+		priv->audio_domains[i].parent_clk_id = -1;
+
 	priv->dev = &pdev->dev;
 	card = &priv->card;
 	card->dev = &pdev->dev;
@@ -913,8 +915,9 @@ static int j721e_soc_probe(struct platform_device *pdev)
 	mutex_init(&priv->mutex);
 	ret = devm_snd_soc_register_card(&pdev->dev, card);
 	if (ret)
-		dev_err(&pdev->dev, "devm_snd_soc_register_card() failed: %d\n",
-			ret);
+		dev_err_probe(&pdev->dev, ret,
+			      "devm_snd_soc_register_card() failed: %d\n",
+			      ret);
 
 	return ret;
 }

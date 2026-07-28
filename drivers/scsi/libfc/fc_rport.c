@@ -55,11 +55,11 @@
 #include <linux/export.h>
 #include <linux/rculist.h>
 
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #include <scsi/libfc.h>
-#include <scsi/fc_encode.h>
 
+#include "fc_encode.h"
 #include "fc_libfc.h"
 
 static struct workqueue_struct *rport_event_queue;
@@ -1489,7 +1489,7 @@ static void fc_rport_enter_logo(struct fc_rport_priv *rdata)
 }
 
 /**
- * fc_rport_els_adisc_resp() - Handler for Address Discovery (ADISC) responses
+ * fc_rport_adisc_resp() - Handler for Address Discovery (ADISC) responses
  * @sp:	       The sequence the ADISC response was on
  * @fp:	       The ADISC response frame
  * @rdata_arg: The remote port that sent the ADISC response
@@ -2263,7 +2263,8 @@ struct fc4_prov fc_rport_t0_prov = {
  */
 int fc_setup_rport(void)
 {
-	rport_event_queue = create_singlethread_workqueue("fc_rport_eq");
+	rport_event_queue =
+		alloc_ordered_workqueue("%s", WQ_MEM_RECLAIM, "fc_rport_eq");
 	if (!rport_event_queue)
 		return -ENOMEM;
 	return 0;

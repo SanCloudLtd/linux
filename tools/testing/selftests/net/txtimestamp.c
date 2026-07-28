@@ -161,18 +161,19 @@ static void validate_timestamp(struct timespec *cur, int min_delay)
 	max_delay = min_delay + cfg_delay_tolerance_usec;
 
 	if (cur64 < start64 + min_delay || cur64 > start64 + max_delay) {
-		fprintf(stderr, "ERROR: %lu us expected between %d and %d\n",
+		fprintf(stderr, "ERROR: %" PRId64 " us expected between %d and %d\n",
 				cur64 - start64, min_delay, max_delay);
-		test_failed = true;
+		if (!getenv("KSFT_MACHINE_SLOW"))
+			test_failed = true;
 	}
 }
 
 static void __print_ts_delta_formatted(int64_t ts_delta)
 {
 	if (cfg_print_nsec)
-		fprintf(stderr, "%lu ns", ts_delta);
+		fprintf(stderr, "%" PRId64 " ns", ts_delta);
 	else
-		fprintf(stderr, "%lu us", ts_delta / NSEC_PER_USEC);
+		fprintf(stderr, "%" PRId64 " us", ts_delta / NSEC_PER_USEC);
 }
 
 static void __print_timestamp(const char *name, struct timespec *cur,
@@ -355,8 +356,12 @@ static void __recv_errmsg_cmsg(struct msghdr *msg, int payload_len)
 		}
 	}
 
-	if (batch > 1)
+	if (batch > 1) {
 		fprintf(stderr, "batched %d timestamps\n", batch);
+	} else if (!batch) {
+		fprintf(stderr, "Failed to report timestamps\n");
+		test_failed = true;
+	}
 }
 
 static int recv_errmsg(int fd)

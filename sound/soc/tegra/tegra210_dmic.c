@@ -7,8 +7,8 @@
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/math64.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -339,7 +339,7 @@ static struct snd_soc_dai_driver tegra210_dmic_dais[] = {
 				   SNDRV_PCM_FMTBIT_S32_LE,
 		},
 		.ops = &tegra210_dmic_dai_ops,
-		.symmetric_rates = 1,
+		.symmetric_rate = 1,
 	},
 };
 
@@ -436,7 +436,7 @@ static bool tegra210_dmic_wr_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static bool tegra210_dmic_rd_reg(struct device *dev, unsigned int reg)
@@ -452,7 +452,7 @@ static bool tegra210_dmic_rd_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static bool tegra210_dmic_volatile_reg(struct device *dev, unsigned int reg)
@@ -467,7 +467,7 @@ static bool tegra210_dmic_volatile_reg(struct device *dev, unsigned int reg)
 		return true;
 	default:
 		return false;
-	};
+	}
 }
 
 static const struct regmap_config tegra210_dmic_regmap_config = {
@@ -534,11 +534,9 @@ static int tegra210_dmic_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int tegra210_dmic_remove(struct platform_device *pdev)
+static void tegra210_dmic_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
-
-	return 0;
 }
 
 static const struct dev_pm_ops tegra210_dmic_pm_ops = {

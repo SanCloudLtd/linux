@@ -36,6 +36,8 @@
 
 #include "resource.h"
 
+#define DC_LOGGER \
+	dc->ctx->logger
 #define DC_LOGGER_INIT(logger)
 
 
@@ -345,7 +347,6 @@ void context_clock_trace(
 		struct dc *dc,
 		struct dc_state *context)
 {
-#if defined(CONFIG_DRM_AMD_DC_DCN)
 	DC_LOGGER_INIT(dc->ctx->logger);
 	CLOCK_TRACE("Current: dispclk_khz:%d  max_dppclk_khz:%d  dcfclk_khz:%d\n"
 			"dcfclk_deep_sleep_khz:%d  fclk_khz:%d  socclk_khz:%d\n",
@@ -363,7 +364,6 @@ void context_clock_trace(
 			context->bw_ctx.bw.dcn.clk.dcfclk_deep_sleep_khz,
 			context->bw_ctx.bw.dcn.clk.fclk_khz,
 			context->bw_ctx.bw.dcn.clk.socclk_khz);
-#endif
 }
 
 /**
@@ -418,9 +418,59 @@ char *dc_status_to_str(enum dc_status status)
 		return "Fail clk below minimum";
 	case DC_FAIL_CLK_BELOW_CFG_REQUIRED:
 		return "Fail clk below required CFG (hard_min in PPLIB)";
+	case DC_NOT_SUPPORTED:
+		return "The operation is not supported.";
+	case DC_UNSUPPORTED_VALUE:
+		return "The value specified is not supported.";
+	case DC_NO_LINK_ENC_RESOURCE:
+		return "No link encoder resource";
+	case DC_FAIL_DP_PAYLOAD_ALLOCATION:
+		return "Fail dp payload allocation";
+	case DC_FAIL_DP_LINK_BANDWIDTH:
+		return "Insufficient DP link bandwidth";
 	case DC_ERROR_UNEXPECTED:
 		return "Unexpected error";
 	}
 
 	return "Unexpected status error";
+}
+
+char *dc_pixel_encoding_to_str(enum dc_pixel_encoding pixel_encoding)
+{
+	switch (pixel_encoding) {
+	case PIXEL_ENCODING_RGB:
+		return "RGB";
+	case PIXEL_ENCODING_YCBCR422:
+		return "YUV422";
+	case PIXEL_ENCODING_YCBCR444:
+		return "YUV444";
+	case PIXEL_ENCODING_YCBCR420:
+		return "YUV420";
+	default:
+		return "Unknown";
+	}
+}
+
+char *dc_color_depth_to_str(enum dc_color_depth color_depth)
+{
+	switch (color_depth) {
+	case COLOR_DEPTH_666:
+		return "6-bpc";
+	case COLOR_DEPTH_888:
+		return "8-bpc";
+	case COLOR_DEPTH_101010:
+		return "10-bpc";
+	case COLOR_DEPTH_121212:
+		return "12-bpc";
+	case COLOR_DEPTH_141414:
+		return "14-bpc";
+	case COLOR_DEPTH_161616:
+		return "16-bpc";
+	case COLOR_DEPTH_999:
+		return "9-bpc";
+	case COLOR_DEPTH_111111:
+		return "11-bpc";
+	default:
+		return "Unknown";
+	}
 }

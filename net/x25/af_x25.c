@@ -200,22 +200,6 @@ static void x25_remove_socket(struct sock *sk)
 }
 
 /*
- *	Kill all bound sockets on a dropped device.
- */
-static void x25_kill_by_device(struct net_device *dev)
-{
-	struct sock *s;
-
-	write_lock_bh(&x25_list_lock);
-
-	sk_for_each(s, &x25_list)
-		if (x25_sk(s)->neighbour && x25_sk(s)->neighbour->dev == dev)
-			x25_disconnect(s, ENETUNREACH, 0, 0);
-
-	write_unlock_bh(&x25_list_lock);
-}
-
-/*
  *	Handle device status changes.
  */
 static int x25_device_event(struct notifier_block *this, unsigned long event,
@@ -227,26 +211,32 @@ static int x25_device_event(struct notifier_block *this, unsigned long event,
 	if (!net_eq(dev_net(dev), &init_net))
 		return NOTIFY_DONE;
 
-	if (dev->type == ARPHRD_X25
-#if IS_ENABLED(CONFIG_LLC)
-	 || dev->type == ARPHRD_ETHER
-#endif
-	 ) {
+	if (dev->type == ARPHRD_X25) {
 		switch (event) {
-		case NETDEV_UP:
+		case NETDEV_REGISTER:
+		case NETDEV_POST_TYPE_CHANGE:
 			x25_link_device_up(dev);
 			break;
-		case NETDEV_GOING_DOWN:
+		case NETDEV_DOWN:
 			nb = x25_get_neigh(dev);
 			if (nb) {
-				x25_terminate_link(nb);
+				x25_link_terminated(nb);
 				x25_neigh_put(nb);
 			}
-			break;
-		case NETDEV_DOWN:
-			x25_kill_by_device(dev);
 			x25_route_device_down(dev);
+			break;
+		case NETDEV_PRE_TYPE_CHANGE:
+		case NETDEV_UNREGISTER:
 			x25_link_device_down(dev);
+			break;
+		case NETDEV_CHANGE:
+			if (!netif_carrier_ok(dev)) {
+				nb = x25_get_neigh(dev);
+				if (nb) {
+					x25_link_terminated(nb);
+					x25_neigh_put(nb);
+				}
+			}
 			break;
 		}
 	}
@@ -376,7 +366,7 @@ static void x25_destroy_timer(struct timer_list *t)
 
 /*
  *	This is called from user mode and the timers. Thus it protects itself
- *	against interrupt users but doesn't worry about being called during
+ *	against interrupting users but doesn't worry about being called during
  *	work. Once it is removed from the queue no interrupt or bottom half
  *	will touch it and we are (fairly 8-) ) safe.
  *	Not static as it's used by the timer
@@ -470,11 +460,11 @@ static int x25_getsockopt(struct socket *sock, int level, int optname,
 	if (get_user(len, optlen))
 		goto out;
 
-	len = min_t(unsigned int, len, sizeof(int));
-
 	rc = -EINVAL;
 	if (len < 0)
 		goto out;
+
+	len = min_t(unsigned int, len, sizeof(int));
 
 	rc = -EFAULT;
 	if (put_user(len, optlen))
@@ -608,7 +598,7 @@ static struct sock *x25_make_new(struct sock *osk)
 	x25 = x25_sk(sk);
 
 	sk->sk_type        = osk->sk_type;
-	sk->sk_priority    = osk->sk_priority;
+	sk->sk_priority    = READ_ONCE(osk->sk_priority);
 	sk->sk_protocol    = osk->sk_protocol;
 	sk->sk_rcvbuf      = osk->sk_rcvbuf;
 	sk->sk_sndbuf      = osk->sk_sndbuf;
@@ -714,7 +704,7 @@ static int x25_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		rc = -EINVAL;
 	}
 	release_sock(sk);
-	SOCK_DEBUG(sk, "x25_bind: socket is bound\n");
+	net_dbg_ratelimited("x25_bind: socket is bound\n");
 out:
 	return rc;
 }
@@ -732,6 +722,11 @@ static int x25_wait_for_connection_establishment(struct sock *sk)
 			break;
 		rc = sock_error(sk);
 		if (rc) {
+			sk->sk_socket->state = SS_UNCONNECTED;
+			break;
+		}
+		rc = -ENOTCONN;
+		if (sk->sk_state == TCP_CLOSE) {
 			sk->sk_socket->state = SS_UNCONNECTED;
 			break;
 		}
@@ -876,8 +871,8 @@ static int x25_wait_for_data(struct sock *sk, long timeout)
 	return rc;
 }
 
-static int x25_accept(struct socket *sock, struct socket *newsock, int flags,
-		      bool kern)
+static int x25_accept(struct socket *sock, struct socket *newsock,
+		      struct proto_accept_arg *arg)
 {
 	struct sock *sk = sock->sk;
 	struct sock *newsk;
@@ -1034,7 +1029,7 @@ int x25_rx_call_request(struct sk_buff *skb, struct x25_neigh *nb,
 
 	/*
 	 * current neighbour/link might impose additional limits
-	 * on certain facilties
+	 * on certain facilities
 	 */
 
 	x25_limit_facilities(&facilities, nb);
@@ -1170,10 +1165,10 @@ static int x25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 		goto out;
 	}
 
-	SOCK_DEBUG(sk, "x25_sendmsg: sendto: Addresses built.\n");
+	net_dbg_ratelimited("x25_sendmsg: sendto: Addresses built.\n");
 
 	/* Build a packet */
-	SOCK_DEBUG(sk, "x25_sendmsg: sendto: building packet.\n");
+	net_dbg_ratelimited("x25_sendmsg: sendto: building packet.\n");
 
 	if ((msg->msg_flags & MSG_OOB) && len > 32)
 		len = 32;
@@ -1192,7 +1187,7 @@ static int x25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 	/*
 	 *	Put the data on the end
 	 */
-	SOCK_DEBUG(sk, "x25_sendmsg: Copying user data\n");
+	net_dbg_ratelimited("x25_sendmsg: Copying user data\n");
 
 	skb_reset_transport_header(skb);
 	skb_put(skb, len);
@@ -1216,7 +1211,7 @@ static int x25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 	/*
 	 *	Push down the X.25 header
 	 */
-	SOCK_DEBUG(sk, "x25_sendmsg: Building X.25 Header.\n");
+	net_dbg_ratelimited("x25_sendmsg: Building X.25 Header.\n");
 
 	if (msg->msg_flags & MSG_OOB) {
 		if (x25->neighbour->extended) {
@@ -1250,8 +1245,8 @@ static int x25_sendmsg(struct socket *sock, struct msghdr *msg, size_t len)
 			skb->data[0] |= X25_Q_BIT;
 	}
 
-	SOCK_DEBUG(sk, "x25_sendmsg: Built header.\n");
-	SOCK_DEBUG(sk, "x25_sendmsg: Transmitting buffer\n");
+	net_dbg_ratelimited("x25_sendmsg: Built header.\n");
+	net_dbg_ratelimited("x25_sendmsg: Transmitting buffer\n");
 
 	rc = -ENOTCONN;
 	if (sk->sk_state != TCP_ESTABLISHED)
@@ -1331,8 +1326,7 @@ static int x25_recvmsg(struct socket *sock, struct msghdr *msg, size_t size,
 	} else {
 		/* Now we can treat all alike */
 		release_sock(sk);
-		skb = skb_recv_datagram(sk, flags & ~MSG_DONTWAIT,
-					flags & MSG_DONTWAIT, &rc);
+		skb = skb_recv_datagram(sk, flags, &rc);
 		lock_sock(sk);
 		if (!skb)
 			goto out;
@@ -1763,7 +1757,6 @@ static const struct proto_ops x25_proto_ops = {
 	.sendmsg =	x25_sendmsg,
 	.recvmsg =	x25_recvmsg,
 	.mmap =		sock_no_mmap,
-	.sendpage =	sock_no_sendpage,
 };
 
 static struct packet_type x25_packet_type __read_mostly = {

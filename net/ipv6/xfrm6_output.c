@@ -16,13 +16,6 @@
 #include <net/ip6_route.h>
 #include <net/xfrm.h>
 
-int xfrm6_find_1stfragopt(struct xfrm_state *x, struct sk_buff *skb,
-			  u8 **prevhdr)
-{
-	return ip6_find_1stfragopt(skb, prevhdr);
-}
-EXPORT_SYMBOL(xfrm6_find_1stfragopt);
-
 void xfrm6_local_rxpmtu(struct sk_buff *skb, u32 mtu)
 {
 	struct flowi6 fl6;
@@ -102,7 +95,7 @@ static int __xfrm6_output(struct net *net, struct sock *sk, struct sk_buff *skb)
 		return -EMSGSIZE;
 	}
 
-	if (toobig || dst_allfrag(skb_dst(skb)))
+	if (toobig)
 		return ip6_fragment(net, sk, skb,
 				    __xfrm6_output_finish);
 

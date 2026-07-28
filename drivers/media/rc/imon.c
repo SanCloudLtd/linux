@@ -536,7 +536,9 @@ static int display_open(struct inode *inode, struct file *file)
 
 	mutex_lock(&ictx->lock);
 
-	if (!ictx->display_supported) {
+	if (ictx->disconnected) {
+		retval = -ENODEV;
+	} else if (!ictx->display_supported) {
 		pr_err("display not supported by device\n");
 		retval = -ENODEV;
 	} else if (ictx->display_isopen) {
@@ -597,6 +599,9 @@ static int send_packet(struct imon_context *ictx)
 	int interval = 0;
 	int retval = 0;
 	struct usb_ctrlrequest *control_req = NULL;
+
+	if (ictx->disconnected)
+		return -ENODEV;
 
 	/* Check if we need to use control or interrupt urb */
 	if (!ictx->tx_control) {
@@ -683,7 +688,6 @@ static int send_packet(struct imon_context *ictx)
  */
 static int send_associate_24g(struct imon_context *ictx)
 {
-	int retval;
 	const unsigned char packet[8] = { 0x01, 0x00, 0x00, 0x00,
 					  0x00, 0x00, 0x00, 0x20 };
 
@@ -698,9 +702,8 @@ static int send_associate_24g(struct imon_context *ictx)
 	}
 
 	memcpy(ictx->usb_tx_buf, packet, sizeof(packet));
-	retval = send_packet(ictx);
 
-	return retval;
+	return send_packet(ictx);
 }
 
 /*
@@ -793,7 +796,7 @@ static int send_set_imon_clock(struct imon_context *ictx,
 /*
  * These are the sysfs functions to handle the association on the iMON 2.4G LT.
  */
-static ssize_t show_associate_remote(struct device *d,
+static ssize_t associate_remote_show(struct device *d,
 				     struct device_attribute *attr,
 				     char *buf)
 {
@@ -813,7 +816,7 @@ static ssize_t show_associate_remote(struct device *d,
 	return strlen(buf);
 }
 
-static ssize_t store_associate_remote(struct device *d,
+static ssize_t associate_remote_store(struct device *d,
 				      struct device_attribute *attr,
 				      const char *buf, size_t count)
 {
@@ -835,7 +838,7 @@ static ssize_t store_associate_remote(struct device *d,
 /*
  * sysfs functions to control internal imon clock
  */
-static ssize_t show_imon_clock(struct device *d,
+static ssize_t imon_clock_show(struct device *d,
 			       struct device_attribute *attr, char *buf)
 {
 	struct imon_context *ictx = dev_get_drvdata(d);
@@ -847,13 +850,13 @@ static ssize_t show_imon_clock(struct device *d,
 	mutex_lock(&ictx->lock);
 
 	if (!ictx->display_supported) {
-		len = snprintf(buf, PAGE_SIZE, "Not supported.");
+		len = sysfs_emit(buf, "Not supported.");
 	} else {
-		len = snprintf(buf, PAGE_SIZE,
-			"To set the clock on your iMON display:\n"
-			"# date \"+%%y %%m %%d %%w %%H %%M %%S\" > imon_clock\n"
-			"%s", ictx->display_isopen ?
-			"\nNOTE: imon device must be closed\n" : "");
+		len = sysfs_emit(buf,
+				 "To set the clock on your iMON display:\n"
+				 "# date \"+%%y %%m %%d %%w %%H %%M %%S\" > imon_clock\n"
+				 "%s", ictx->display_isopen ?
+				 "\nNOTE: imon device must be closed\n" : "");
 	}
 
 	mutex_unlock(&ictx->lock);
@@ -861,7 +864,7 @@ static ssize_t show_imon_clock(struct device *d,
 	return len;
 }
 
-static ssize_t store_imon_clock(struct device *d,
+static ssize_t imon_clock_store(struct device *d,
 				struct device_attribute *attr,
 				const char *buf, size_t count)
 {
@@ -908,11 +911,8 @@ exit:
 }
 
 
-static DEVICE_ATTR(imon_clock, S_IWUSR | S_IRUGO, show_imon_clock,
-		   store_imon_clock);
-
-static DEVICE_ATTR(associate_remote, S_IWUSR | S_IRUGO, show_associate_remote,
-		   store_associate_remote);
+static DEVICE_ATTR_RW(imon_clock);
+static DEVICE_ATTR_RW(associate_remote);
 
 static struct attribute *imon_display_sysfs_entries[] = {
 	&dev_attr_imon_clock.attr,
@@ -954,11 +954,13 @@ static ssize_t vfd_write(struct file *file, const char __user *buf,
 	static const unsigned char vfd_packet6[] = {
 		0x01, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF };
 
-	if (ictx->disconnected)
-		return -ENODEV;
-
 	if (mutex_lock_interruptible(&ictx->lock))
 		return -ERESTARTSYS;
+
+	if (ictx->disconnected) {
+		retval = -ENODEV;
+		goto exit;
+	}
 
 	if (!ictx->dev_present_intf0) {
 		pr_err_ratelimited("no iMON device present\n");
@@ -1034,10 +1036,12 @@ static ssize_t lcd_write(struct file *file, const char __user *buf,
 	int retval = 0;
 	struct imon_context *ictx = file->private_data;
 
-	if (ictx->disconnected)
-		return -ENODEV;
-
 	mutex_lock(&ictx->lock);
+
+	if (ictx->disconnected) {
+		retval = -ENODEV;
+		goto exit;
+	}
 
 	if (!ictx->display_supported) {
 		pr_err_ratelimited("no iMON display present\n");
@@ -1153,10 +1157,7 @@ static int imon_ir_change_protocol(struct rc_dev *rc, u64 *rc_proto)
 
 	memcpy(ictx->usb_tx_buf, &ir_proto_packet, sizeof(ir_proto_packet));
 
-	if (!mutex_is_locked(&ictx->lock)) {
-		unlock = true;
-		mutex_lock(&ictx->lock);
-	}
+	unlock = mutex_trylock(&ictx->lock);
 
 	retval = send_packet(ictx);
 	if (retval)
@@ -2369,8 +2370,10 @@ urb_submit_failed:
 touch_setup_failed:
 find_endpoint_failed:
 	usb_put_dev(ictx->usbdev_intf1);
+	ictx->usbdev_intf1 = NULL;
 	mutex_unlock(&ictx->lock);
 	usb_free_urb(rx_urb);
+	ictx->rx_urb_intf1 = NULL;
 rx_urb_alloc_failed:
 	dev_err(ictx->dev, "unable to initialize intf1, err %d\n", ret);
 
@@ -2427,6 +2430,12 @@ static int imon_probe(struct usb_interface *interface,
 	first_if = usb_ifnum_to_if(usbdev, 0);
 	if (!first_if) {
 		ret = -ENODEV;
+		goto fail;
+	}
+
+	if (first_if->dev.driver != interface->dev.driver) {
+		dev_err(&interface->dev, "inconsistent driver matching\n");
+		ret = -EINVAL;
 		goto fail;
 	}
 
@@ -2499,7 +2508,11 @@ static void imon_disconnect(struct usb_interface *interface)
 	int ifnum;
 
 	ictx = usb_get_intfdata(interface);
+
+	mutex_lock(&ictx->lock);
 	ictx->disconnected = true;
+	mutex_unlock(&ictx->lock);
+
 	dev = ictx->dev;
 	ifnum = interface->cur_altsetting->desc.bInterfaceNumber;
 
@@ -2521,7 +2534,6 @@ static void imon_disconnect(struct usb_interface *interface)
 	if (ifnum == 0) {
 		ictx->dev_present_intf0 = false;
 		usb_kill_urb(ictx->rx_urb_intf0);
-		usb_put_dev(ictx->usbdev_intf0);
 		input_unregister_device(ictx->idev);
 		rc_unregister_device(ictx->rdev);
 		if (ictx->display_supported) {
@@ -2530,14 +2542,15 @@ static void imon_disconnect(struct usb_interface *interface)
 			else if (ictx->display_type == IMON_DISPLAY_TYPE_VFD)
 				usb_deregister_dev(interface, &imon_vfd_class);
 		}
+		usb_put_dev(ictx->usbdev_intf0);
 	} else {
 		ictx->dev_present_intf1 = false;
 		usb_kill_urb(ictx->rx_urb_intf1);
-		usb_put_dev(ictx->usbdev_intf1);
 		if (ictx->display_type == IMON_DISPLAY_TYPE_VGA) {
-			input_unregister_device(ictx->touch);
 			del_timer_sync(&ictx->ttimer);
+			input_unregister_device(ictx->touch);
 		}
+		usb_put_dev(ictx->usbdev_intf1);
 	}
 
 	if (refcount_dec_and_test(&ictx->users))
@@ -2574,7 +2587,7 @@ static int imon_resume(struct usb_interface *intf)
 			usb_rx_callback_intf0, ictx,
 			ictx->rx_endpoint_intf0->bInterval);
 
-		rc = usb_submit_urb(ictx->rx_urb_intf0, GFP_ATOMIC);
+		rc = usb_submit_urb(ictx->rx_urb_intf0, GFP_NOIO);
 
 	} else {
 		usb_fill_int_urb(ictx->rx_urb_intf1, ictx->usbdev_intf1,
@@ -2584,7 +2597,7 @@ static int imon_resume(struct usb_interface *intf)
 			usb_rx_callback_intf1, ictx,
 			ictx->rx_endpoint_intf1->bInterval);
 
-		rc = usb_submit_urb(ictx->rx_urb_intf1, GFP_ATOMIC);
+		rc = usb_submit_urb(ictx->rx_urb_intf1, GFP_NOIO);
 	}
 
 	return rc;

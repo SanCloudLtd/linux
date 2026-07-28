@@ -57,7 +57,6 @@ static const struct file_operations __fops = {				\
 	.release = simple_attr_release,					\
 	.read	 = debugfs_attr_read,					\
 	.write	 = (__is_signed) ? debugfs_attr_write_signed : debugfs_attr_write,	\
-	.llseek  = no_llseek,						\
 }
 
 #define DEFINE_DEBUGFS_ATTRIBUTE(__fops, __get, __set, __fmt)		\
@@ -122,8 +121,8 @@ void debugfs_create_u32(const char *name, umode_t mode, struct dentry *parent,
 			u32 *value);
 void debugfs_create_u64(const char *name, umode_t mode, struct dentry *parent,
 			u64 *value);
-struct dentry *debugfs_create_ulong(const char *name, umode_t mode,
-				    struct dentry *parent, unsigned long *value);
+void debugfs_create_ulong(const char *name, umode_t mode, struct dentry *parent,
+			  unsigned long *value);
 void debugfs_create_x8(const char *name, umode_t mode, struct dentry *parent,
 		       u8 *value);
 void debugfs_create_x16(const char *name, umode_t mode, struct dentry *parent,
@@ -136,8 +135,10 @@ void debugfs_create_size_t(const char *name, umode_t mode,
 			   struct dentry *parent, size_t *value);
 void debugfs_create_atomic_t(const char *name, umode_t mode,
 			     struct dentry *parent, atomic_t *value);
-struct dentry *debugfs_create_bool(const char *name, umode_t mode,
-				  struct dentry *parent, bool *value);
+void debugfs_create_bool(const char *name, umode_t mode, struct dentry *parent,
+			 bool *value);
+void debugfs_create_str(const char *name, umode_t mode,
+			struct dentry *parent, char **value);
 
 struct dentry *debugfs_create_blob(const char *name, umode_t mode,
 				  struct dentry *parent,
@@ -165,6 +166,28 @@ ssize_t debugfs_read_file_bool(struct file *file, char __user *user_buf,
 
 ssize_t debugfs_write_file_bool(struct file *file, const char __user *user_buf,
 				size_t count, loff_t *ppos);
+
+ssize_t debugfs_read_file_str(struct file *file, char __user *user_buf,
+			      size_t count, loff_t *ppos);
+
+/**
+ * struct debugfs_cancellation - cancellation data
+ * @list: internal, for keeping track
+ * @cancel: callback to call
+ * @cancel_data: extra data for the callback to call
+ */
+struct debugfs_cancellation {
+	struct list_head list;
+	void (*cancel)(struct dentry *, void *);
+	void *cancel_data;
+};
+
+void __acquires(cancellation)
+debugfs_enter_cancellation(struct file *file,
+			   struct debugfs_cancellation *cancellation);
+void __releases(cancellation)
+debugfs_leave_cancellation(struct file *file,
+			   struct debugfs_cancellation *cancellation);
 
 #else
 
@@ -282,13 +305,9 @@ static inline void debugfs_create_u32(const char *name, umode_t mode,
 static inline void debugfs_create_u64(const char *name, umode_t mode,
 				      struct dentry *parent, u64 *value) { }
 
-static inline struct dentry *debugfs_create_ulong(const char *name,
-						umode_t mode,
-						struct dentry *parent,
-						unsigned long *value)
-{
-	return ERR_PTR(-ENODEV);
-}
+static inline void debugfs_create_ulong(const char *name, umode_t mode,
+					struct dentry *parent,
+					unsigned long *value) { }
 
 static inline void debugfs_create_x8(const char *name, umode_t mode,
 				     struct dentry *parent, u8 *value) { }
@@ -311,12 +330,13 @@ static inline void debugfs_create_atomic_t(const char *name, umode_t mode,
 					   atomic_t *value)
 { }
 
-static inline struct dentry *debugfs_create_bool(const char *name, umode_t mode,
-						 struct dentry *parent,
-						 bool *value)
-{
-	return ERR_PTR(-ENODEV);
-}
+static inline void debugfs_create_bool(const char *name, umode_t mode,
+				       struct dentry *parent, bool *value) { }
+
+static inline void debugfs_create_str(const char *name, umode_t mode,
+				      struct dentry *parent,
+				      char **value)
+{ }
 
 static inline struct dentry *debugfs_create_blob(const char *name, umode_t mode,
 				  struct dentry *parent,
@@ -365,6 +385,13 @@ static inline ssize_t debugfs_read_file_bool(struct file *file,
 static inline ssize_t debugfs_write_file_bool(struct file *file,
 					      const char __user *user_buf,
 					      size_t count, loff_t *ppos)
+{
+	return -ENODEV;
+}
+
+static inline ssize_t debugfs_read_file_str(struct file *file,
+					    char __user *user_buf,
+					    size_t count, loff_t *ppos)
 {
 	return -ENODEV;
 }

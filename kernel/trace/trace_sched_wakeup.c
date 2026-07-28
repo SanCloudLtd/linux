@@ -26,9 +26,9 @@ static struct task_struct	*wakeup_task;
 static int			wakeup_cpu;
 static int			wakeup_current_cpu;
 static unsigned			wakeup_prio = -1;
-static int			wakeup_rt;
-static int			wakeup_dl;
-static int			tracing_dl = 0;
+static bool			wakeup_rt;
+static bool			wakeup_dl;
+static bool			tracing_dl;
 
 static arch_spinlock_t wakeup_lock =
 	(arch_spinlock_t)__ARCH_SPIN_LOCK_UNLOCKED;
@@ -112,14 +112,15 @@ static int wakeup_display_graph(struct trace_array *tr, int set)
 	return start_func_tracer(tr, set);
 }
 
-static int wakeup_graph_entry(struct ftrace_graph_ent *trace)
+static int wakeup_graph_entry(struct ftrace_graph_ent *trace,
+			      struct fgraph_ops *gops)
 {
 	struct trace_array *tr = wakeup_trace;
 	struct trace_array_cpu *data;
 	unsigned int trace_ctx;
 	int ret = 0;
 
-	if (ftrace_graph_ignore_func(trace))
+	if (ftrace_graph_ignore_func(gops, trace))
 		return 0;
 	/*
 	 * Do not trace a function if it's filtered by set_graph_notrace.
@@ -141,13 +142,14 @@ static int wakeup_graph_entry(struct ftrace_graph_ent *trace)
 	return ret;
 }
 
-static void wakeup_graph_return(struct ftrace_graph_ret *trace)
+static void wakeup_graph_return(struct ftrace_graph_ret *trace,
+				struct fgraph_ops *gops)
 {
 	struct trace_array *tr = wakeup_trace;
 	struct trace_array_cpu *data;
 	unsigned int trace_ctx;
 
-	ftrace_graph_addr_finish(trace);
+	ftrace_graph_addr_finish(gops, trace);
 
 	if (!func_prolog_preempt_disable(tr, &data, &trace_ctx))
 		return;
@@ -209,7 +211,7 @@ static void wakeup_print_header(struct seq_file *s)
  */
 static void
 wakeup_tracer_call(unsigned long ip, unsigned long parent_ip,
-		   struct ftrace_ops *op, struct pt_regs *pt_regs)
+		   struct ftrace_ops *op, struct ftrace_regs *fregs)
 {
 	struct trace_array *tr = wakeup_trace;
 	struct trace_array_cpu *data;
@@ -426,7 +428,8 @@ tracing_sched_wakeup_trace(struct trace_array *tr,
 
 static void notrace
 probe_wakeup_sched_switch(void *ignore, bool preempt,
-			  struct task_struct *prev, struct task_struct *next)
+			  struct task_struct *prev, struct task_struct *next,
+			  unsigned int prev_state)
 {
 	struct trace_array_cpu *data;
 	u64 T0, T1, delta;
@@ -498,7 +501,7 @@ static void __wakeup_reset(struct trace_array *tr)
 {
 	wakeup_cpu = -1;
 	wakeup_prio = -1;
-	tracing_dl = 0;
+	tracing_dl = false;
 
 	if (wakeup_task)
 		put_task_struct(wakeup_task);
@@ -542,7 +545,7 @@ probe_wakeup(void *ignore, struct task_struct *p)
 	 *  - wakeup_dl handles tasks belonging to sched_dl class only.
 	 */
 	if (tracing_dl || (wakeup_dl && !dl_task(p)) ||
-	    (wakeup_rt && !dl_task(p) && !rt_task(p)) ||
+	    (wakeup_rt && !rt_or_dl_task(p)) ||
 	    (!dl_task(p) && (p->prio >= wakeup_prio || p->prio >= current->prio)))
 		return;
 
@@ -572,9 +575,9 @@ probe_wakeup(void *ignore, struct task_struct *p)
 	 * another task until the first one wakes up.
 	 */
 	if (dl_task(p))
-		tracing_dl = 1;
+		tracing_dl = true;
 	else
-		tracing_dl = 0;
+		tracing_dl = false;
 
 	wakeup_task = get_task_struct(p);
 
@@ -685,8 +688,8 @@ static int wakeup_tracer_init(struct trace_array *tr)
 	if (wakeup_busy)
 		return -EBUSY;
 
-	wakeup_dl = 0;
-	wakeup_rt = 0;
+	wakeup_dl = false;
+	wakeup_rt = false;
 	return __wakeup_tracer_init(tr);
 }
 
@@ -695,8 +698,8 @@ static int wakeup_rt_tracer_init(struct trace_array *tr)
 	if (wakeup_busy)
 		return -EBUSY;
 
-	wakeup_dl = 0;
-	wakeup_rt = 1;
+	wakeup_dl = false;
+	wakeup_rt = true;
 	return __wakeup_tracer_init(tr);
 }
 
@@ -705,8 +708,8 @@ static int wakeup_dl_tracer_init(struct trace_array *tr)
 	if (wakeup_busy)
 		return -EBUSY;
 
-	wakeup_dl = 1;
-	wakeup_rt = 0;
+	wakeup_dl = true;
+	wakeup_rt = false;
 	return __wakeup_tracer_init(tr);
 }
 

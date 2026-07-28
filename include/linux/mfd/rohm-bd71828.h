@@ -4,6 +4,7 @@
 #ifndef __LINUX_MFD_BD71828_H__
 #define __LINUX_MFD_BD71828_H__
 
+#include <linux/bits.h>
 #include <linux/mfd/rohm-generic.h>
 #include <linux/mfd/rohm-shared.h>
 
@@ -41,7 +42,8 @@ enum {
 #define BD71828_REG_PS_CTRL_2		0x05
 #define BD71828_REG_PS_CTRL_3		0x06
 
-//#define BD71828_REG_SWRESET		0x06
+#define BD71828_MASK_STATE_HBNT		BIT(1)
+
 #define BD71828_MASK_RUN_LVL_CTRL	0x30
 
 /* Regulator control masks */
@@ -133,7 +135,6 @@ enum {
 #define BD71828_REG_LDO5_VOLT		0x43
 #define BD71828_REG_LDO5_VOLT_OPT	0x42
 #define BD71828_REG_LDO6_EN		0x44
-//#define BD71828_REG_LDO6_VOLT		0x4
 #define BD71828_REG_LDO7_EN		0x45
 #define BD71828_REG_LDO7_VOLT		0x46
 
@@ -150,6 +151,9 @@ enum {
 #define BD71828_REG_GPIO_CTRL2		0x48
 #define BD71828_REG_GPIO_CTRL3		0x49
 #define BD71828_REG_IO_STAT		0xed
+
+/* clk */
+#define BD71828_REG_OUT32K		0x4b
 
 /* RTC */
 #define BD71828_REG_RTC_SEC		0x4c

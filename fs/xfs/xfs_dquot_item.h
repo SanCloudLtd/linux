@@ -9,30 +9,20 @@
 struct xfs_dquot;
 struct xfs_trans;
 struct xfs_mount;
-struct xfs_qoff_logitem;
 
 struct xfs_dq_logitem {
 	struct xfs_log_item	qli_item;	/* common portion */
 	struct xfs_dquot	*qli_dquot;	/* dquot ptr */
 	xfs_lsn_t		qli_flush_lsn;	/* lsn at last flush */
-};
 
-struct xfs_qoff_logitem {
-	struct xfs_log_item	qql_item;	/* common portion */
-	struct xfs_qoff_logitem *qql_start_lip;	/* qoff-start logitem, if any */
-	unsigned int		qql_flags;
+	/*
+	 * We use this spinlock to coordinate access to the li_buf pointer in
+	 * the log item and the qli_dirty flag.
+	 */
+	spinlock_t		qli_lock;
+	bool			qli_dirty;	/* dirtied since last flush? */
 };
-
 
 void xfs_qm_dquot_logitem_init(struct xfs_dquot *dqp);
-struct xfs_qoff_logitem	*xfs_qm_qoff_logitem_init(struct xfs_mount *mp,
-		struct xfs_qoff_logitem *start,
-		uint flags);
-void xfs_qm_qoff_logitem_relse(struct xfs_qoff_logitem *);
-struct xfs_qoff_logitem	*xfs_trans_get_qoff_item(struct xfs_trans *tp,
-		struct xfs_qoff_logitem *startqoff,
-		uint flags);
-void xfs_trans_log_quotaoff_item(struct xfs_trans *tp,
-		struct xfs_qoff_logitem *qlp);
 
 #endif	/* __XFS_DQUOT_ITEM_H__ */

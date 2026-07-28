@@ -19,7 +19,8 @@
 #include <linux/clk/ti.h>
 #include <linux/err.h>
 #include <linux/io.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
@@ -35,6 +36,10 @@
 #include <clocksource/timer-ti-dm.h>
 
 #include <linux/platform_data/dmtimer-omap.h>
+
+#ifdef CONFIG_ARM_DMA_USE_IOMMU
+#include <asm/dma-iommu.h>
+#endif
 
 #include "omap_remoteproc.h"
 #include "remoteproc_internal.h"
@@ -243,7 +248,7 @@ static inline int omap_rproc_get_timer_irq(struct omap_rproc_timer *timer)
  * omap_rproc_ack_timer_irq() - acknowledge a timer irq
  * @timer: handle to a OMAP rproc timer
  *
- * This function is used to clear the irq associated with a watchdog timer. The
+ * This function is used to clear the irq associated with a watchdog timer.
  * The function is called by the OMAP remoteproc upon a watchdog event on the
  * remote processor to clear the interrupt status of the watchdog timer.
  */
@@ -303,7 +308,7 @@ static irqreturn_t omap_rproc_watchdog_isr(int irq, void *data)
  * @configure: boolean flag used to acquire and configure the timer handle
  *
  * This function is used primarily to enable the timers associated with
- * a remoteproc. The configure flag is provided to allow the driver to
+ * a remoteproc. The configure flag is provided to allow the driver
  * to either acquire and start a timer (during device initialization) or
  * to just start a timer (during a resume operation).
  *
@@ -443,7 +448,7 @@ free_timers:
  * @configure: boolean flag used to release the timer handle
  *
  * This function is used primarily to disable the timers associated with
- * a remoteproc. The configure flag is provided to allow the driver to
+ * a remoteproc. The configure flag is provided to allow the driver
  * to either stop and release a timer (during device shutdown) or to just
  * stop a timer (during a suspend operation).
  *
@@ -703,19 +708,6 @@ static int omap_rproc_stop(struct rproc *rproc)
 	pm_runtime_put_noidle(dev);
 	pm_runtime_set_suspended(dev);
 
-	/*
-	 * If remoteproc has crashed, we must trigger IOMMU to reset it also.
-	 * Otherwise we may have stale data in IOMMU causing remoteproc to
-	 * hang / die again. Sleep between is needed to make sure reset
-	 * actually gets triggered, otherwise the runtime PM framework may
-	 * consider this sequence as a NOP.
-	 */
-	if (rproc->state == RPROC_CRASHED) {
-		omap_iommu_domain_deactivate(rproc->domain);
-		msleep(5);
-		omap_iommu_domain_activate(rproc->domain);
-	}
-
 	return 0;
 
 enable_device:
@@ -741,7 +733,7 @@ out:
  * Return: translated virtual address in kernel memory space on success,
  *         or NULL on failure.
  */
-static void *omap_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len)
+static void *omap_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
 {
 	struct omap_rproc *oproc = rproc->priv;
 	int i;
@@ -914,8 +906,7 @@ out:
 
 static int __maybe_unused omap_rproc_suspend(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rproc *rproc = platform_get_drvdata(pdev);
+	struct rproc *rproc = dev_get_drvdata(dev);
 	struct omap_rproc *oproc = rproc->priv;
 	int ret = 0;
 
@@ -951,8 +942,7 @@ out:
 
 static int __maybe_unused omap_rproc_resume(struct device *dev)
 {
-	struct platform_device *pdev = to_platform_device(dev);
-	struct rproc *rproc = platform_get_drvdata(pdev);
+	struct rproc *rproc = dev_get_drvdata(dev);
 	struct omap_rproc *oproc = rproc->priv;
 	int ret = 0;
 
@@ -1291,6 +1281,13 @@ static int omap_rproc_of_get_timers(struct platform_device *pdev,
 	return 0;
 }
 
+static void omap_rproc_mem_release(void *data)
+{
+	struct device *dev = data;
+
+	of_reserved_mem_device_release(dev);
+}
+
 static int omap_rproc_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -1319,8 +1316,8 @@ static int omap_rproc_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	rproc = rproc_alloc(&pdev->dev, dev_name(&pdev->dev), &omap_rproc_ops,
-			    firmware, sizeof(*oproc));
+	rproc = devm_rproc_alloc(&pdev->dev, dev_name(&pdev->dev), &omap_rproc_ops,
+				 firmware, sizeof(*oproc));
 	if (!rproc)
 		return -ENOMEM;
 
@@ -1330,17 +1327,30 @@ static int omap_rproc_probe(struct platform_device *pdev)
 	/* All existing OMAP IPU and DSP processors have an MMU */
 	rproc->has_iommu = true;
 
+#ifdef CONFIG_ARM_DMA_USE_IOMMU
+	/*
+	 * Throw away the ARM DMA mapping that we'll never use, so it doesn't
+	 * interfere with the core rproc->domain and we get the right DMA ops.
+	 */
+	if (pdev->dev.archdata.mapping) {
+		struct dma_iommu_mapping *mapping = to_dma_iommu_mapping(&pdev->dev);
+
+		arm_iommu_detach_device(&pdev->dev);
+		arm_iommu_release_mapping(mapping);
+	}
+#endif
+
 	ret = omap_rproc_of_get_internal_memories(pdev, rproc);
 	if (ret)
-		goto free_rproc;
+		return ret;
 
 	ret = omap_rproc_get_boot_data(pdev, rproc);
 	if (ret)
-		goto free_rproc;
+		return ret;
 
 	ret = omap_rproc_of_get_timers(pdev, rproc);
 	if (ret)
-		goto free_rproc;
+		return ret;
 
 	init_completion(&oproc->pm_comp);
 	oproc->autosuspend_delay = DEFAULT_AUTOSUSPEND_DELAY;
@@ -1351,10 +1361,8 @@ static int omap_rproc_probe(struct platform_device *pdev)
 	pm_runtime_set_autosuspend_delay(&pdev->dev, oproc->autosuspend_delay);
 
 	oproc->fck = devm_clk_get(&pdev->dev, 0);
-	if (IS_ERR(oproc->fck)) {
-		ret = PTR_ERR(oproc->fck);
-		goto free_rproc;
-	}
+	if (IS_ERR(oproc->fck))
+		return PTR_ERR(oproc->fck);
 
 	ret = of_reserved_mem_device_init(&pdev->dev);
 	if (ret) {
@@ -1362,32 +1370,15 @@ static int omap_rproc_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "Typically this should be provided,\n");
 		dev_warn(&pdev->dev, "only omit if you know what you are doing.\n");
 	}
+	ret = devm_add_action_or_reset(&pdev->dev, omap_rproc_mem_release, &pdev->dev);
+	if (ret)
+		return ret;
 
 	platform_set_drvdata(pdev, rproc);
 
-	ret = rproc_add(rproc);
+	ret = devm_rproc_add(&pdev->dev, rproc);
 	if (ret)
-		goto release_mem;
-
-	if (rproc_get_id(rproc) < 0)
-		dev_warn(&pdev->dev, "device does not have an alias id\n");
-
-	return 0;
-
-release_mem:
-	of_reserved_mem_device_release(&pdev->dev);
-free_rproc:
-	rproc_free(rproc);
-	return ret;
-}
-
-static int omap_rproc_remove(struct platform_device *pdev)
-{
-	struct rproc *rproc = platform_get_drvdata(pdev);
-
-	rproc_del(rproc);
-	rproc_free(rproc);
-	of_reserved_mem_device_release(&pdev->dev);
+		return ret;
 
 	return 0;
 }
@@ -1400,7 +1391,6 @@ static const struct dev_pm_ops omap_rproc_pm_ops = {
 
 static struct platform_driver omap_rproc_driver = {
 	.probe = omap_rproc_probe,
-	.remove = omap_rproc_remove,
 	.driver = {
 		.name = "omap-rproc",
 		.pm = &omap_rproc_pm_ops,

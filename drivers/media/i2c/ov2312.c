@@ -44,8 +44,8 @@ struct ov2312 {
 
 	u32 fps;
 
-	struct mutex lock;
-	bool streaming;
+	struct mutex lock; /* For streaming status */
+	unsigned int enable_count;
 };
 
 static inline struct ov2312 *to_ov2312(struct v4l2_subdev *sd)
@@ -105,7 +105,7 @@ static void ov2312_init_formats(struct v4l2_subdev_state *state)
 	int i;
 
 	for (i = 0; i < 2; ++i) {
-		format = v4l2_state_get_stream_format(state, 0, i);
+		format = v4l2_subdev_state_get_format(state, 0, i);
 		format->code = ov2312_mbus_formats[0];
 		format->width = ov2312_framesizes[0].width;
 		format->height = ov2312_framesizes[0].height;
@@ -113,7 +113,6 @@ static void ov2312_init_formats(struct v4l2_subdev_state *state)
 		format->colorspace = V4L2_COLORSPACE_DEFAULT;
 	}
 }
-
 
 static int ov2312_set_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_subdev_state *state,
@@ -143,9 +142,9 @@ static int ov2312_set_fmt(struct v4l2_subdev *sd,
 	v4l2_subdev_lock_state(state);
 
 	/* Update the stored format and return it. */
-	format = v4l2_state_get_stream_format(state, fmt->pad, fmt->stream);
+	format = v4l2_subdev_state_get_format(state, fmt->pad, fmt->stream);
 
-	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && ov2312->streaming) {
+	if (fmt->which == V4L2_SUBDEV_FORMAT_ACTIVE && ov2312->enable_count) {
 		ret = -EBUSY;
 		goto done;
 	}
@@ -169,16 +168,12 @@ static int _ov2312_set_routing(struct v4l2_subdev *sd,
 		{
 			.source_pad = 0,
 			.source_stream = 0,
-			.flags = V4L2_SUBDEV_ROUTE_FL_IMMUTABLE |
-				 V4L2_SUBDEV_ROUTE_FL_SOURCE |
-				 V4L2_SUBDEV_ROUTE_FL_ACTIVE,
+			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
 		},
 		{
 			.source_pad = 0,
 			.source_stream = 1,
-			.flags = V4L2_SUBDEV_ROUTE_FL_IMMUTABLE |
-				 V4L2_SUBDEV_ROUTE_FL_SOURCE |
-				 V4L2_SUBDEV_ROUTE_FL_ACTIVE,
+			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
 		},
 	};
 
@@ -203,7 +198,6 @@ static int ov2312_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 {
 	struct v4l2_subdev_state *state;
 	struct v4l2_mbus_framefmt *fmt;
-	const struct v4l2_subdev_krouting *routing;
 	u32 bpp;
 	int ret = 0;
 	unsigned int i;
@@ -211,10 +205,9 @@ static int ov2312_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
 	if (pad != 0)
 		return -EINVAL;
 
-	state = v4l2_subdev_lock_active_state(sd);
-	routing = &state->routing;
+	state = v4l2_subdev_lock_and_get_active_state(sd);
 
-	fmt = v4l2_state_get_stream_format(state, 0, 0);
+	fmt = v4l2_subdev_state_get_format(state, 0, 0);
 	if (!fmt) {
 		ret = -EPIPE;
 		goto out;
@@ -265,17 +258,12 @@ static int ov2312_set_routing(struct v4l2_subdev *sd,
 	return ret;
 }
 
-
-static int ov2312_init_cfg(struct v4l2_subdev *sd,
+static int ov2312_init_state(struct v4l2_subdev *sd,
 			   struct v4l2_subdev_state *state)
 {
 	int ret;
 
-	v4l2_subdev_lock_state(state);
-
 	ret = _ov2312_set_routing(sd, state);
-
-	v4l2_subdev_unlock_state(state);
 
 	return ret;
 }
@@ -318,24 +306,26 @@ static int ov2312_enum_frame_sizes(struct v4l2_subdev *sd,
 }
 
 static int ov2312_get_frame_interval(struct v4l2_subdev *sd,
+					 struct v4l2_subdev_state *state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct ov2312 *ov2312 = to_ov2312(sd);
 
 	fi->interval.numerator = 1;
-	fi->interval.denominator = ov2312->fps/2;
+	fi->interval.denominator = ov2312->fps / 2;
 
 	return 0;
 }
 
 static int ov2312_set_frame_interval(struct v4l2_subdev *sd,
+					 struct v4l2_subdev_state *state,
 				     struct v4l2_subdev_frame_interval *fi)
 {
 	struct ov2312 *ov2312 = to_ov2312(sd);
 
 	dev_dbg(ov2312->dev, "%s: Set framerate %dfps\n", __func__,
-		 fi->interval.denominator/fi->interval.numerator);
-	if (fi->interval.denominator/fi->interval.numerator != ov2312->fps) {
+		fi->interval.denominator / fi->interval.numerator);
+	if ((fi->interval.denominator / fi->interval.numerator) != ov2312->fps) {
 		dev_err(ov2312->dev, "%s: Framerate can only be %dfps\n",
 			__func__, ov2312->fps);
 		return -EINVAL;
@@ -448,13 +438,14 @@ static int ov2312_set_ctrl(struct v4l2_ctrl *ctrl)
 static int ov2312_power_on(struct ov2312 *ov2312)
 {
 	int ret;
+
 	ret = clk_prepare_enable(ov2312->clk);
 	if (ret < 0)
 		return ret;
 
 	if (ov2312->reset_gpio) {
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 0);
-		msleep(10);
+		usleep_range(100, 1000);
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 1);
 		msleep(30);
 	}
@@ -465,7 +456,7 @@ static int ov2312_power_off(struct ov2312 *ov2312)
 {
 	if (ov2312->reset_gpio) {
 		gpiod_set_value_cansleep(ov2312->reset_gpio, 0);
-		msleep(10);
+		usleep_range(1, 10);
 	}
 
 	clk_disable_unprepare(ov2312->clk);
@@ -494,6 +485,7 @@ static int ov2312_suspend(struct device *dev)
 static int ov2312_start_stream(struct ov2312 *ov2312)
 {
 	int ret;
+
 	ret = ov2312_write_table(ov2312, ov2312_1600x1300_60fps_AB,
 				 ARRAY_SIZE(ov2312_1600x1300_60fps_AB));
 	if (ret < 0)
@@ -534,35 +526,29 @@ static int ov2312_stop_stream(struct ov2312 *ov2312)
 	return 0;
 }
 
-static int ov2312_set_stream(struct v4l2_subdev *sd, int enable)
+static int ov2312_sd_enable_streams(struct v4l2_subdev *sd,
+				       struct v4l2_subdev_state *state,
+				       u32 pad, u64 streams_mask)
 {
 	struct ov2312 *ov2312 = to_ov2312(sd);
 	int ret;
 
 	mutex_lock(&ov2312->lock);
-	if (ov2312->streaming == enable) {
-		mutex_unlock(&ov2312->lock);
-		return 0;
-	}
 
-	if (enable) {
+	if (!ov2312->enable_count) {
 		ret = pm_runtime_resume_and_get(ov2312->dev);
-		if (ret < 0) {
+		if (ret < 0)
 			goto err_unlock;
-		}
 
 		ret = ov2312_start_stream(ov2312);
 		if (ret < 0)
 			goto err_runtime_put;
-	} else {
-		ret = ov2312_stop_stream(ov2312);
-		if (ret < 0)
-			goto err_runtime_put;
-		pm_runtime_put(ov2312->dev);
 	}
 
-	ov2312->streaming = enable;
+	ov2312->enable_count++;
+
 	mutex_unlock(&ov2312->lock);
+
 	return 0;
 
 err_runtime_put:
@@ -571,28 +557,54 @@ err_runtime_put:
 err_unlock:
 	mutex_unlock(&ov2312->lock);
 	dev_err(ov2312->dev,
-		"%s: failed to setup streaming %d\n", __func__, ret);
+		"%s: failed to enable streams %d\n", __func__, ret);
 	return ret;
 }
 
-static struct v4l2_subdev_video_ops ov2312_subdev_video_ops = {
-	.s_stream = ov2312_set_stream,
-	.g_frame_interval = ov2312_get_frame_interval,
-	.s_frame_interval = ov2312_set_frame_interval,
-};
+static int ov2312_sd_disable_streams(struct v4l2_subdev *sd,
+					struct v4l2_subdev_state *state,
+					u32 pad, u64 streams_mask)
+{
+	struct ov2312 *ov2312 = to_ov2312(sd);
+	int ret;
 
-static struct v4l2_subdev_pad_ops ov2312_subdev_pad_ops = {
-	.init_cfg = ov2312_init_cfg,
+	mutex_lock(&ov2312->lock);
+
+	if (ov2312->enable_count == 1) {
+		ret = ov2312_stop_stream(ov2312);
+		if (ret < 0)
+			goto err_runtime_put;
+	}
+
+	ov2312->enable_count--;
+	mutex_unlock(&ov2312->lock);
+
+	return 0;
+
+err_runtime_put:
+	mutex_unlock(&ov2312->lock);
+	pm_runtime_put(ov2312->dev);
+	return ret;
+}
+
+static const struct v4l2_subdev_pad_ops ov2312_subdev_pad_ops = {
 	.get_fmt = v4l2_subdev_get_fmt,
 	.set_fmt = ov2312_set_fmt,
 	.enum_mbus_code = ov2312_enum_mbus_code,
 	.enum_frame_size = ov2312_enum_frame_sizes,
 	.set_routing = ov2312_set_routing,
 	.get_frame_desc	= ov2312_get_frame_desc,
+	.get_frame_interval = ov2312_get_frame_interval,
+	.set_frame_interval = ov2312_set_frame_interval,
+	.enable_streams = ov2312_sd_enable_streams,
+	.disable_streams = ov2312_sd_disable_streams,
 };
 
-static struct v4l2_subdev_ops ov2312_subdev_ops = {
-	.video	= &ov2312_subdev_video_ops,
+static const struct v4l2_subdev_internal_ops ov2312_internal_ops = {
+	.init_state = ov2312_init_state,
+};
+
+static const struct v4l2_subdev_ops ov2312_subdev_ops = {
 	.pad	= &ov2312_subdev_pad_ops,
 };
 
@@ -625,9 +637,8 @@ static int ov2312_probe(struct i2c_client *client)
 		return PTR_ERR(ov2312->regmap);
 
 	/* Initialize Shutdown GPIO */
-	ov2312->reset_gpio = devm_gpiod_get_optional(ov2312->dev,
-							 "reset",
-							 GPIOD_OUT_HIGH);
+	ov2312->reset_gpio = devm_gpiod_get_optional(ov2312->dev, "reset",
+						     GPIOD_OUT_HIGH);
 	if (IS_ERR(ov2312->reset_gpio))
 		return PTR_ERR(ov2312->reset_gpio);
 
@@ -654,13 +665,12 @@ static int ov2312_probe(struct i2c_client *client)
 	/* Initialize the subdev and its controls. */
 	sd = &ov2312->sd;
 	v4l2_i2c_subdev_init(sd, client, &ov2312_subdev_ops);
-
+	sd->internal_ops = &ov2312_internal_ops;
 	sd->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE |
-		     V4L2_SUBDEV_FL_HAS_EVENTS | V4L2_SUBDEV_FL_MULTIPLEXED;
+		     V4L2_SUBDEV_FL_HAS_EVENTS | V4L2_SUBDEV_FL_STREAMS;
 
 	/* Initialize the media entity. */
 	ov2312->pad.flags = MEDIA_PAD_FL_SOURCE;
-	ov2312->pad.stream_count = 2;
 	sd->entity.function = MEDIA_ENT_F_CAM_SENSOR;
 	ret = media_entity_pads_init(&sd->entity, 1, &ov2312->pad);
 	if (ret < 0) {
@@ -748,7 +758,7 @@ err_media_cleanup:
 	return ret;
 }
 
-static int ov2312_remove(struct i2c_client *client)
+static void ov2312_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov2312 *ov2312 = to_ov2312(sd);
@@ -760,8 +770,6 @@ static int ov2312_remove(struct i2c_client *client)
 	mutex_destroy(&ov2312->lock);
 
 	pm_runtime_disable(ov2312->dev);
-
-	return 0;
 }
 
 static const struct i2c_device_id ov2312_id[] = {
@@ -784,7 +792,7 @@ static struct i2c_driver ov2312_i2c_driver = {
 		.pm	= &ov2312_pm_ops,
 		.of_match_table = of_match_ptr(ov2312_of_match),
 	},
-	.probe_new	= ov2312_probe,
+	.probe		= ov2312_probe,
 	.remove		= ov2312_remove,
 	.id_table	= ov2312_id,
 };
@@ -793,4 +801,4 @@ module_i2c_driver(ov2312_i2c_driver);
 
 MODULE_AUTHOR("Jai Luthra <j-luthra@ti.com>");
 MODULE_DESCRIPTION("OV2312 RGB-IR Image Sensor driver");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

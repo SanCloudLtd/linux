@@ -4,9 +4,13 @@
  * Author: James.Qian.Wang <james.qian.wang@arm.com>
  *
  */
+#include <linux/of.h>
+#include <linux/seq_file.h>
+
 #include <drm/drm_print.h>
 
 #include "komeda_dev.h"
+#include "komeda_kms.h"
 #include "komeda_pipeline.h"
 
 /** komeda_pipeline_add - Add a pipeline to &komeda_dev */
@@ -138,9 +142,10 @@ komeda_pipeline_get_first_component(struct komeda_pipeline *pipe,
 				    u32 comp_mask)
 {
 	struct komeda_component *c = NULL;
+	unsigned long comp_mask_local = (unsigned long)comp_mask;
 	int id;
 
-	id = find_first_bit((unsigned long *)&comp_mask, 32);
+	id = find_first_bit(&comp_mask_local, 32);
 	if (id < 32)
 		c = komeda_pipeline_get_component(pipe, id);
 
@@ -243,7 +248,7 @@ static void komeda_component_dump(struct komeda_component *c)
 		  c->max_active_outputs, c->supported_outputs);
 }
 
-static void komeda_pipeline_dump(struct komeda_pipeline *pipe)
+void komeda_pipeline_dump(struct komeda_pipeline *pipe)
 {
 	struct komeda_component *c;
 	int id;
@@ -347,7 +352,6 @@ int komeda_assemble_pipelines(struct komeda_dev *mdev)
 		pipe = mdev->pipelines[i];
 
 		komeda_pipeline_assemble(pipe);
-		komeda_pipeline_dump(pipe);
 	}
 
 	return 0;

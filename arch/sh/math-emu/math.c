@@ -15,6 +15,8 @@
 #include <linux/perf_event.h>
 
 #include <linux/uaccess.h>
+
+#include <asm/fpu.h>
 #include <asm/processor.h>
 #include <asm/io.h>
 
@@ -51,8 +53,8 @@
 #define Rn	(regs->regs[n])
 #define Rm	(regs->regs[m])
 
-#define WRITE(d,a)	({if(put_user(d, (typeof (d)*)a)) return -EFAULT;})
-#define READ(d,a)	({if(get_user(d, (typeof (d)*)a)) return -EFAULT;})
+#define MWRITE(d,a)	({if(put_user(d, (typeof (d) __user *)a)) return -EFAULT;})
+#define MREAD(d,a)	({if(get_user(d, (typeof (d) __user *)a)) return -EFAULT;})
 
 #define PACK_S(r,f)	FP_PACK_SP(&r,f)
 #define UNPACK_S(f,r)	FP_UNPACK_SP(f,&r)
@@ -157,11 +159,11 @@ fmov_idx_reg(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 {
 	if (FPSCR_SZ) {
 		FMOV_EXT(n);
-		READ(FRn, Rm + R0 + 4);
+		MREAD(FRn, Rm + R0 + 4);
 		n++;
-		READ(FRn, Rm + R0);
+		MREAD(FRn, Rm + R0);
 	} else {
-		READ(FRn, Rm + R0);
+		MREAD(FRn, Rm + R0);
 	}
 
 	return 0;
@@ -173,11 +175,11 @@ fmov_mem_reg(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 {
 	if (FPSCR_SZ) {
 		FMOV_EXT(n);
-		READ(FRn, Rm + 4);
+		MREAD(FRn, Rm + 4);
 		n++;
-		READ(FRn, Rm);
+		MREAD(FRn, Rm);
 	} else {
-		READ(FRn, Rm);
+		MREAD(FRn, Rm);
 	}
 
 	return 0;
@@ -189,12 +191,12 @@ fmov_inc_reg(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 {
 	if (FPSCR_SZ) {
 		FMOV_EXT(n);
-		READ(FRn, Rm + 4);
+		MREAD(FRn, Rm + 4);
 		n++;
-		READ(FRn, Rm);
+		MREAD(FRn, Rm);
 		Rm += 8;
 	} else {
-		READ(FRn, Rm);
+		MREAD(FRn, Rm);
 		Rm += 4;
 	}
 
@@ -207,11 +209,11 @@ fmov_reg_idx(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 {
 	if (FPSCR_SZ) {
 		FMOV_EXT(m);
-		WRITE(FRm, Rn + R0 + 4);
+		MWRITE(FRm, Rn + R0 + 4);
 		m++;
-		WRITE(FRm, Rn + R0);
+		MWRITE(FRm, Rn + R0);
 	} else {
-		WRITE(FRm, Rn + R0);
+		MWRITE(FRm, Rn + R0);
 	}
 
 	return 0;
@@ -223,11 +225,11 @@ fmov_reg_mem(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 {
 	if (FPSCR_SZ) {
 		FMOV_EXT(m);
-		WRITE(FRm, Rn + 4);
+		MWRITE(FRm, Rn + 4);
 		m++;
-		WRITE(FRm, Rn);
+		MWRITE(FRm, Rn);
 	} else {
-		WRITE(FRm, Rn);
+		MWRITE(FRm, Rn);
 	}
 
 	return 0;
@@ -240,12 +242,12 @@ fmov_reg_dec(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, int m,
 	if (FPSCR_SZ) {
 		FMOV_EXT(m);
 		Rn -= 8;
-		WRITE(FRm, Rn + 4);
+		MWRITE(FRm, Rn + 4);
 		m++;
-		WRITE(FRm, Rn);
+		MWRITE(FRm, Rn);
 	} else {
 		Rn -= 4;
-		WRITE(FRm, Rn);
+		MWRITE(FRm, Rn);
 	}
 
 	return 0;
@@ -445,11 +447,11 @@ id_sys(struct sh_fpu_soft_struct *fregs, struct pt_regs *regs, u16 code)
 	case 0x4052:
 	case 0x4062:
 		Rn -= 4;
-		WRITE(*reg, Rn);
+		MWRITE(*reg, Rn);
 		break;
 	case 0x4056:
 	case 0x4066:
-		READ(*reg, Rn);
+		MREAD(*reg, Rn);
 		Rn += 4;
 		break;
 	default:

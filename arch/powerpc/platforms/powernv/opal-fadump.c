@@ -112,7 +112,7 @@ static void opal_fadump_update_config(struct fw_dump *fadump_conf,
  * This function is called in the capture kernel to get configuration details
  * from metadata setup by the first kernel.
  */
-static void opal_fadump_get_config(struct fw_dump *fadump_conf,
+static void __init opal_fadump_get_config(struct fw_dump *fadump_conf,
 				   const struct opal_fadump_mem_struct *fdm)
 {
 	unsigned long base, size, last_end, hole_size;
@@ -206,7 +206,7 @@ static u64 opal_fadump_init_mem_struct(struct fw_dump *fadump_conf)
 	opal_fdm->region_cnt = cpu_to_be16(reg_cnt);
 
 	/*
-	 * Kernel metadata is passed to f/w and retrieved in capture kerenl.
+	 * Kernel metadata is passed to f/w and retrieved in capture kernel.
 	 * So, use it to save fadump header address instead of calculating it.
 	 */
 	opal_fdm->fadumphdr_addr = cpu_to_be64(be64_to_cpu(opal_fdm->rgn[0].dest) +
@@ -513,8 +513,8 @@ out:
 	final_note(note_buf);
 
 	pr_debug("Updating elfcore header (%llx) with cpu notes\n",
-		 fdh->elfcorehdr_addr);
-	fadump_update_elfcore_header(__va(fdh->elfcorehdr_addr));
+		 fadump_conf->elfcorehdr_addr);
+	fadump_update_elfcore_header((char *)fadump_conf->elfcorehdr_addr);
 	return 0;
 }
 
@@ -526,12 +526,7 @@ static int __init opal_fadump_process(struct fw_dump *fadump_conf)
 	if (!opal_fdm_active || !fadump_conf->fadumphdr_addr)
 		return rc;
 
-	/* Validate the fadump crash info header */
 	fdh = __va(fadump_conf->fadumphdr_addr);
-	if (fdh->magic_number != FADUMP_CRASH_INFO_MAGIC) {
-		pr_err("Crash info header is not valid.\n");
-		return rc;
-	}
 
 #ifdef CONFIG_OPAL_CORE
 	/*
@@ -545,18 +540,7 @@ static int __init opal_fadump_process(struct fw_dump *fadump_conf)
 		kernel_initiated = true;
 #endif
 
-	rc = opal_fadump_build_cpu_notes(fadump_conf, fdh);
-	if (rc)
-		return rc;
-
-	/*
-	 * We are done validating dump info and elfcore header is now ready
-	 * to be exported. set elfcorehdr_addr so that vmcore module will
-	 * export the elfcore header through '/proc/vmcore'.
-	 */
-	elfcorehdr_addr = fdh->elfcorehdr_addr;
-
-	return rc;
+	return opal_fadump_build_cpu_notes(fadump_conf, fdh);
 }
 
 static void opal_fadump_region_show(struct fw_dump *fadump_conf,
@@ -587,10 +571,10 @@ static void opal_fadump_region_show(struct fw_dump *fadump_conf,
 			   be64_to_cpu(fdm_ptr->rgn[i].size), dumped_bytes);
 	}
 
-	/* Dump is active. Show reserved area start address. */
+	/* Dump is active. Show preserved area start address. */
 	if (fadump_conf->dump_active) {
-		seq_printf(m, "\nMemory above %#016lx is reserved for saving crash dump\n",
-			   fadump_conf->reserve_dump_area_start);
+		seq_printf(m, "\nMemory above %#016llx is reserved for saving crash dump\n",
+			   fadump_conf->boot_mem_top);
 	}
 }
 
@@ -615,6 +599,12 @@ static void opal_fadump_trigger(struct fadump_crash_info_header *fdh,
 		pr_emerg("No backend support for MPIPL!\n");
 }
 
+/* FADUMP_MAX_MEM_REGS or lower */
+static int opal_fadump_max_boot_mem_rgns(void)
+{
+	return FADUMP_MAX_MEM_REGS;
+}
+
 static struct fadump_ops opal_fadump_ops = {
 	.fadump_init_mem_struct		= opal_fadump_init_mem_struct,
 	.fadump_get_metadata_size	= opal_fadump_get_metadata_size,
@@ -627,6 +617,7 @@ static struct fadump_ops opal_fadump_ops = {
 	.fadump_process			= opal_fadump_process,
 	.fadump_region_show		= opal_fadump_region_show,
 	.fadump_trigger			= opal_fadump_trigger,
+	.fadump_max_boot_mem_rgns	= opal_fadump_max_boot_mem_rgns,
 };
 
 void __init opal_fadump_dt_scan(struct fw_dump *fadump_conf, u64 node)
@@ -674,8 +665,10 @@ void __init opal_fadump_dt_scan(struct fw_dump *fadump_conf, u64 node)
 		}
 	}
 
-	fadump_conf->ops		= &opal_fadump_ops;
-	fadump_conf->fadump_supported	= 1;
+	fadump_conf->ops			= &opal_fadump_ops;
+	fadump_conf->fadump_supported		= 1;
+	/* TODO: Add support to pass additional parameters */
+	fadump_conf->param_area_supported	= 0;
 
 	/*
 	 * Firmware supports 32-bit field for size. Align it to PAGE_SIZE

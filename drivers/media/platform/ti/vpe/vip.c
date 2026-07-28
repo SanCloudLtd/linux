@@ -2,11 +2,10 @@
 /*
  * TI VIP capture driver
  *
- * Copyright (C) 2018 Texas Instruments Incorporated -  http://www.ti.com/
+ * Copyright (C) 2025 Texas Instruments Incorporated -  http://www.ti.com/
  * David Griego, <dagriego@biglakesoftware.com>
  * Dale Farnsworth, <dale@farnsworth.org>
- * Nikhil Devshatwar, <nikhil.nd@ti.com>
- * Benoit Parrot, <bparrot@ti.com>
+ * Yemike Abhilash Chandra, <y-abhilashchandra@ti.com>
  */
 
 #include <linux/clk.h>
@@ -55,22 +54,14 @@ MODULE_PARM_DESC(debug, "debug level (0-8)");
  */
 #define VIP_DESC_LIST_SIZE	(17 * sizeof(struct vpdma_dtd))
 
-#define vip_dbg(level, dev, fmt, arg...)	\
-		v4l2_dbg(level, debug, dev, fmt, ##arg)
-#define vip_err(dev, fmt, arg...)	\
-		v4l2_err(dev, fmt, ##arg)
-#define vip_info(dev, fmt, arg...)	\
-		v4l2_info(dev, fmt, ##arg)
-
 #define CTRL_CORE_SMA_SW_1      0x534
+
 /*
- * The srce_info structure contains per-srce data.
+ * port flag bits
  */
-struct vip_srce_info {
-	u8	base_channel;	/* the VPDMA channel nummber */
-	u8	vb_index;	/* input frame f, f-1, f-2 index */
-	u8	vb_part;	/* identifies section of co-planar formats */
-};
+#define FLAG_INTERLACED	BIT(4)
+#define FLAG_MULT_PORT		BIT(6)
+#define FLAG_MULT_ANC		BIT(7)
 
 #define VIP_VPDMA_FIFO_SIZE	2
 #define VIP_DROPQ_SIZE		3
@@ -79,11 +70,48 @@ struct vip_srce_info {
  * Define indices into the srce_info tables
  */
 
-#define VIP_SRCE_MULT_PORT		0
-#define VIP_SRCE_MULT_ANC		1
+#define VIP_SRCE_MULT_PORT	0
+#define VIP_SRCE_MULT_ANC	1
 #define VIP_SRCE_LUMA		2
-#define VIP_SRCE_CHROMA		3
+#define VIP_SRCE_CHROMA	3
 #define VIP_SRCE_RGB		4
+
+#define reg_read(dev, offset) ioread32((dev)->base + (offset))
+#define reg_write(dev, offset, val) iowrite32((val), (dev)->base + (offset))
+
+#define GET_OFFSET_TOP(port, obj, reg)	\
+	((obj)->res->start - (port)->dev->res->start + (reg))
+
+#define VIP_SET_MMR_ADB_HDR(port, hdr, regs, offset_a)	\
+	VPDMA_SET_MMR_ADB_HDR((port)->mmr_adb, vip_mmr_adb, hdr, regs, offset_a)
+
+/*
+ * These represent the module resets bit for slice 1
+ * Upon detecting slice2 we simply left shift by 1
+ */
+#define VIP_DP_RST	BIT(16)
+#define VIP_CSC_RST	BIT(20)
+#define VIP_SC_RST	BIT(22)
+
+#define VIP_PARSER_PORT(p)		(VIP_PARSER_PORTA_0 + ((p) * 0x8U))
+#define VIP_PARSER_EXTRA_PORT(p)	(VIP_PARSER_PORTA_1 + ((p) * 0x8U))
+#define VIP_PARSER_CROP_H_PORT(p) \
+		(VIP_PARSER_PORTA_EXTRA4 + ((p) * 0x10U))
+#define VIP_PARSER_CROP_V_PORT(p) \
+		(VIP_PARSER_PORTA_EXTRA5 + ((p) * 0x10U))
+#define VIP_PARSER_STOP_IMM_PORT(p)	(VIP_PARSER_PORTA_EXTRA6 + ((p) * 0x4U))
+
+#define PARSER_IRQ_MASK (VIP_PORTA_OUTPUT_FIFO_YUV | \
+			 VIP_PORTB_OUTPUT_FIFO_YUV)
+
+/*
+ * The srce_info structure contains per-srce data.
+ */
+struct vip_srce_info {
+	u8	base_channel;	/* the VPDMA channel number */
+	u8	vb_index;	/* input frame f, f-1, f-2 index */
+	u8	vb_part;	/* identifies section of co-planar formats */
+};
 
 static struct vip_srce_info srce_info[5] = {
 	[VIP_SRCE_MULT_PORT] = {
@@ -245,6 +273,44 @@ static struct vip_fmt vip_formats[VIP_MAX_ACTIVE_FMT] = {
 	},
 };
 
+/*
+ * DMA address/data block for the shadow registers
+ */
+struct vip_mmr_adb {
+	struct vpdma_adb_hdr	sc_hdr0;
+	u32			sc_regs0[7];
+	u32			sc_pad0[1];
+	struct vpdma_adb_hdr	sc_hdr8;
+	u32			sc_regs8[6];
+	u32			sc_pad8[2];
+	struct vpdma_adb_hdr	sc_hdr17;
+	u32			sc_regs17[9];
+	u32			sc_pad17[3];
+	struct vpdma_adb_hdr	csc_hdr;
+	u32			csc_regs[6];
+	u32			csc_pad[2];
+};
+
+/*
+ * Function prototype declarations
+ */
+static int alloc_port(struct vip_dev *, int);
+static void free_port(struct vip_port *);
+static int vip_setup_parser(struct vip_port *port);
+static int vip_setup_scaler(struct vip_stream *stream);
+static void vip_enable_parser(struct vip_port *port, bool on);
+static void vip_reset_parser(struct vip_port *port, bool on);
+static void vip_parser_stop_imm(struct vip_port *port, bool on);
+static void stop_dma(struct vip_stream *stream, bool clear_list);
+static int vip_load_vpdma_list_fifo(struct vip_stream *stream);
+static inline bool is_scaler_available(struct vip_port *port);
+static inline bool allocate_scaler(struct vip_port *port);
+static inline void free_scaler(struct vip_port *port);
+static bool is_csc_available(struct vip_port *port);
+static bool allocate_csc(struct vip_port *port,
+			 enum vip_csc_state csc_direction);
+static void free_csc(struct vip_port *port);
+
 /* initialize  v4l2_format_info member in vip_formats array */
 static void vip_init_format_info(struct device *dev)
 {
@@ -274,15 +340,14 @@ static char *fourcc_to_str(u32 fmt)
 /*
  * Find our format description corresponding to the passed v4l2_format
  */
-
 static struct vip_fmt *find_port_format_by_pix(struct vip_port *port,
 					       u32 pixelformat)
 {
 	struct vip_fmt *fmt;
-	unsigned int k;
+	unsigned int index;
 
-	for (k = 0; k < port->num_active_fmt; k++) {
-		fmt = port->active_fmt[k];
+	for (index = 0; index < port->num_active_fmt; index++) {
+		fmt = port->active_fmt[index];
 		if (fmt->fourcc == pixelformat)
 			return fmt;
 	}
@@ -294,10 +359,10 @@ static struct vip_fmt *find_port_format_by_code(struct vip_port *port,
 						u32 code)
 {
 	struct vip_fmt *fmt;
-	unsigned int k;
+	unsigned int index;
 
-	for (k = 0; k < port->num_active_fmt; k++) {
-		fmt = port->active_fmt[k];
+	for (index = 0; index < port->num_active_fmt; index++) {
+		fmt = port->active_fmt[index];
 		if (fmt->code == code)
 			return fmt;
 	}
@@ -312,17 +377,17 @@ inline struct vip_port *notifier_to_vip_port(struct v4l2_async_notifier *n)
 
 static bool vip_is_mbuscode_yuv(u32 code)
 {
-	return ((code & 0xFF00) == 0x2000);
+	return ((code & 0xff00) == 0x2000);
 }
 
 static bool vip_is_mbuscode_rgb(u32 code)
 {
-	return ((code & 0xFF00) == 0x1000);
+	return ((code & 0xff00) == 0x1000);
 }
 
 static bool vip_is_mbuscode_raw(u32 code)
 {
-	return ((code & 0xFF00) == 0x3000);
+	return ((code & 0xff00) == 0x3000);
 }
 
 /*
@@ -352,41 +417,6 @@ vip_csc_direction(u32 src_code, const struct v4l2_format_info *dfinfo)
 }
 
 /*
- * port flag bits
- */
-#define FLAG_FRAME_1D		BIT(0)
-#define FLAG_EVEN_LINE_SKIP	BIT(1)
-#define FLAG_ODD_LINE_SKIP	BIT(2)
-#define FLAG_MODE_TILED		BIT(3)
-#define FLAG_INTERLACED		BIT(4)
-#define FLAG_MULTIPLEXED	BIT(5)
-#define FLAG_MULT_PORT		BIT(6)
-#define FLAG_MULT_ANC		BIT(7)
-
-/*
- * Function prototype declarations
- */
-static int alloc_port(struct vip_dev *, int);
-static void free_port(struct vip_port *);
-static int vip_setup_parser(struct vip_port *port);
-static int vip_setup_scaler(struct vip_stream *stream);
-static void vip_enable_parser(struct vip_port *port, bool on);
-static void vip_reset_parser(struct vip_port *port, bool on);
-static void vip_parser_stop_imm(struct vip_port *port, bool on);
-static void stop_dma(struct vip_stream *stream, bool clear_list);
-static int vip_load_vpdma_list_fifo(struct vip_stream *stream);
-static inline bool is_scaler_available(struct vip_port *port);
-static inline bool allocate_scaler(struct vip_port *port);
-static inline void free_scaler(struct vip_port *port);
-static bool is_csc_available(struct vip_port *port);
-static bool allocate_csc(struct vip_port *port,
-			 enum vip_csc_state csc_direction);
-static void free_csc(struct vip_port *port);
-
-#define reg_read(dev, offset) ioread32((dev)->base + (offset))
-#define reg_write(dev, offset, val) iowrite32((val), (dev)->base + (offset))
-
-/*
  * Insert a masked field into a 32-bit field
  */
 static void insert_field(u32 *valp, u32 field, u32 mask, int shift)
@@ -397,30 +427,6 @@ static void insert_field(u32 *valp, u32 field, u32 mask, int shift)
 	val |= (field & mask) << shift;
 	*valp = val;
 }
-
-/*
- * DMA address/data block for the shadow registers
- */
-struct vip_mmr_adb {
-	struct vpdma_adb_hdr	sc_hdr0;
-	u32			sc_regs0[7];
-	u32			sc_pad0[1];
-	struct vpdma_adb_hdr	sc_hdr8;
-	u32			sc_regs8[6];
-	u32			sc_pad8[2];
-	struct vpdma_adb_hdr	sc_hdr17;
-	u32			sc_regs17[9];
-	u32			sc_pad17[3];
-	struct vpdma_adb_hdr	csc_hdr;
-	u32			csc_regs[6];
-	u32			csc_pad[2];
-};
-
-#define GET_OFFSET_TOP(port, obj, reg)	\
-	((obj)->res->start - (port)->dev->res->start + (reg))
-
-#define VIP_SET_MMR_ADB_HDR(port, hdr, regs, offset_a)	\
-	VPDMA_SET_MMR_ADB_HDR((port)->mmr_adb, vip_mmr_adb, hdr, regs, offset_a)
 
 /*
  * Set the headers for all of the address/data block structures.
@@ -438,18 +444,7 @@ static void init_adb_hdrs(struct vip_port *port)
 
 };
 
-/*
- * These represent the module resets bit for slice 1
- * Upon detecting slice2 we simply left shift by 1
- */
-#define VIP_DP_RST	BIT(16)
-#define VIP_PARSER_RST	BIT(18)
-#define VIP_CSC_RST	BIT(20)
-#define VIP_SC_RST	BIT(22)
-#define VIP_DS0_RST	BIT(25)
-#define VIP_DS1_RST	BIT(27)
-
-static void vip_module_reset(struct vip_dev *dev, uint32_t module, bool on)
+static void vip_module_toggle(struct vip_dev *dev, uint32_t module, bool on)
 {
 	u32 val = 0;
 
@@ -502,8 +497,7 @@ static void vip_shared_set_clock_enable(struct vip_shared *shared, bool on)
 {
 	u32 val = 0;
 
-	if (on)
-		val = VIP_VIP1_DATA_PATH_CLK_ENABLE | VIP_VPDMA_CLK_ENABLE;
+	val = VIP_VIP1_DATA_PATH_CLK_ENABLE | VIP_VPDMA_CLK_ENABLE;
 
 	reg_write(shared, VIP_CLK_ENABLE, val);
 }
@@ -570,8 +564,8 @@ static void vip_set_pclk_invert(struct vip_port *port)
 	} else if (port->dev->instance_id == VIP_INSTANCE3) {
 		offset = 10 - port->dev->slice_id;
 	} else {
-		vip_err(port, "%s: VIP instance id out of range...\n",
-			__func__);
+		v4l2_err(port, "%s: VIP instance id out of range...\n",
+			 __func__);
 		return;
 	}
 
@@ -580,14 +574,6 @@ static void vip_set_pclk_invert(struct vip_port *port)
 				   port->dev->syscon_pol_offset,
 				   1 << offset, 1 << offset);
 }
-
-#define VIP_PARSER_PORT(p)	(VIP_PARSER_PORTA_0 + ((p) * 0x8U))
-#define VIP_PARSER_EXTRA_PORT(p)	(VIP_PARSER_PORTA_1 + ((p) * 0x8U))
-#define VIP_PARSER_CROP_H_PORT(p) \
-		(VIP_PARSER_PORTA_EXTRA4 + ((p) * 0x10U))
-#define VIP_PARSER_CROP_V_PORT(p) \
-		(VIP_PARSER_PORTA_EXTRA5 + ((p) * 0x10U))
-#define VIP_PARSER_STOP_IMM_PORT(p)	(VIP_PARSER_PORTA_EXTRA6 + ((p) * 0x4U))
 
 static void vip_set_data_interface(struct vip_port *port,
 				   enum data_interface_modes mode)
@@ -605,8 +591,6 @@ static void vip_set_slice_path(struct vip_dev *dev,
 {
 	u32 val = 0;
 	int data_path_reg;
-
-	vip_dbg(3, dev, "%s:\n", __func__);
 
 	data_path_reg = VIP_VIP1_DATA_PATH_SELECT + 4 * dev->slice_id;
 
@@ -649,15 +633,15 @@ static void vip_set_slice_path(struct vip_dev *dev,
 		val |= (path_val) ? VIP_DS2_BYPASS : 0;
 		break;
 	default:
-		vip_err(dev, "%s: data_path 0x%x is not valid\n",
-			__func__, data_path);
+		v4l2_err(dev, "%s: data_path 0x%x is not valid\n",
+			 __func__, data_path);
 		return;
 	}
 	insert_field(&val, data_path, VIP_DATAPATH_SELECT_MASK,
 		     VIP_DATAPATH_SELECT_SHFT);
 	reg_write(dev, data_path_reg, val);
-	vip_dbg(3, dev, "%s: DATA_PATH_SELECT(%08X): %08X\n", __func__,
-		data_path_reg, reg_read(dev, data_path_reg));
+	v4l2_dbg(3, debug, dev, "%s: DATA_PATH_SELECT(%08X): %08X\n", __func__,
+		 data_path_reg, reg_read(dev, data_path_reg));
 }
 
 /*
@@ -681,7 +665,7 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 	struct vip_fmt *fmt = port->fmt;
 	int channel, plane = 0;
 	int max_width, max_height;
-	dma_addr_t dma_addr;
+	dma_addr_t dma_addr = 0;
 	u32 flags;
 	u32 width = stream->width;
 
@@ -724,18 +708,13 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 		flags = port->flags;
 		break;
 	default:
-		vip_err(stream, "%s: srce_type 0x%x is not valid\n",
-			__func__, srce_type);
+		v4l2_err(stream, "%s: srce_type 0x%x is not valid\n",
+			 __func__, srce_type);
 		return -1;
 	}
 
 	if (dev->slice_id == VIP_SLICE2)
 		channel += VIP_CHAN_VIP2_OFFSET;
-
-	/* This is just for initialization purposes.
-	 * The actual dma_addr will be configured in vpdma_update_dma_addr
-	 */
-	dma_addr = 0;
 
 	if (port->fmt->vpdma_fmt[0] == &vpdma_raw_fmts[VPDMA_DATA_FMT_RAW8]) {
 		/*
@@ -747,8 +726,8 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 		 * allocated frame buffer.
 		 */
 		width >>= 1;
-		vip_dbg(1, stream, "%s: 8 bit raw detected, adjusting width to %d\n",
-			__func__, width);
+		v4l2_dbg(1, debug, stream, "%s: 8 bit raw detected, adjusting width to %d\n",
+			 __func__, width);
 	}
 
 	/*
@@ -761,7 +740,7 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 
 		max_width = MAX_OUT_WIDTH_REG1;
 		max_height = MAX_OUT_HEIGHT_REG1;
-	} else {
+	} else if (dev->slice_id == VIP_SLICE2) {
 		vpdma_set_max_size(dev->shared->vpdma, VPDMA_MAX_SIZE2,
 				   width, stream->height);
 
@@ -781,7 +760,6 @@ static int add_out_dtd(struct vip_stream *stream, int srce_type)
 				  stream->bytesperline, c_rect,
 				  fmt->vpdma_fmt[plane], dma_addr,
 				  max_width, max_height, channel, flags);
-
 	return 0;
 }
 
@@ -807,9 +785,6 @@ static void add_stream_dtds(struct vip_stream *stream)
 	if (srce_type == VIP_SRCE_LUMA && port->fmt->coplanar)
 		add_out_dtd(stream, VIP_SRCE_CHROMA);
 }
-
-#define PARSER_IRQ_MASK (VIP_PORTA_OUTPUT_FIFO_YUV | \
-			 VIP_PORTB_OUTPUT_FIFO_YUV)
 
 static void enable_irqs(struct vip_dev *dev, int irq_num, int list_num)
 {
@@ -889,19 +864,19 @@ static void start_dma(struct vip_stream *stream, struct vip_buffer *buf)
 	int drop_data;
 
 	if (vpdma_list_busy(vpdma, list_num)) {
-		vip_err(stream, "vpdma list busy, cannot post\n");
+		v4l2_err(stream, "vpdma list busy, cannot post\n");
 		return;				/* nothing to do */
 	}
 
 	if (buf) {
 		dma_addr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
 		drop_data = 0;
-		vip_dbg(4, stream, "%s: vb2 buf idx:%d, dma_addr:%pad\n",
-			__func__, buf->vb.vb2_buf.index, &dma_addr);
+		v4l2_dbg(4, debug, stream, "%s: vb2 buf idx:%d, dma_addr:%pad\n",
+			 __func__, buf->vb.vb2_buf.index, &dma_addr);
 	} else {
 		dma_addr = 0;
 		drop_data = 1;
-		vip_dbg(4, stream, "%s: dropped\n", __func__);
+		v4l2_dbg(4, debug, stream, "%s: dropped\n", __func__);
 	}
 
 	vpdma_update_dma_addr(dev->shared->vpdma, &stream->desc_list,
@@ -926,9 +901,9 @@ static void vip_schedule_next_buffer(struct vip_stream *stream)
 
 	spin_lock_irqsave(&dev->slock, flags);
 	if (list_empty(&stream->vidq)) {
-		vip_dbg(4, stream, "Dropping frame\n");
+		v4l2_dbg(4, debug, stream, "Dropping frame\n");
 		if (list_empty(&stream->dropq)) {
-			vip_err(stream, "No dropq buffer left!");
+			v4l2_err(stream, "No dropq buffer left!");
 			spin_unlock_irqrestore(&dev->slock, flags);
 			return;
 		}
@@ -943,7 +918,7 @@ static void vip_schedule_next_buffer(struct vip_stream *stream)
 				 struct vip_buffer, list);
 		buf->drop = false;
 		list_move_tail(&buf->list, &stream->post_bufs);
-		vip_dbg(4, stream, "added next buffer\n");
+		v4l2_dbg(4, debug, stream, "added next buffer\n");
 	}
 
 	spin_unlock_irqrestore(&dev->slock, flags);
@@ -970,8 +945,8 @@ static void vip_process_buffer_complete(struct vip_stream *stream)
 	}
 
 	if (buf) {
-		vip_dbg(4, stream, "vip buffer complete 0x%x, 0x%x\n",
-			(unsigned int)buf, buf->drop);
+		v4l2_dbg(4, debug, stream, "vip buffer complete 0x%x, 0x%x\n",
+			 (unsigned int)buf, buf->drop);
 
 		vb = &buf->vb;
 		vb->field = stream->field;
@@ -989,7 +964,7 @@ static void vip_process_buffer_complete(struct vip_stream *stream)
 			vb2_buffer_done(&vb->vb2_buf, VB2_BUF_STATE_DONE);
 		}
 	} else {
-		vip_err(stream, "%s: buf is null!!!\n", __func__);
+		v4l2_err(stream, "%s: buf is null!!!\n", __func__);
 		return;
 	}
 
@@ -1013,11 +988,11 @@ static int vip_reset_vpdma(struct vip_stream *stream)
 		list_del(&buf->list);
 		if (buf->drop == 1) {
 			list_add_tail(&buf->list, &stream->dropq);
-			vip_dbg(4, stream, "requeueing drop buffer on dropq\n");
+			v4l2_dbg(4, debug, stream, "requeueing drop buffer on dropq\n");
 		} else {
 			list_add(&buf->list, &stream->vidq);
-			vip_dbg(4, stream, "requeueing vb2 buf idx:%d on vidq\n",
-				buf->vb.vb2_buf.index);
+			v4l2_dbg(4, debug, stream, "requeueing vb2 buf idx:%d on vidq\n",
+				 buf->vb.vb2_buf.index);
 		}
 	}
 	spin_unlock_irqrestore(&dev->slock, flags);
@@ -1035,8 +1010,8 @@ static void vip_overflow_recovery_work(struct work_struct *work)
 	struct vip_port *port = stream->port;
 	struct vip_dev *dev = port->dev;
 
-	vip_err(stream, "%s: Port %c\n", __func__,
-		port->port_id == VIP_PORTA ? 'A' : 'B');
+	v4l2_err(stream, "%s: Port %c\n", __func__,
+		 port->port_id == VIP_PORTA ? 'A' : 'B');
 
 	disable_irqs(dev, dev->slice_id, stream->list_num);
 	clear_irqs(dev, dev->slice_id, stream->list_num);
@@ -1061,7 +1036,7 @@ static void vip_overflow_recovery_work(struct work_struct *work)
 	 *      bit location of the VIP_CLKC_RST register which is connected
 	 *      to VIP_PARSER
 	 */
-	vip_module_reset(dev, VIP_DP_RST, true);
+	vip_module_toggle(dev, VIP_DP_RST, true);
 
 	usleep_range(200, 250);
 
@@ -1082,7 +1057,7 @@ static void vip_overflow_recovery_work(struct work_struct *work)
 	 *	the bit location of the VIP_CLKC_RST register which is
 	 *	connected to VIP_PARSER
 	 */
-	vip_module_reset(dev, VIP_DP_RST, false);
+	vip_module_toggle(dev, VIP_DP_RST, false);
 
 	/* 10.	(Delay) */
 	/* 11.	SC coeff downloaded (if VIP_SCALER is being used) */
@@ -1112,8 +1087,8 @@ static void vip_overflow_recovery_work(struct work_struct *work)
 		 */
 		vip_enable_parser(port, true);
 	} else {
-		vip_err(stream, "%s: num_recovery limit exceeded leaving disabled\n",
-			__func__);
+		v4l2_err(stream, "%s: num_recovery limit exceeded leaving disabled\n",
+			 __func__);
 	}
 }
 
@@ -1126,52 +1101,54 @@ static void handle_parser_irqs(struct vip_dev *dev)
 	u32 irq_stat = reg_read(parser, VIP_PARSER_FIQ_STATUS);
 	int i;
 
-	vip_dbg(3, dev, "%s: FIQ_STATUS: 0x%08x\n", __func__, irq_stat);
+	v4l2_dbg(3, debug, dev, "%s: FIQ_STATUS: 0x%08x\n", __func__, irq_stat);
 
 	/* Clear all Parser Interrupt */
 	reg_write(parser, VIP_PARSER_FIQ_CLR, irq_stat);
 	reg_write(parser, VIP_PARSER_FIQ_CLR, 0x0);
 
+	#ifdef DEBUG
 	if (irq_stat & VIP_PORTA_VDET)
-		vip_dbg(3, dev, "VIP_PORTA_VDET\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_VDET\n");
 	if (irq_stat & VIP_PORTB_VDET)
-		vip_dbg(3, dev, "VIP_PORTB_VDET\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_VDET\n");
 	if (irq_stat & VIP_PORTA_ASYNC_FIFO_OF)
-		vip_err(dev, "VIP_PORTA_ASYNC_FIFO_OF\n");
+		v4l2_err(dev, "VIP_PORTA_ASYNC_FIFO_OF\n");
 	if (irq_stat & VIP_PORTB_ASYNC_FIFO_OF)
-		vip_err(dev, "VIP_PORTB_ASYNC_FIFO_OF\n");
+		v4l2_err(dev, "VIP_PORTB_ASYNC_FIFO_OF\n");
 	if (irq_stat & VIP_PORTA_OUTPUT_FIFO_YUV)
-		vip_err(dev, "VIP_PORTA_OUTPUT_FIFO_YUV\n");
+		v4l2_err(dev, "VIP_PORTA_OUTPUT_FIFO_YUV\n");
 	if (irq_stat & VIP_PORTA_OUTPUT_FIFO_ANC)
-		vip_err(dev, "VIP_PORTA_OUTPUT_FIFO_ANC\n");
+		v4l2_err(dev, "VIP_PORTA_OUTPUT_FIFO_ANC\n");
 	if (irq_stat & VIP_PORTB_OUTPUT_FIFO_YUV)
-		vip_err(dev, "VIP_PORTB_OUTPUT_FIFO_YUV\n");
+		v4l2_err(dev, "VIP_PORTB_OUTPUT_FIFO_YUV\n");
 	if (irq_stat & VIP_PORTB_OUTPUT_FIFO_ANC)
-		vip_err(dev, "VIP_PORTB_OUTPUT_FIFO_ANC\n");
+		v4l2_err(dev, "VIP_PORTB_OUTPUT_FIFO_ANC\n");
 	if (irq_stat & VIP_PORTA_CONN)
-		vip_dbg(3, dev, "VIP_PORTA_CONN\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_CONN\n");
 	if (irq_stat & VIP_PORTA_DISCONN)
-		vip_dbg(3, dev, "VIP_PORTA_DISCONN\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_DISCONN\n");
 	if (irq_stat & VIP_PORTB_CONN)
-		vip_dbg(3, dev, "VIP_PORTB_CONN\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_CONN\n");
 	if (irq_stat & VIP_PORTB_DISCONN)
-		vip_dbg(3, dev, "VIP_PORTB_DISCONN\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_DISCONN\n");
 	if (irq_stat & VIP_PORTA_SRC0_SIZE)
-		vip_dbg(3, dev, "VIP_PORTA_SRC0_SIZE\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_SRC0_SIZE\n");
 	if (irq_stat & VIP_PORTB_SRC0_SIZE)
-		vip_dbg(3, dev, "VIP_PORTB_SRC0_SIZE\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_SRC0_SIZE\n");
 	if (irq_stat & VIP_PORTA_YUV_PROTO_VIOLATION)
-		vip_dbg(3, dev, "VIP_PORTA_YUV_PROTO_VIOLATION\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_YUV_PROTO_VIOLATION\n");
 	if (irq_stat & VIP_PORTA_ANC_PROTO_VIOLATION)
-		vip_dbg(3, dev, "VIP_PORTA_ANC_PROTO_VIOLATION\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_ANC_PROTO_VIOLATION\n");
 	if (irq_stat & VIP_PORTB_YUV_PROTO_VIOLATION)
-		vip_dbg(3, dev, "VIP_PORTB_YUV_PROTO_VIOLATION\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_YUV_PROTO_VIOLATION\n");
 	if (irq_stat & VIP_PORTB_ANC_PROTO_VIOLATION)
-		vip_dbg(3, dev, "VIP_PORTB_ANC_PROTO_VIOLATION\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_ANC_PROTO_VIOLATION\n");
 	if (irq_stat & VIP_PORTA_CFG_DISABLE_COMPLETE)
-		vip_dbg(3, dev, "VIP_PORTA_CFG_DISABLE_COMPLETE\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTA_CFG_DISABLE_COMPLETE\n");
 	if (irq_stat & VIP_PORTB_CFG_DISABLE_COMPLETE)
-		vip_dbg(3, dev, "VIP_PORTB_CFG_DISABLE_COMPLETE\n");
+		v4l2_dbg(3, debug, dev, "VIP_PORTB_CFG_DISABLE_COMPLETE\n");
+	#endif
 
 	if (irq_stat & (VIP_PORTA_ASYNC_FIFO_OF |
 			VIP_PORTA_OUTPUT_FIFO_YUV |
@@ -1229,8 +1206,8 @@ static irqreturn_t vip_irq(int irq_vip, void *data)
 	irqst_saved = reg_read(dev->shared, reg_addr);
 	irqst = irqst_saved;
 
-	vip_dbg(8, dev, "IRQ %d VIP_INT%d_STATUS0 0x%x\n",
-		irq_vip, irq_num, irqst);
+	v4l2_dbg(8, debug, dev, "IRQ %d VIP_INT%d_STATUS0 0x%x\n",
+		 irq_vip, irq_num, irqst);
 	if (irqst) {
 		if (irqst & (VIP_VIP1_PARSER_INT << (irq_num * 1))) {
 			irqst &= ~(VIP_VIP1_PARSER_INT << (irq_num * 1));
@@ -1242,12 +1219,12 @@ static irqreturn_t vip_irq(int irq_vip, void *data)
 			if (!(irqst & (1 << list_num * 2)))
 				continue;
 
-			vip_dbg(8, dev, "IRQ %d: handling LIST%d_COMPLETE\n",
-				irq_num, list_num);
+			v4l2_dbg(8, debug, dev, "IRQ %d: handling LIST%d_COMPLETE\n",
+				 irq_num, list_num);
 
 			stream = vpdma_hwlist_get_priv(vpdma, list_num);
 			if (!stream || stream->list_num != list_num) {
-				vip_err(dev, "IRQ occurred for unused list");
+				v4l2_err(dev, "IRQ occurred for unused list");
 				continue;
 			}
 
@@ -1327,7 +1304,7 @@ static int vip_querystd(struct file *file, void *fh, v4l2_std_id *std)
 
 	*std = stream->vfd->tvnorms;
 	v4l2_subdev_call(port->subdev, video, querystd, std);
-	vip_dbg(1, stream, "querystd: 0x%lx\n", (unsigned long)*std);
+	v4l2_dbg(1, debug, stream, "querystd: 0x%lx\n", (unsigned long)*std);
 	return 0;
 }
 
@@ -1338,7 +1315,7 @@ static int vip_g_std(struct file *file, void *fh, v4l2_std_id *std)
 
 	*std = stream->vfd->tvnorms;
 	v4l2_subdev_call(port->subdev, video, g_std_output, std);
-	vip_dbg(1, stream, "g_std: 0x%lx\n", (unsigned long)*std);
+	v4l2_dbg(1, debug, stream, "g_std: 0x%lx\n", (unsigned long)*std);
 
 	return 0;
 }
@@ -1348,11 +1325,11 @@ static int vip_s_std(struct file *file, void *fh, v4l2_std_id std)
 	struct vip_stream *stream = file2stream(file);
 	struct vip_port *port = stream->port;
 
-	vip_dbg(1, stream, "s_std: 0x%lx\n", (unsigned long)std);
+	v4l2_dbg(1, debug, stream, "s_std: 0x%lx\n", (unsigned long)std);
 
 	if (!(std & stream->vfd->tvnorms)) {
-		vip_dbg(1, stream, "s_std after check: 0x%lx\n",
-			(unsigned long)std);
+		v4l2_dbg(1, debug, stream, "s_std after check: 0x%lx\n",
+			 (unsigned long)std);
 		return -EINVAL;
 	}
 
@@ -1367,7 +1344,7 @@ static int vip_enum_fmt_vid_cap(struct file *file, void *priv,
 	struct vip_port *port = stream->port;
 	struct vip_fmt *fmt;
 
-	vip_dbg(3, stream, "enum_fmt index:%d\n", f->index);
+	v4l2_dbg(3, debug, stream, "enum_fmt index:%d\n", f->index);
 	if (f->index >= port->num_active_fmt)
 		return -EINVAL;
 
@@ -1375,8 +1352,8 @@ static int vip_enum_fmt_vid_cap(struct file *file, void *priv,
 
 	f->pixelformat = fmt->fourcc;
 	f->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-	vip_dbg(3, stream, "enum_fmt fourcc:%s\n",
-		fourcc_to_str(f->pixelformat));
+	v4l2_dbg(3, debug, stream, "enum_fmt fourcc:%s\n",
+		 fourcc_to_str(f->pixelformat));
 
 	return 0;
 }
@@ -1387,24 +1364,25 @@ static int vip_enum_framesizes(struct file *file, void *priv,
 	struct vip_stream *stream = file2stream(file);
 	struct vip_port *port = stream->port;
 	struct vip_fmt *fmt;
-	struct v4l2_subdev_frame_size_enum fse;
 	int ret;
+	struct v4l2_subdev_frame_size_enum fse = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 
 	fmt = find_port_format_by_pix(port, f->pixel_format);
 	if (!fmt)
 		return -EINVAL;
 
 	fse.index = f->index;
-	fse.pad = 0;
 	fse.code = fmt->code;
-	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	ret = v4l2_subdev_call(port->subdev, pad, enum_frame_size, NULL, &fse);
 	if (ret)
 		return -EINVAL;
 
-	vip_dbg(1, stream, "%s: index: %d code: %x W:[%d,%d] H:[%d,%d]\n",
-		__func__, fse.index, fse.code, fse.min_width, fse.max_width,
-		fse.min_height, fse.max_height);
+	v4l2_dbg(1, debug, stream, "%s: index: %d code: %x W:[%d,%d] H:[%d,%d]\n",
+		 __func__, fse.index, fse.code, fse.min_width, fse.max_width,
+		 fse.min_height, fse.max_height);
 
 	f->type = V4L2_FRMSIZE_TYPE_DISCRETE;
 	f->discrete.width = fse.max_width;
@@ -1476,8 +1454,8 @@ static int vip_calc_format_size(struct vip_port *port,
 	unsigned int stride;
 
 	if (!fmt) {
-		vip_dbg(2, port,
-			"no vip_fmt format provided!\n");
+		v4l2_dbg(2, debug, port,
+			 "no vip_fmt format provided!\n");
 		return -EINVAL;
 	}
 
@@ -1507,10 +1485,10 @@ static int vip_calc_format_size(struct vip_port *port,
 	f->fmt.pix.colorspace = fmt->colorspace;
 	f->fmt.pix.priv = 0;
 
-	vip_dbg(3, port, "calc_format_size: fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		f->fmt.pix.width, f->fmt.pix.height,
-		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, port, "calc_format_size: fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 f->fmt.pix.width, f->fmt.pix.height,
+		 f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
 
 	return 0;
 }
@@ -1525,21 +1503,24 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 {
 	struct vip_stream *stream = file2stream(file);
 	struct vip_port *port = stream->port;
-	struct v4l2_subdev_frame_size_enum fse;
 	struct vip_fmt *fmt;
 	u32 best_width, best_height, largest_width, largest_height;
 	int ret, found;
 	enum vip_csc_state csc_direction;
+	struct v4l2_subdev_frame_size_enum fse = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 
-	vip_dbg(3, stream, "try_fmt fourcc:%s size: %dx%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		f->fmt.pix.width, f->fmt.pix.height);
+	v4l2_dbg(3, debug, stream, "try_fmt fourcc:%s size: %dx%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 f->fmt.pix.width, f->fmt.pix.height);
 
 	fmt = find_port_format_by_pix(port, f->fmt.pix.pixelformat);
 	if (!fmt) {
-		vip_dbg(2, stream,
-			"Fourcc format (0x%08x) not found.\n",
-			f->fmt.pix.pixelformat);
+		v4l2_dbg(2, debug, stream,
+			 "Fourcc format (0x%08x) not found.\n",
+			 f->fmt.pix.pixelformat);
 
 		/* Just get the first one enumerated */
 		fmt = port->active_fmt[0];
@@ -1549,9 +1530,9 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 	csc_direction =  vip_csc_direction(fmt->code, fmt->finfo);
 	if (csc_direction != VIP_CSC_NA) {
 		if (!is_csc_available(port)) {
-			vip_dbg(2, stream,
-				"CSC not available for Fourcc format (0x%08x).\n",
-				f->fmt.pix.pixelformat);
+			v4l2_dbg(2, debug, stream,
+				 "CSC not available for Fourcc format (0x%08x).\n",
+				 f->fmt.pix.pixelformat);
 
 			/* Just get the first one enumerated */
 			fmt = port->active_fmt[0];
@@ -1560,9 +1541,9 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 			csc_direction =  vip_csc_direction(fmt->code,
 							   fmt->finfo);
 		} else {
-			vip_dbg(3, stream, "CSC active on Port %c: going %s\n",
-				port->port_id == VIP_PORTA ? 'A' : 'B',
-				(csc_direction == VIP_CSC_Y2R) ? "Y2R" : "R2Y");
+			v4l2_dbg(3, debug, stream, "CSC active on Port %c: going %s\n",
+				 port->port_id == VIP_PORTA ? 'A' : 'B',
+				 (csc_direction == VIP_CSC_Y2R) ? "Y2R" : "R2Y");
 		}
 	}
 
@@ -1580,9 +1561,8 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 	best_height = 0;
 	largest_width = 0;
 	largest_height = 0;
-	fse.pad = 0;
+
 	fse.code = fmt->code;
-	fse.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	for (fse.index = 0; ; fse.index++) {
 		u32 bpp = fmt->vpdma_fmt[0]->depth >> 3;
 
@@ -1591,25 +1571,25 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 		if (ret)
 			break;
 
-		vip_dbg(3, stream, "try_fmt loop:%d fourcc:%s size: %dx%d\n",
-			fse.index, fourcc_to_str(f->fmt.pix.pixelformat),
-			fse.max_width, fse.max_height);
+		v4l2_dbg(3, debug, stream, "try_fmt loop:%d fourcc:%s size: %dx%d\n",
+			 fse.index, fourcc_to_str(f->fmt.pix.pixelformat),
+			 fse.max_width, fse.max_height);
 
 		if (!vip_is_size_dma_aligned(bpp, fse.max_width))
 			continue;
 
 		if (fse.max_width >= largest_width &&
 		    fse.max_height >= largest_height) {
-			vip_dbg(3, stream, "try_fmt loop:%d found new larger: %dx%d\n",
-				fse.index, fse.max_width, fse.max_height);
+			v4l2_dbg(3, debug, stream, "try_fmt loop:%d found new larger: %dx%d\n",
+				 fse.index, fse.max_width, fse.max_height);
 			largest_width = fse.max_width;
 			largest_height = fse.max_height;
 		}
 
 		if (fse.max_width >= f->fmt.pix.width &&
 		    fse.max_height >= f->fmt.pix.height) {
-			vip_dbg(3, stream, "try_fmt loop:%d found at least larger: %dx%d\n",
-				fse.index, fse.max_width, fse.max_height);
+			v4l2_dbg(3, debug, stream, "try_fmt loop:%d found at least larger: %dx%d\n",
+				 fse.index, fse.max_width, fse.max_height);
 
 			if (!best_width ||
 			    ((abs(best_width - f->fmt.pix.width) >=
@@ -1618,18 +1598,18 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 			      abs(fse.max_height - f->fmt.pix.height)))) {
 				best_width = fse.max_width;
 				best_height = fse.max_height;
-				vip_dbg(3, stream, "try_fmt loop:%d found new best: %dx%d\n",
-					fse.index, fse.max_width,
-					fse.max_height);
+				v4l2_dbg(3, debug, stream, "try_fmt loop:%d found new best: %dx%d\n",
+					 fse.index, fse.max_width,
+					 fse.max_height);
 			}
 		}
 
 		if (f->fmt.pix.width == fse.max_width &&
 		    f->fmt.pix.height == fse.max_height) {
 			found = true;
-			vip_dbg(3, stream, "try_fmt loop:%d found direct match: %dx%d\n",
-				fse.index, fse.max_width,
-				fse.max_height);
+			v4l2_dbg(3, debug, stream, "try_fmt loop:%d found direct match: %dx%d\n",
+				 fse.index, fse.max_width,
+				 fse.max_height);
 			break;
 		}
 
@@ -1638,9 +1618,9 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 		    f->fmt.pix.height >= fse.min_height &&
 		    f->fmt.pix.height <= fse.max_height) {
 			found = true;
-			vip_dbg(3, stream, "try_fmt loop:%d found direct range match: %dx%d\n",
-				fse.index, fse.max_width,
-				fse.max_height);
+			v4l2_dbg(3, debug, stream, "try_fmt loop:%d found direct range match: %dx%d\n",
+				 fse.index, fse.max_width,
+				 fse.max_height);
 			break;
 		}
 	}
@@ -1660,9 +1640,9 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 		/* use existing values as default */
 	}
 
-	vip_dbg(3, stream, "try_fmt best subdev size: %dx%d\n",
-		port->try_mbus_framefmt.width,
-		port->try_mbus_framefmt.height);
+	v4l2_dbg(3, debug, stream, "try_fmt best subdev size: %dx%d\n",
+		 port->try_mbus_framefmt.width,
+		 port->try_mbus_framefmt.height);
 
 	if (is_scaler_available(port) &&
 	    csc_direction != VIP_CSC_Y2R &&
@@ -1679,9 +1659,9 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 		unsigned int hratio, vratio, width_align, height_align;
 		u32 bpp = fmt->vpdma_fmt[0]->depth >> 3;
 
-		vip_dbg(3, stream, "Scaler active on Port %c: requesting %dx%d\n",
-			port->port_id == VIP_PORTA ? 'A' : 'B',
-			f->fmt.pix.width, f->fmt.pix.height);
+		v4l2_dbg(3, debug, stream, "Scaler active on Port %c: requesting %dx%d\n",
+			 port->port_id == VIP_PORTA ? 'A' : 'B',
+			 f->fmt.pix.width, f->fmt.pix.height);
 
 		/* Just make sure everything is properly aligned */
 		width_align = ALIGN(f->fmt.pix.width * bpp, VPDMA_STRIDE_ALIGN);
@@ -1697,17 +1677,17 @@ static int vip_try_fmt_vid_cap(struct file *file, void *priv,
 			 port->try_mbus_framefmt.height;
 		if (hratio < 125) {
 			f->fmt.pix.width = port->try_mbus_framefmt.width / 8;
-			vip_dbg(3, stream, "Horizontal scaling ratio out of range adjusting -> %d\n",
-				f->fmt.pix.width);
+			v4l2_dbg(3, debug, stream, "Horizontal scaling ratio out of range adjusting -> %d\n",
+				 f->fmt.pix.width);
 		}
 
 		if (vratio < 188) {
 			f->fmt.pix.height = port->try_mbus_framefmt.height / 4;
-			vip_dbg(3, stream, "Vertical scaling ratio out of range adjusting -> %d\n",
-				f->fmt.pix.height);
+			v4l2_dbg(3, debug, stream, "Vertical scaling ratio out of range adjusting -> %d\n",
+				 f->fmt.pix.height);
 		}
-		vip_dbg(3, stream, "Scaler: got %dx%d\n",
-			f->fmt.pix.width, f->fmt.pix.height);
+		v4l2_dbg(3, debug, stream, "Scaler: got %dx%d\n",
+			 f->fmt.pix.width, f->fmt.pix.height);
 	} else {
 		/* use existing values as default */
 		f->fmt.pix.width = port->try_mbus_framefmt.width;
@@ -1735,14 +1715,14 @@ static int vip_g_fmt_vid_cap(struct file *file, void *priv,
 	f->fmt.pix.bytesperline	= stream->bytesperline;
 	f->fmt.pix.sizeimage	= stream->sizeimage;
 
-	vip_dbg(3, stream,
-		"g_fmt fourcc:%s code: %04x size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		fmt->code,
-		f->fmt.pix.width, f->fmt.pix.height,
-		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
-	vip_dbg(3, stream, "g_fmt vpdma data type: 0x%02X\n",
-		port->fmt->vpdma_fmt[0]->data_type);
+	v4l2_dbg(3, debug, stream,
+		 "g_fmt fourcc:%s code: %04x size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 fmt->code,
+		 f->fmt.pix.width, f->fmt.pix.height,
+		 f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, stream, "g_fmt vpdma data type: 0x%02X\n",
+		 port->fmt->vpdma_fmt[0]->data_type);
 
 	return 0;
 }
@@ -1757,22 +1737,22 @@ static int vip_s_fmt_vid_cap(struct file *file, void *priv,
 	enum vip_csc_state csc_direction;
 	int ret;
 
-	vip_dbg(3, stream, "s_fmt input fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		f->fmt.pix.width, f->fmt.pix.height,
-		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, stream, "s_fmt input fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 f->fmt.pix.width, f->fmt.pix.height,
+		 f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
 
 	ret = vip_try_fmt_vid_cap(file, priv, f);
 	if (ret)
 		return ret;
 
-	vip_dbg(3, stream, "s_fmt try_fmt fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		f->fmt.pix.width, f->fmt.pix.height,
-		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, stream, "s_fmt try_fmt fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 f->fmt.pix.width, f->fmt.pix.height,
+		 f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
 
 	if (vb2_is_busy(&stream->vb_vidq)) {
-		vip_err(stream, "%s queue busy\n", __func__);
+		v4l2_err(stream, "%s queue busy\n", __func__);
 		return -EBUSY;
 	}
 
@@ -1826,37 +1806,38 @@ static int vip_s_fmt_vid_cap(struct file *file, void *priv,
 	else
 		port->flags &= ~FLAG_INTERLACED;
 
-	vip_dbg(3, stream, "s_fmt fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f->fmt.pix.pixelformat),
-		f->fmt.pix.width, f->fmt.pix.height,
-		f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, stream, "s_fmt fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f->fmt.pix.pixelformat),
+		 f->fmt.pix.width, f->fmt.pix.height,
+		 f->fmt.pix.bytesperline, f->fmt.pix.sizeimage);
 
+	memset(&sfmt, 0, sizeof(sfmt));
 	mf = &sfmt.format;
 	v4l2_fill_mbus_format(mf, &f->fmt.pix, port->fmt->code);
 	/* Make sure to use the subdev size found in the try_fmt */
 	mf->width = port->try_mbus_framefmt.width;
 	mf->height = port->try_mbus_framefmt.height;
 
-	vip_dbg(3, stream, "s_fmt pix_to_mbus mbus_code: %04X size: %dx%d\n",
-		mf->code,
-		mf->width, mf->height);
+	v4l2_dbg(3, debug, stream, "s_fmt pix_to_mbus mbus_code: %04X size: %dx%d\n",
+		 mf->code,
+		 mf->width, mf->height);
 
 	sfmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
 	sfmt.pad = 0;
 	ret = v4l2_subdev_call(port->subdev, pad, set_fmt, NULL, &sfmt);
 	if (ret) {
-		vip_dbg(1, stream, "set_fmt failed in subdev\n");
+		v4l2_dbg(1, debug, stream, "set_fmt failed in subdev\n");
 		return ret;
 	}
 
 	/* Save it */
 	port->mbus_framefmt = *mf;
 
-	vip_dbg(3, stream, "s_fmt subdev fmt mbus_code: %04X size: %dx%d\n",
-		port->mbus_framefmt.code,
-		port->mbus_framefmt.width, port->mbus_framefmt.height);
-	vip_dbg(3, stream, "s_fmt vpdma data type: 0x%02X\n",
-		port->fmt->vpdma_fmt[0]->data_type);
+	v4l2_dbg(3, debug, stream, "s_fmt subdev fmt mbus_code: %04X size: %dx%d\n",
+		 port->mbus_framefmt.code,
+		 port->mbus_framefmt.width, port->mbus_framefmt.height);
+	v4l2_dbg(3, debug, stream, "s_fmt vpdma data type: 0x%02X\n",
+		 port->fmt->vpdma_fmt[0]->data_type);
 
 	return 0;
 }
@@ -2088,7 +2069,7 @@ static void set_fmt_params(struct vip_stream *stream)
 						   VIP_RGB_OUT_HI_DATA_SELECT,
 						   0);
 			} else {
-				vip_err(stream, "RGB sensor can only be on Port A\n");
+				v4l2_err(stream, "RGB sensor can only be on Port A\n");
 			}
 		} else if (port->scaler) {
 			if (port->port_id == VIP_PORTA) {
@@ -2114,7 +2095,7 @@ static void set_fmt_params(struct vip_stream *stream)
 						   VIP_RGB_OUT_HI_DATA_SELECT,
 						   0);
 			} else {
-				vip_err(stream, "RGB sensor can only be on Port A\n");
+				v4l2_err(stream, "RGB sensor can only be on Port A\n");
 			}
 		} else if (port->fmt->coplanar) {
 			if (port->port_id == VIP_PORTA) {
@@ -2137,7 +2118,7 @@ static void set_fmt_params(struct vip_stream *stream)
 						   VIP_RGB_OUT_HI_DATA_SELECT,
 						   0);
 			} else {
-				vip_err(stream, "RGB sensor can only be on Port A\n");
+				v4l2_err(stream, "RGB sensor can only be on Port A\n");
 			}
 		} else {
 			if (port->port_id == VIP_PORTA) {
@@ -2160,7 +2141,7 @@ static void set_fmt_params(struct vip_stream *stream)
 						   VIP_RGB_OUT_HI_DATA_SELECT,
 						   0);
 			} else {
-				vip_err(stream, "RGB sensor can only be on Port A\n");
+				v4l2_err(stream, "RGB sensor can only be on Port A\n");
 			}
 		}
 		/* We are done */
@@ -2183,7 +2164,7 @@ static void set_fmt_params(struct vip_stream *stream)
 					   VIP_MULTI_CHANNEL_DATA_SELECT, 1);
 			vip_set_slice_path(dev, VIP_RGB_OUT_LO_DATA_SELECT, 1);
 		} else {
-			vip_err(stream, "RGB sensor can only be on Port A\n");
+			v4l2_err(stream, "RGB sensor can only be on Port A\n");
 		}
 		/* We are done */
 		return;
@@ -2356,9 +2337,9 @@ static int vip_s_selection(struct file *file, void *fh,
 	s->r = r;
 	stream->port->c_rect = r;
 
-	vip_dbg(1, stream, "cropped (%d,%d)/%dx%d of %dx%d\n",
-		r.left, r.top, r.width, r.height,
-		stream->width, stream->height);
+	v4l2_dbg(1, debug, stream, "cropped (%d,%d)/%dx%d of %dx%d\n",
+		 r.left, r.top, r.width, r.height,
+		 stream->width, stream->height);
 
 	return 0;
 }
@@ -2369,7 +2350,7 @@ static long vip_ioctl_default(struct file *file, void *fh, bool valid_prio,
 	struct vip_stream *stream = file2stream(file);
 
 	if (!valid_prio) {
-		vip_err(stream, "%s device busy\n", __func__);
+		v4l2_err(stream, "%s device busy\n", __func__);
 		return -EBUSY;
 	}
 
@@ -2426,8 +2407,8 @@ static int vip_queue_setup(struct vb2_queue *vq,
 	struct vip_stream *stream = vb2_get_drv_priv(vq);
 	unsigned int size = stream->sizeimage;
 
-	if (vq->num_buffers + *nbuffers < 3)
-		*nbuffers = 3 - vq->num_buffers;
+	if (vq->max_num_buffers + *nbuffers < 3)
+		*nbuffers = 3 - vq->max_num_buffers;
 
 	if (*nplanes) {
 		if (sizes[0] < size)
@@ -2438,8 +2419,8 @@ static int vip_queue_setup(struct vb2_queue *vq,
 	*nplanes = 1;
 	sizes[0] = size;
 
-	vip_dbg(1, stream, "get %d buffer(s) of size %d each.\n",
-		*nbuffers, sizes[0]);
+	v4l2_dbg(1, debug, stream, "get %d buffer(s) of size %d each.\n",
+		 *nbuffers, sizes[0]);
 
 	return 0;
 }
@@ -2449,9 +2430,9 @@ static int vip_buf_prepare(struct vb2_buffer *vb)
 	struct vip_stream *stream = vb2_get_drv_priv(vb->vb2_queue);
 
 	if (vb2_plane_size(vb, 0) < stream->sizeimage) {
-		vip_dbg(1, stream,
-			"%s data will not fit into plane (%lu < %lu)\n",
-			__func__, vb2_plane_size(vb, 0),
+		v4l2_dbg(1, debug, stream,
+			 "%s data will not fit into plane (%lu < %lu)\n",
+			 __func__, vb2_plane_size(vb, 0),
 			(long)stream->sizeimage);
 		return -EINVAL;
 	}
@@ -2527,8 +2508,8 @@ static int vip_setup_scaler(struct vip_stream *stream)
 		return 0;
 
 	if (vpdma_list_busy(vpdma, list_num)) {
-		vip_dbg(3, stream, "%s: List %d is busy\n",
-			__func__, list_num);
+		v4l2_dbg(3, debug, stream, "%s: List %d is busy\n",
+			 __func__, list_num);
 	}
 
 	/* Make sure we start with a clean list */
@@ -2541,7 +2522,7 @@ static int vip_setup_scaler(struct vip_stream *stream)
 				  &port->mmr_adb);
 
 		port->load_mmrs = false;
-		vip_dbg(3, stream, "Added mmr_adb config desc\n");
+		v4l2_dbg(3, debug, stream, "Added mmr_adb config desc\n");
 	}
 
 	if (sc->loaded_coeff_h != port->sc_coeff_h.dma_addr ||
@@ -2553,7 +2534,7 @@ static int vip_setup_scaler(struct vip_stream *stream)
 
 		sc->loaded_coeff_h = port->sc_coeff_h.dma_addr;
 		sc->load_coeff_h = false;
-		vip_dbg(3, stream, "Added sc_coeff_h config desc\n");
+		v4l2_dbg(3, debug, stream, "Added sc_coeff_h config desc\n");
 	}
 
 	if (sc->loaded_coeff_v != port->sc_coeff_v.dma_addr ||
@@ -2565,13 +2546,13 @@ static int vip_setup_scaler(struct vip_stream *stream)
 
 		sc->loaded_coeff_v = port->sc_coeff_v.dma_addr;
 		sc->load_coeff_v = false;
-		vip_dbg(3, stream, "Added sc_coeff_v config desc\n");
+		v4l2_dbg(3, debug, stream, "Added sc_coeff_v config desc\n");
 	}
-	vip_dbg(3, stream, "CFD_SC_CLIENT %d slice_id: %d\n",
-		VIP_SLICE1_CFD_SC_CLIENT + dev->slice_id, dev->slice_id);
+	v4l2_dbg(3, debug, stream, "CFD_SC_CLIENT %d slice_id: %d\n",
+		 VIP_SLICE1_CFD_SC_CLIENT + dev->slice_id, dev->slice_id);
 
 	vpdma_map_desc_buf(vpdma, &stream->desc_list.buf);
-	vip_dbg(3, stream, "Submitting desc on list# %d\n", list_num);
+	v4l2_dbg(3, debug, stream, "Submitting desc on list# %d\n", list_num);
 	vpdma_submit_descs(vpdma, &stream->desc_list, list_num);
 
 	while (vpdma_list_busy(vpdma, list_num) && timeout--)
@@ -2585,7 +2566,7 @@ static int vip_setup_scaler(struct vip_stream *stream)
 	vpdma_reset_desc_list(&stream->desc_list);
 
 	if (timeout <= 0) {
-		vip_err(stream, "Timed out setting up scaler through VPDMA list\n");
+		v4l2_err(stream, "Timed out setting up scaler through VPDMA list\n");
 		return -EBUSY;
 	}
 
@@ -2608,7 +2589,7 @@ static int vip_load_vpdma_list_fifo(struct vip_stream *stream)
 	for (i = 0; i < VIP_VPDMA_FIFO_SIZE; i++) {
 		spin_lock_irqsave(&dev->slock, flags);
 		if (list_empty(&stream->vidq)) {
-			vip_err(stream, "No buffer left!");
+			v4l2_err(stream, "No buffer left!");
 			spin_unlock_irqrestore(&dev->slock, flags);
 			return -EINVAL;
 		}
@@ -2620,8 +2601,8 @@ static int vip_load_vpdma_list_fifo(struct vip_stream *stream)
 		list_move_tail(&buf->list, &stream->post_bufs);
 		spin_unlock_irqrestore(&dev->slock, flags);
 
-		vip_dbg(2, stream, "%s: start_dma vb2 buf idx:%d\n",
-			__func__, buf->vb.vb2_buf.index);
+		v4l2_dbg(2, debug, stream, "%s: start_dma vb2 buf idx:%d\n",
+			 __func__, buf->vb.vb2_buf.index);
 		start_dma(stream, buf);
 
 		timeout = 500;
@@ -2629,7 +2610,7 @@ static int vip_load_vpdma_list_fifo(struct vip_stream *stream)
 			usleep_range(1000, 1100);
 
 		if (timeout <= 0) {
-			vip_err(stream, "Timed out loading VPDMA list fifo\n");
+			v4l2_err(stream, "Timed out loading VPDMA list fifo\n");
 			return -EBUSY;
 		}
 	}
@@ -2658,7 +2639,7 @@ static int vip_start_streaming(struct vb2_queue *vq, unsigned int count)
 	if (port->subdev) {
 		ret = v4l2_subdev_call(port->subdev, video, s_stream, 1);
 		if (ret) {
-			vip_dbg(1, stream, "stream on failed in subdev\n");
+			v4l2_dbg(1, debug, stream, "stream on failed in subdev\n");
 			return ret;
 		}
 	}
@@ -2693,8 +2674,6 @@ static void vip_stop_streaming(struct vb2_queue *vq)
 	struct vip_buffer *buf;
 	int ret;
 
-	vip_dbg(2, stream, "%s:\n", __func__);
-
 	vip_parser_stop_imm(port, true);
 	vip_enable_parser(port, false);
 	unset_fmt_params(stream);
@@ -2705,7 +2684,7 @@ static void vip_stop_streaming(struct vb2_queue *vq)
 	if (port->subdev) {
 		ret = v4l2_subdev_call(port->subdev, video, s_stream, 0);
 		if (ret)
-			vip_dbg(1, stream, "stream on failed in subdev\n");
+			v4l2_dbg(1, debug, stream, "stream on failed in subdev\n");
 	}
 
 	stop_dma(stream, true);
@@ -2743,18 +2722,14 @@ static const struct vb2_ops vip_video_qops = {
 	.wait_finish		= vb2_ops_wait_finish,
 };
 
-/*
- * File operations
- */
-
 static int vip_init_dev(struct vip_dev *dev)
 {
 	if (dev->num_ports != 0)
 		goto done;
 
 	vip_set_clock_enable(dev, 1);
-	vip_module_reset(dev, VIP_SC_RST, false);
-	vip_module_reset(dev, VIP_CSC_RST, false);
+	vip_module_toggle(dev, VIP_SC_RST, false);
+	vip_module_toggle(dev, VIP_CSC_RST, false);
 done:
 	dev->num_ports++;
 
@@ -2808,8 +2783,8 @@ static bool allocate_csc(struct vip_port *port,
 		if (is_csc_available(port)) {
 			port->dev->csc_assigned = port->port_id;
 			port->csc = csc_direction;
-			vip_dbg(1, port, "%s: csc allocated: dir: %d\n",
-				__func__, csc_direction);
+			v4l2_dbg(1, debug, port, "%s: csc allocated: dir: %d\n",
+				 __func__, csc_direction);
 			return true;
 		}
 	}
@@ -2821,8 +2796,8 @@ static void free_csc(struct vip_port *port)
 	if (port->dev->csc_assigned == port->port_id) {
 		port->dev->csc_assigned = VIP_NOT_ASSIGNED;
 		port->csc = VIP_CSC_NA;
-		vip_dbg(1, port, "%s: csc freed\n",
-			__func__);
+		v4l2_dbg(1, debug, port, "%s: csc freed\n",
+			 __func__);
 	}
 }
 
@@ -2830,7 +2805,10 @@ static int vip_init_port(struct vip_port *port)
 {
 	int ret;
 	struct vip_fmt *fmt;
-	struct v4l2_subdev_format sd_fmt;
+	struct v4l2_subdev_format sd_fmt = {
+		.which = V4L2_SUBDEV_FORMAT_ACTIVE,
+		.pad = 0,
+	};
 	struct v4l2_mbus_framefmt *mbus_fmt = &sd_fmt.format;
 
 	if (port->num_streams != 0)
@@ -2841,18 +2819,16 @@ static int vip_init_port(struct vip_port *port)
 		goto done;
 
 	/* Get subdevice current frame format */
-	sd_fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
-	sd_fmt.pad = 0;
 	ret = v4l2_subdev_call(port->subdev, pad, get_fmt, NULL, &sd_fmt);
 	if (ret)
-		vip_dbg(1, port, "init_port get_fmt failed in subdev: (%d)\n",
-			ret);
+		v4l2_dbg(1, debug, port, "init_port get_fmt failed in subdev: (%d)\n",
+			 ret);
 
 	/* try to find one that matches */
 	fmt = find_port_format_by_code(port, mbus_fmt->code);
 	if (!fmt) {
-		vip_dbg(1, port, "subdev default mbus_fmt %04x is not matched.\n",
-			mbus_fmt->code);
+		v4l2_dbg(1, debug, port, "subdev default mbus_fmt %04x is not matched.\n",
+			 mbus_fmt->code);
 		/* if all else fails just pick the first one */
 		fmt = port->active_fmt[0];
 
@@ -2862,16 +2838,16 @@ static int vip_init_port(struct vip_port *port)
 		ret = v4l2_subdev_call(port->subdev, pad, set_fmt,
 				       NULL, &sd_fmt);
 		if (ret)
-			vip_dbg(1, port, "init_port set_fmt failed in subdev: (%d)\n",
-				ret);
+			v4l2_dbg(1, debug, port, "init_port set_fmt failed in subdev: (%d)\n",
+				 ret);
 	}
 
 	/* Assign current format */
 	port->fmt = fmt;
 	port->mbus_framefmt = *mbus_fmt;
 
-	vip_dbg(3, port, "%s: g_mbus_fmt subdev mbus_code: %04X fourcc:%s size: %dx%d\n",
-		__func__, fmt->code,
+	v4l2_dbg(3, debug, port, "%s: g_mbus_fmt subdev mbus_code: %04X fourcc:%s size: %dx%d\n",
+		 __func__, fmt->code,
 		fourcc_to_str(fmt->fourcc),
 		mbus_fmt->width, mbus_fmt->height);
 
@@ -2941,12 +2917,12 @@ static int vip_init_stream(struct vip_stream *stream)
 	stream->bytesperline = f.fmt.pix.bytesperline;
 	stream->sizeimage = f.fmt.pix.sizeimage;
 
-	vip_dbg(3, stream, "init_stream fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
-		fourcc_to_str(f.fmt.pix.pixelformat),
-		f.fmt.pix.width, f.fmt.pix.height,
-		f.fmt.pix.bytesperline, f.fmt.pix.sizeimage);
-	vip_dbg(3, stream, "init_stream vpdma data type: 0x%02X\n",
-		port->fmt->vpdma_fmt[0]->data_type);
+	v4l2_dbg(3, debug, stream, "init_stream fourcc:%s size: %dx%d bpl:%d img_size:%d\n",
+		 fourcc_to_str(f.fmt.pix.pixelformat),
+		 f.fmt.pix.width, f.fmt.pix.height,
+		 f.fmt.pix.bytesperline, f.fmt.pix.sizeimage);
+	v4l2_dbg(3, debug, stream, "init_stream vpdma data type: 0x%02X\n",
+		 port->fmt->vpdma_fmt[0]->data_type);
 
 	ret = vpdma_create_desc_list(&stream->desc_list, VIP_DESC_LIST_SIZE,
 				     VPDMA_LIST_TYPE_NORMAL);
@@ -2957,8 +2933,8 @@ static int vip_init_stream(struct vip_stream *stream)
 	stream->write_desc = (struct vpdma_dtd *)stream->desc_list.buf.addr
 				+ 15;
 
-	vip_dbg(1, stream, "%s: stream instance %pa\n",
-		__func__, &stream);
+	v4l2_dbg(1, debug, stream, "%s: stream instance %pa\n",
+		 __func__, &stream);
 
 	return 0;
 }
@@ -2971,8 +2947,8 @@ static void vip_release_dev(struct vip_dev *dev)
 
 	if (--dev->num_ports == 0) {
 		/* reset the scaler module */
-		vip_module_reset(dev, VIP_SC_RST, true);
-		vip_module_reset(dev, VIP_CSC_RST, true);
+		vip_module_toggle(dev, VIP_SC_RST, true);
+		vip_module_toggle(dev, VIP_CSC_RST, true);
 		vip_set_clock_enable(dev, 0);
 	}
 }
@@ -2994,8 +2970,8 @@ static int vip_set_crop_parser(struct vip_port *port)
 		 * allocated frame buffer.
 		 */
 		width >>= 1;
-		vip_dbg(1, port, "%s: 8 bit raw detected, adjusting width to %d\n",
-			__func__, width);
+		v4l2_dbg(1, debug, port, "%s: 8 bit raw detected, adjusting width to %d\n",
+			 __func__, width);
 	}
 
 	/*
@@ -3099,7 +3075,7 @@ static int vip_setup_parser(struct vip_port *port)
 		config0 |= VIP_DISCRETE_BASIC_MODE;
 
 	} else {
-		vip_err(port, "Device doesn't support CSI2");
+		v4l2_err(port, "Device doesn't support CSI2");
 		return -EINVAL;
 	}
 
@@ -3174,8 +3150,8 @@ static void vip_release_stream(struct vip_stream *stream)
 {
 	struct vip_dev *dev = stream->port->dev;
 
-	vip_dbg(1, stream, "%s: stream instance %pa\n",
-		__func__, &stream);
+	v4l2_dbg(1, debug, stream, "%s: stream instance %pa\n",
+		 __func__, &stream);
 
 	vpdma_unmap_desc_buf(dev->shared->vpdma, &stream->desc_list.buf);
 	vpdma_free_desc_buf(&stream->desc_list.buf);
@@ -3184,8 +3160,8 @@ static void vip_release_stream(struct vip_stream *stream)
 
 static void vip_release_port(struct vip_port *port)
 {
-	vip_dbg(1, port, "%s: port instance %pa\n",
-		__func__, &port);
+	v4l2_dbg(1, debug, port, "%s: port instance %pa\n",
+		 __func__, &port);
 
 	vpdma_free_desc_buf(&port->mmr_adb);
 	vpdma_free_desc_buf(&port->sc_coeff_h);
@@ -3201,7 +3177,7 @@ static void stop_dma(struct vip_stream *stream, bool clear_list)
 	for (ch = 0; ch < VPDMA_MAX_CHANNELS; ch++) {
 		if (stream->vpdma_channels[ch] == 1) {
 			stream->vpdma_channels_to_abort[size++] = ch;
-			vip_dbg(2, stream, "Clear channel no: %d\n", ch);
+			v4l2_dbg(2, debug, stream, "Clear channel no: %d\n", ch);
 		}
 	}
 
@@ -3221,13 +3197,11 @@ static int vip_open(struct file *file)
 	struct vip_dev *dev = port->dev;
 	int ret = 0;
 
-	vip_dbg(2, stream, "%s\n", __func__);
-
 	mutex_lock(&dev->mutex);
 
 	ret = v4l2_fh_open(file);
 	if (ret) {
-		vip_err(stream, "v4l2_fh_open failed\n");
+		v4l2_err(stream, "v4l2_fh_open failed\n");
 		goto unlock;
 	}
 
@@ -3252,8 +3226,6 @@ static int vip_release(struct file *file)
 	struct vip_dev *dev = port->dev;
 	bool fh_singular;
 	int ret;
-
-	vip_dbg(2, stream, "%s\n", __func__);
 
 	mutex_lock(&dev->mutex);
 
@@ -3284,6 +3256,9 @@ static int vip_release(struct file *file)
 	return ret;
 }
 
+/*
+ * File operations
+ */
 static const struct v4l2_file_operations vip_fops = {
 	.owner		= THIS_MODULE,
 	.open		= vip_open,
@@ -3331,7 +3306,7 @@ static int alloc_stream(struct vip_port *port, int stream_id, int vfl_type)
 
 	stream->list_num = vpdma_hwlist_alloc(dev->shared->vpdma, stream);
 	if (stream->list_num < 0) {
-		vip_err(stream, "Could not get VPDMA hwlist");
+		v4l2_err(stream, "Could not get VPDMA hwlist");
 		ret = -ENODEV;
 		goto do_free_stream;
 	}
@@ -3350,7 +3325,7 @@ static int alloc_stream(struct vip_port *port, int stream_id, int vfl_type)
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &dev->mutex;
-	q->min_buffers_needed = 3;
+	q->min_reqbufs_allocation = 3;
 	q->dev = dev->v4l2_dev->dev;
 
 	ret = vb2_queue_init(q);
@@ -3385,14 +3360,14 @@ static int alloc_stream(struct vip_port *port, int stream_id, int vfl_type)
 
 	ret = video_register_device(vfd, vfl_type, -1);
 	if (ret) {
-		vip_err(stream, "Failed to register video device\n");
+		v4l2_err(stream, "Failed to register video device\n");
 		goto do_free_vfd;
 	}
 
 	stream->vfd = vfd;
 
-	vip_info(stream, "device registered as %s\n",
-		 video_device_node_name(vfd));
+	v4l2_info(stream, "device registered as %s\n",
+		  video_device_node_name(vfd));
 	return 0;
 
 do_free_vfd:
@@ -3401,7 +3376,7 @@ do_free_dropq:
 	list_for_each_safe(pos, tmp, &stream->dropq) {
 		buf = list_entry(pos,
 				 struct vip_buffer, list);
-		vip_dbg(1, dev, "dropq buffer\n");
+		v4l2_dbg(1, debug, dev, "dropq buffer\n");
 		list_del(pos);
 		kfree(buf);
 	}
@@ -3426,7 +3401,7 @@ static void free_stream(struct vip_stream *stream)
 	list_for_each_safe(pos, q, &stream->dropq) {
 		buf = list_entry(pos,
 				 struct vip_buffer, list);
-		vip_dbg(1, stream, "dropq buffer\n");
+		v4l2_dbg(1, debug, stream, "dropq buffer\n");
 		list_del(pos);
 		kfree(buf);
 	}
@@ -3457,9 +3432,9 @@ static int get_subdev_active_format(struct vip_port *port,
 		if (ret)
 			continue;
 
-		vip_dbg(2, port,
-			"subdev %s: code: %04x idx: %d\n",
-			subdev->name, mbus_code.code, k);
+		v4l2_dbg(2, debug, port,
+			 "subdev %s: code: %04x idx: %d\n",
+			 subdev->name, mbus_code.code, k);
 
 		for (j = 0; j < ARRAY_SIZE(vip_formats); j++) {
 			fmt = &vip_formats[j];
@@ -3478,16 +3453,16 @@ static int get_subdev_active_format(struct vip_port *port,
 				continue;
 
 			port->active_fmt[i] = fmt;
-			vip_dbg(2, port,
-				"matched fourcc: %s: code: %04x idx: %d\n",
-				fourcc_to_str(fmt->fourcc), fmt->code, i);
+			v4l2_dbg(2, debug, port,
+				 "matched fourcc: %s: code: %04x idx: %d\n",
+				 fourcc_to_str(fmt->fourcc), fmt->code, i);
 			port->num_active_fmt = ++i;
 		}
 	}
 
 	if (i == 0) {
-		vip_err(port, "No suitable format reported by subdev %s\n",
-			subdev->name);
+		v4l2_err(port, "No suitable format reported by subdev %s\n",
+			 subdev->name);
 		return -EINVAL;
 	}
 	return 0;
@@ -3520,8 +3495,8 @@ static void free_port(struct vip_port *port)
 	if (!port)
 		return;
 
-	v4l2_async_notifier_unregister(&port->notifier);
-	v4l2_async_notifier_cleanup(&port->notifier);
+	v4l2_async_nf_unregister(&port->notifier);
+	v4l2_async_nf_cleanup(&port->notifier);
 	free_stream(port->cap_streams[0]);
 }
 
@@ -3542,7 +3517,7 @@ static void vip_vpdma_fw_cb(struct platform_device *pdev)
 static int vip_create_streams(struct vip_port *port,
 			      struct v4l2_subdev *subdev)
 {
-	struct v4l2_fwnode_bus_parallel *bus;
+	struct v4l2_mbus_config_parallel *bus;
 	struct vip_bt656_bus *bt656_ep;
 	int i;
 
@@ -3574,21 +3549,19 @@ static int vip_create_streams(struct vip_port *port,
 
 static int vip_async_bound(struct v4l2_async_notifier *notifier,
 			   struct v4l2_subdev *subdev,
-			   struct v4l2_async_subdev *asd)
+			   struct v4l2_async_connection *asd)
 {
 	struct vip_port *port = notifier_to_vip_port(notifier);
 	int ret;
 
-	vip_dbg(1, port, "%s\n", __func__);
-
 	if (port->subdev) {
-		vip_info(port, "Rejecting subdev %s (Already set!!)",
-			 subdev->name);
+		v4l2_info(port, "Rejecting subdev %s (Already set!!)",
+			  subdev->name);
 		return 0;
 	}
 
-	vip_info(port, "Port %c: Using subdev %s for capture\n",
-		 port->port_id == VIP_PORTA ? 'A' : 'B', subdev->name);
+	v4l2_info(port, "Port %c: Using subdev %s for capture\n",
+		  port->port_id == VIP_PORTA ? 'A' : 'B', subdev->name);
 
 	ret = vip_create_streams(port, subdev);
 	if (ret)
@@ -3599,9 +3572,6 @@ static int vip_async_bound(struct v4l2_async_notifier *notifier,
 
 static int vip_async_complete(struct v4l2_async_notifier *notifier)
 {
-	struct vip_port *port = notifier_to_vip_port(notifier);
-
-	vip_dbg(1, port, "%s\n", __func__);
 	return 0;
 }
 
@@ -3622,11 +3592,10 @@ static int vip_register_subdev_notif(struct vip_port *port,
 				     struct fwnode_handle *ep)
 {
 	struct v4l2_async_notifier *notifier = &port->notifier;
-	struct vip_dev *dev = port->dev;
 	struct fwnode_handle *subdev;
 	struct v4l2_fwnode_endpoint *vep;
 	struct vip_bt656_bus *bt656_vep;
-	struct v4l2_async_subdev *asd;
+	struct v4l2_async_connection *asd;
 	int ret, rval;
 
 	vep = &port->endpoint;
@@ -3634,13 +3603,13 @@ static int vip_register_subdev_notif(struct vip_port *port,
 
 	subdev = fwnode_graph_get_remote_port_parent(ep);
 	if (!subdev) {
-		vip_dbg(3, port, "can't get remote parent\n");
+		v4l2_dbg(3, debug, port, "can't get remote parent\n");
 		return -EINVAL;
 	}
 
 	ret = v4l2_fwnode_endpoint_parse(ep, vep);
 	if (ret) {
-		vip_dbg(3, port, "Failed to parse endpoint:\n");
+		v4l2_dbg(3, debug, port, "Failed to parse endpoint:\n");
 		fwnode_handle_put(subdev);
 		return -EINVAL;
 	}
@@ -3650,7 +3619,7 @@ static int vip_register_subdev_notif(struct vip_port *port,
 			bt656_vep->pixmux = 1;
 		else
 			bt656_vep->pixmux = 0;
-		vip_dbg(3, port, "ti,vip-pixel-mux %u\n", bt656_vep->pixmux);
+		v4l2_dbg(3, debug, port, "ti,vip-pixel-mux %u\n", bt656_vep->pixmux);
 
 		bt656_vep->num_channels = 0;
 		rval = fwnode_property_read_u8_array(ep, "ti,vip-channels",
@@ -3664,25 +3633,24 @@ static int vip_register_subdev_notif(struct vip_port *port,
 						      bt656_vep->channels,
 						      bt656_vep->num_channels);
 		}
-		vip_dbg(3, port, "ti,vip-channels %u\n", bt656_vep->num_channels);
+		v4l2_dbg(3, debug, port, "ti,vip-channels %u\n", bt656_vep->num_channels);
 	}
 
-	v4l2_async_notifier_init(notifier);
+	v4l2_async_nf_init(notifier, &port->dev->shared->v4l2_dev);
 
-	asd = v4l2_async_notifier_add_fwnode_subdev(notifier, subdev,
-					sizeof(struct v4l2_async_subdev));
+	asd = v4l2_async_nf_add_fwnode(notifier, subdev, struct v4l2_async_connection);
 	if (IS_ERR(asd)) {
-		vip_dbg(1, port, "Error adding asd\n");
+		v4l2_dbg(1, debug, port, "Error adding asd\n");
 		fwnode_handle_put(subdev);
-		v4l2_async_notifier_cleanup(notifier);
+		v4l2_async_nf_cleanup(notifier);
 		return -EINVAL;
 	}
 
 	notifier->ops = &vip_async_ops;
-	ret = v4l2_async_notifier_register(dev->v4l2_dev, notifier);
+	ret = v4l2_async_nf_register(notifier);
 	if (ret) {
-		vip_dbg(1, port, "Error registering async notifier\n");
-		v4l2_async_notifier_cleanup(notifier);
+		v4l2_dbg(1, debug, port, "Error registering async notifier\n");
+		v4l2_async_nf_cleanup(notifier);
 		ret = -EINVAL;
 	}
 
@@ -3848,16 +3816,26 @@ static int vip_probe(struct platform_device *pdev)
 	int ret, slice = VIP_SLICE1;
 	int instance_id;
 	u32 tmp, pid;
+	const char *label;
 
-	instance_id = (int)of_device_get_match_data(&pdev->dev);
-	if (!instance_id) {
-		dev_err(&pdev->dev, "%s: Unable to match device\n", __func__);
+	if (!of_property_read_string(pdev->dev.of_node, "label", &label)) {
+		if (strcmp(label, "vip1") == 0)
+			instance_id = 1;
+		else if (strcmp(label, "vip2") == 0)
+			instance_id = 2;
+		else if (strcmp(label, "vip3") == 0)
+			instance_id = 3;
+	} else {
+		dev_err(&pdev->dev, "%s: VIP instance id out of range...\n",
+			__func__);
 		return -ENODEV;
 	}
 
 	/* If there are no endpoint defined there is nothing to do */
-	if (!vip_endpoint_scan(pdev))
+	if (!vip_endpoint_scan(pdev)) {
+		dev_err(&pdev->dev, "%s: No sensor", __func__);
 		return -ENODEV;
+	}
 
 	ret = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 	if (ret) {
@@ -3937,7 +3915,7 @@ err_runtime_disable:
 	return ret;
 }
 
-static int vip_remove(struct platform_device *pdev)
+static void vip_remove(struct platform_device *pdev)
 {
 	struct vip_shared *shared = platform_get_drvdata(pdev);
 	struct vip_dev *dev;
@@ -3956,23 +3934,12 @@ static int vip_remove(struct platform_device *pdev)
 
 	pm_runtime_put_sync(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
-
-	return 0;
 }
 
 #if defined(CONFIG_OF)
 static const struct of_device_id vip_of_match[] = {
 	{
-		.compatible = "ti,dra7-vip1",
-		.data = (void *)VIP_INSTANCE1,
-	},
-	{
-		.compatible = "ti,dra7-vip2",
-		.data = (void *)VIP_INSTANCE2,
-	},
-	{
-		.compatible = "ti,dra7-vip3",
-		.data = (void *)VIP_INSTANCE3,
+		.compatible = "ti,dra7-vip",
 	},
 	{},
 };
@@ -3992,4 +3959,4 @@ module_platform_driver(vip_pdrv);
 
 MODULE_DESCRIPTION("TI VIP driver");
 MODULE_AUTHOR("Texas Instruments");
-MODULE_LICENSE("GPL v2");
+MODULE_LICENSE("GPL");

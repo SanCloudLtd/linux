@@ -19,8 +19,10 @@
 #include <asm/processor.h>
 #include <linux/osq_lock.h>
 #include <linux/debug_locks.h>
+#include <linux/cleanup.h>
+#include <linux/mutex_types.h>
 
-struct ww_acquire_ctx;
+struct device;
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 # define __DEP_MAP_MUTEX_INITIALIZER(lockname)			\
@@ -32,72 +34,9 @@ struct ww_acquire_ctx;
 # define __DEP_MAP_MUTEX_INITIALIZER(lockname)
 #endif
 
-#ifdef CONFIG_PREEMPT_RT
-# include <linux/mutex_rt.h>
-#else
-
-/*
- * Simple, straightforward mutexes with strict semantics:
- *
- * - only one task can hold the mutex at a time
- * - only the owner can unlock the mutex
- * - multiple unlocks are not permitted
- * - recursive locking is not permitted
- * - a mutex object must be initialized via the API
- * - a mutex object must not be initialized via memset or copying
- * - task may not exit with mutex held
- * - memory areas where held locks reside must not be freed
- * - held mutexes must not be reinitialized
- * - mutexes may not be used in hardware or software interrupt
- *   contexts such as tasklets and timers
- *
- * These semantics are fully enforced when DEBUG_MUTEXES is
- * enabled. Furthermore, besides enforcing the above rules, the mutex
- * debugging code also implements a number of additional features
- * that make lock debugging easier and faster:
- *
- * - uses symbolic names of mutexes, whenever they are printed in debug output
- * - point-of-acquire tracking, symbolic lookup of function names
- * - list of all locks held in the system, printout of them
- * - owner tracking
- * - detects self-recursing locks and prints out all relevant info
- * - detects multi-task circular deadlocks and prints out all affected
- *   locks and tasks (and only those tasks)
- */
-struct mutex {
-	atomic_long_t		owner;
-	spinlock_t		wait_lock;
-#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
-	struct optimistic_spin_queue osq; /* Spinner MCS lock */
-#endif
-	struct list_head	wait_list;
-#ifdef CONFIG_DEBUG_MUTEXES
-	void			*magic;
-#endif
-#ifdef CONFIG_DEBUG_LOCK_ALLOC
-	struct lockdep_map	dep_map;
-#endif
-};
-
-struct ww_class;
-struct ww_acquire_ctx;
-
-/*
- * This is the control structure for tasks blocked on mutex,
- * which resides on the blocked task's kernel stack:
- */
-struct mutex_waiter {
-	struct list_head	list;
-	struct task_struct	*task;
-	struct ww_acquire_ctx	*ww_ctx;
-#ifdef CONFIG_DEBUG_MUTEXES
-	void			*magic;
-#endif
-};
-
 #ifdef CONFIG_DEBUG_MUTEXES
 
-#define __DEBUG_MUTEX_INITIALIZER(lockname)				\
+# define __DEBUG_MUTEX_INITIALIZER(lockname)				\
 	, .magic = &lockname
 
 extern void mutex_destroy(struct mutex *lock);
@@ -125,9 +64,21 @@ do {									\
 	__mutex_init((mutex), #mutex, &__key);				\
 } while (0)
 
+/**
+ * mutex_init_with_key - initialize a mutex with a given lockdep key
+ * @mutex: the mutex to be initialized
+ * @key: the lockdep key to be associated with the mutex
+ *
+ * Initialize the mutex to the unlocked state.
+ *
+ * It is not allowed to initialize an already locked mutex.
+ */
+#define mutex_init_with_key(mutex, key) __mutex_init((mutex), #mutex, (key))
+
+#ifndef CONFIG_PREEMPT_RT
 #define __MUTEX_INITIALIZER(lockname) \
 		{ .owner = ATOMIC_LONG_INIT(0) \
-		, .wait_lock = __SPIN_LOCK_UNLOCKED(lockname.wait_lock) \
+		, .wait_lock = __RAW_SPIN_LOCK_UNLOCKED(lockname.wait_lock) \
 		, .wait_list = LIST_HEAD_INIT(lockname.wait_list) \
 		__DEBUG_MUTEX_INITIALIZER(lockname) \
 		__DEP_MAP_MUTEX_INITIALIZER(lockname) }
@@ -145,6 +96,58 @@ extern void __mutex_init(struct mutex *lock, const char *name,
  * Returns true if the mutex is locked, false if unlocked.
  */
 extern bool mutex_is_locked(struct mutex *lock);
+
+#else /* !CONFIG_PREEMPT_RT */
+/*
+ * Preempt-RT variant based on rtmutexes.
+ */
+
+#define __MUTEX_INITIALIZER(mutexname)					\
+{									\
+	.rtmutex = __RT_MUTEX_BASE_INITIALIZER(mutexname.rtmutex)	\
+	__DEP_MAP_MUTEX_INITIALIZER(mutexname)				\
+}
+
+#define DEFINE_MUTEX(mutexname)						\
+	struct mutex mutexname = __MUTEX_INITIALIZER(mutexname)
+
+extern void __mutex_rt_init(struct mutex *lock, const char *name,
+			    struct lock_class_key *key);
+
+#define mutex_is_locked(l)	rt_mutex_base_is_locked(&(l)->rtmutex)
+
+#define __mutex_init(mutex, name, key)			\
+do {							\
+	rt_mutex_base_init(&(mutex)->rtmutex);		\
+	__mutex_rt_init((mutex), name, key);		\
+} while (0)
+
+#endif /* CONFIG_PREEMPT_RT */
+
+#ifdef CONFIG_DEBUG_MUTEXES
+
+int __devm_mutex_init(struct device *dev, struct mutex *lock);
+
+#else
+
+static inline int __devm_mutex_init(struct device *dev, struct mutex *lock)
+{
+	/*
+	 * When CONFIG_DEBUG_MUTEXES is off mutex_destroy() is just a nop so
+	 * no really need to register it in the devm subsystem.
+	 */
+	return 0;
+}
+
+#endif
+
+#define devm_mutex_init(dev, mutex)			\
+({							\
+	typeof(mutex) mutex_ = (mutex);			\
+							\
+	mutex_init(mutex_);				\
+	__devm_mutex_init(dev, mutex_);			\
+})
 
 /*
  * See kernel/locking/mutex.c for detailed documentation of these APIs.
@@ -195,31 +198,8 @@ extern void mutex_unlock(struct mutex *lock);
 
 extern int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock);
 
-/*
- * These values are chosen such that FAIL and SUCCESS match the
- * values of the regular mutex_trylock().
- */
-enum mutex_trylock_recursive_enum {
-	MUTEX_TRYLOCK_FAILED    = 0,
-	MUTEX_TRYLOCK_SUCCESS   = 1,
-	MUTEX_TRYLOCK_RECURSIVE,
-};
-
-/**
- * mutex_trylock_recursive - trylock variant that allows recursive locking
- * @lock: mutex to be locked
- *
- * This function should not be used, _ever_. It is purely for hysterical GEM
- * raisins, and once those are gone this will be removed.
- *
- * Returns:
- *  - MUTEX_TRYLOCK_FAILED    - trylock failed,
- *  - MUTEX_TRYLOCK_SUCCESS   - lock acquired,
- *  - MUTEX_TRYLOCK_RECURSIVE - we already owned the lock.
- */
-extern /* __deprecated */ __must_check enum mutex_trylock_recursive_enum
-mutex_trylock_recursive(struct mutex *lock);
-
-#endif /* !PREEMPT_RT */
+DEFINE_GUARD(mutex, struct mutex *, mutex_lock(_T), mutex_unlock(_T))
+DEFINE_GUARD_COND(mutex, _try, mutex_trylock(_T))
+DEFINE_GUARD_COND(mutex, _intr, mutex_lock_interruptible(_T) == 0)
 
 #endif /* __LINUX_MUTEX_H */

@@ -17,7 +17,7 @@
 #include <linux/irqchip/chained_irq.h>
 #include <linux/irqdomain.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 
 /*
@@ -521,8 +521,7 @@ static void pruss_intc_irq_handler(struct irq_desc *desc)
 
 	while (true) {
 		u32 hipir;
-		unsigned int virq;
-		int hwirq;
+		int hwirq, err;
 
 		/* get highest priority pending PRUSS system event */
 		hipir = pruss_intc_read_reg(intc, PRU_INTC_HIPIR(host_irq));
@@ -530,16 +529,14 @@ static void pruss_intc_irq_handler(struct irq_desc *desc)
 			break;
 
 		hwirq = hipir & GENMASK(9, 0);
-		virq = irq_find_mapping(intc->domain, hwirq);
+		err = generic_handle_domain_irq(intc->domain, hwirq);
 
 		/*
 		 * NOTE: manually ACK any system events that do not have a
 		 * handler mapped yet
 		 */
-		if (WARN_ON_ONCE(!virq))
+		if (WARN_ON_ONCE(err))
 			pruss_intc_write_reg(intc, PRU_INTC_SICR, hwirq);
-		else
-			generic_handle_irq(virq);
 	}
 
 	chained_irq_exit(chip, desc);
@@ -601,8 +598,8 @@ static int pruss_intc_probe(struct platform_device *pdev)
 			continue;
 
 		irq = platform_get_irq_byname(pdev, irq_names[i]);
-		if (irq <= 0) {
-			ret = (irq == 0) ? -EINVAL : irq;
+		if (irq < 0) {
+			ret = irq;
 			goto fail_irq;
 		}
 
@@ -635,7 +632,7 @@ fail_irq:
 	return ret;
 }
 
-static int pruss_intc_remove(struct platform_device *pdev)
+static void pruss_intc_remove(struct platform_device *pdev)
 {
 	struct pruss_intc *intc = platform_get_drvdata(pdev);
 	u8 max_system_events = intc->soc_config->num_system_events;
@@ -652,8 +649,6 @@ static int pruss_intc_remove(struct platform_device *pdev)
 		irq_dispose_mapping(irq_find_mapping(intc->domain, hwirq));
 
 	irq_domain_remove(intc->domain);
-
-	return 0;
 }
 
 static const struct pruss_intc_match_data pruss_intc_data = {
@@ -683,12 +678,12 @@ MODULE_DEVICE_TABLE(of, pruss_intc_of_match);
 
 static struct platform_driver pruss_intc_driver = {
 	.driver = {
-		.name = "pruss-intc",
-		.of_match_table = pruss_intc_of_match,
-		.suppress_bind_attrs = true,
+		.name			= "pruss-intc",
+		.of_match_table		= pruss_intc_of_match,
+		.suppress_bind_attrs	= true,
 	},
-	.probe  = pruss_intc_probe,
-	.remove = pruss_intc_remove,
+	.probe		= pruss_intc_probe,
+	.remove_new	= pruss_intc_remove,
 };
 module_platform_driver(pruss_intc_driver);
 

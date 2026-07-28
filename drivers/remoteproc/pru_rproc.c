@@ -2,22 +2,28 @@
 /*
  * PRU-ICSS remoteproc driver for various TI SoCs
  *
- * Copyright (C) 2014-2021 Texas Instruments Incorporated - https://www.ti.com/
+ * Copyright (C) 2014-2022 Texas Instruments Incorporated - https://www.ti.com/
  *
  * Author(s):
  *	Suman Anna <s-anna@ti.com>
  *	Andrew F. Davis <afd@ti.com>
  *	Grzegorz Jaszczyk <grzegorz.jaszczyk@linaro.org> for Texas Instruments
+ *	Puranjay Mohan <p-mohan@ti.com>
+ *	Md Danish Anwar <danishanwar@ti.com>
  */
 
 #include <linux/bitops.h>
 #include <linux/debugfs.h>
+#include <linux/delay.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/of_irq.h>
-#include <linux/pruss.h>
+#include <linux/platform_device.h>
+#include <linux/remoteproc/pruss.h>
 #include <linux/pruss_driver.h>
 #include <linux/remoteproc.h>
 
@@ -65,6 +71,8 @@
 
 #define MAX_PRU_SYS_EVENTS 160
 
+static const char *pru_names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
+
 /**
  * enum pru_iomem - PRU core memory/register range identifiers
  *
@@ -78,21 +86,6 @@ enum pru_iomem {
 	PRU_IOMEM_CTRL,
 	PRU_IOMEM_DEBUG,
 	PRU_IOMEM_MAX,
-};
-
-/**
- * enum pru_type - PRU core type identifier
- *
- * @PRU_TYPE_PRU: Programmable Real-time Unit
- * @PRU_TYPE_RTU: Auxiliary Programmable Real-Time Unit
- * @PRU_TYPE_TX_PRU: Transmit Programmable Real-Time Unit
- * @PRU_TYPE_MAX: just keep this one at the end
- */
-enum pru_type {
-	PRU_TYPE_PRU = 0,
-	PRU_TYPE_RTU,
-	PRU_TYPE_TX_PRU,
-	PRU_TYPE_MAX,
 };
 
 /**
@@ -134,9 +127,10 @@ struct pru_rproc {
 	const struct pru_private_data *data;
 	struct pruss_mem_region mem_regions[PRU_IOMEM_MAX];
 	struct device_node *client_np;
-	struct mutex lock; /* client access lock */
+	struct mutex lock;
 	const char *fw_name;
 	unsigned int *mapped_irq;
+	struct resource_table *rsc_tbl;
 	struct pru_irq_rsc *pru_interrupt_map;
 	size_t pru_interrupt_map_sz;
 	spinlock_t rmw_lock; /* register access lock */
@@ -176,7 +170,7 @@ void pru_control_set_reg(struct pru_rproc *pru, unsigned int reg,
 }
 
 /**
- * pru_rproc_set_firmware() - set firmware for a pru core
+ * pru_rproc_set_firmware() - set firmware for a PRU core
  * @rproc: the rproc instance of the PRU
  * @fw_name: the new firmware name, or NULL if default is desired
  *
@@ -194,33 +188,25 @@ static int pru_rproc_set_firmware(struct rproc *rproc, const char *fw_name)
 
 static struct rproc *__pru_rproc_get(struct device_node *np, int index)
 {
-	struct device_node *rproc_np = NULL;
-	struct platform_device *pdev;
 	struct rproc *rproc;
+	phandle rproc_phandle;
+	int ret;
 
-	rproc_np = of_parse_phandle(np, "ti,prus", index);
-	if (!rproc_np || !of_device_is_available(rproc_np))
-		return ERR_PTR(-ENODEV);
+	ret = of_property_read_u32_index(np, "ti,prus", index, &rproc_phandle);
+	if (ret)
+		return ERR_PTR(ret);
 
-	pdev = of_find_device_by_node(rproc_np);
-	of_node_put(rproc_np);
-
-	if (!pdev)
-		/* probably PRU not yet probed */
-		return ERR_PTR(-EPROBE_DEFER);
-
-	/* make sure it is PRU rproc */
-	if (!is_pru_rproc(&pdev->dev)) {
-		put_device(&pdev->dev);
-		return ERR_PTR(-ENODEV);
+	rproc = rproc_get_by_phandle(rproc_phandle);
+	if (!rproc) {
+		ret = -EPROBE_DEFER;
+		return ERR_PTR(ret);
 	}
 
-	rproc = platform_get_drvdata(pdev);
-	put_device(&pdev->dev);
-	if (!rproc)
-		return ERR_PTR(-EPROBE_DEFER);
-
-	get_device(&rproc->dev);
+	/* make sure it is PRU rproc */
+	if (!is_pru_rproc(rproc->dev.parent)) {
+		rproc_put(rproc);
+		return ERR_PTR(-ENODEV);
+	}
 
 	return rproc;
 }
@@ -251,8 +237,8 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 {
 	struct rproc *rproc;
 	struct pru_rproc *pru;
-	const char *fw_name;
 	struct device *dev;
+	const char *fw_name;
 	int ret;
 	u32 mux;
 
@@ -267,14 +253,17 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 
 	if (pru->client_np) {
 		mutex_unlock(&pru->lock);
-		put_device(dev);
-		return ERR_PTR(-EBUSY);
+		ret = -EBUSY;
+		goto err_no_rproc_handle;
 	}
 
 	pru->client_np = np;
-	rproc->deny_sysfs_ops = true;
+	rproc->sysfs_read_only = true;
 
 	mutex_unlock(&pru->lock);
+
+	if (pru_id)
+		*pru_id = pru->id;
 
 	ret = pruss_cfg_get_gpmux(pru->pruss, pru->id, &pru->gpmux_save);
 	if (ret) {
@@ -282,6 +271,7 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 		goto err;
 	}
 
+	/* An error here is acceptable for backward compatibility */
 	ret = of_property_read_u32_index(np, "ti,pruss-gp-mux-sel", index,
 					 &mux);
 	if (!ret) {
@@ -302,10 +292,11 @@ struct rproc *pru_rproc_get(struct device_node *np, int index,
 		}
 	}
 
-	if (pru_id)
-		*pru_id = pru->id;
-
 	return rproc;
+
+err_no_rproc_handle:
+	rproc_put(rproc);
+	return ERR_PTR(ret);
 
 err:
 	pru_rproc_put(rproc);
@@ -328,19 +319,23 @@ void pru_rproc_put(struct rproc *rproc)
 		return;
 
 	pru = rproc->priv;
-	if (!pru->client_np)
-		return;
 
 	pruss_cfg_set_gpmux(pru->pruss, pru->id, pru->gpmux_save);
 
 	pru_rproc_set_firmware(rproc, NULL);
 
 	mutex_lock(&pru->lock);
+
+	if (!pru->client_np) {
+		mutex_unlock(&pru->lock);
+		return;
+	}
+
 	pru->client_np = NULL;
-	rproc->deny_sysfs_ops = false;
+	rproc->sysfs_read_only = false;
 	mutex_unlock(&pru->lock);
 
-	put_device(&rproc->dev);
+	rproc_put(rproc);
 }
 EXPORT_SYMBOL_GPL(pru_rproc_put);
 
@@ -354,7 +349,7 @@ EXPORT_SYMBOL_GPL(pru_rproc_put);
  */
 int pru_rproc_set_ctable(struct rproc *rproc, enum pru_ctable_idx c, u32 addr)
 {
-	struct pru_rproc *pru = rproc->priv;
+	struct pru_rproc *pru;
 	unsigned int reg;
 	u32 mask, set;
 	u16 idx;
@@ -366,6 +361,7 @@ int pru_rproc_set_ctable(struct rproc *rproc, enum pru_ctable_idx c, u32 addr)
 	if (!rproc->dev.parent || !is_pru_rproc(rproc->dev.parent))
 		return -ENODEV;
 
+	pru = rproc->priv;
 	/* pointer is 16 bit and index is 8-bit so mask out the rest */
 	idx_mask = (c >= PRU_C28) ? 0xFFFF : 0xFF;
 
@@ -547,13 +543,12 @@ static void pru_rproc_kick(struct rproc *rproc, int vq_id)
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
 	int ret;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 
 	if (list_empty(&pru->rproc->rvdevs))
 		return;
 
 	dev_dbg(dev, "kicking vqid %d on %s%d\n", vq_id,
-		names[pru->data->type], pru->id);
+		pru_names[pru->data->type], pru->id);
 
 	ret = irq_set_irqchip_state(pru->mapped_irq[0], IRQCHIP_STATE_PENDING, true);
 	if (ret < 0)
@@ -573,14 +568,8 @@ static int pru_vring_interrupt_setup(struct rproc *rproc)
 
 	/* get vring interrupts for supporting virtio rpmsg */
 	pru->irq_vring = platform_get_irq_byname(pdev, "vring");
-	if (pru->irq_vring <= 0) {
-		ret = pru->irq_vring;
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "unable to get vring interrupt, status = %d\n",
-				ret);
-
-		return ret;
-	}
+	if (pru->irq_vring <= 0)
+		return dev_err_probe(dev, pru->irq_vring, "unable to get vring interrupt\n");
 
 	ret = request_threaded_irq(pru->irq_vring, NULL,
 				   pru_rproc_vring_interrupt, IRQF_ONESHOT,
@@ -684,16 +673,47 @@ map_fail:
 	return ret;
 }
 
+/*
+ * Attach to a running remote processor (IPC-only mode)
+ */
+static int pru_rproc_attach(struct rproc *rproc)
+{
+	struct device *dev = &rproc->dev;
+	struct pru_rproc *pru = rproc->priv;
+	int ret = 0;
+	u32 val;
+
+	dev_dbg(dev, "attach\n");
+
+	/*
+	 * Configure PRU Vring interrupt. Even if this configuration fails,
+	 * let the PRU continue execution without IPC.
+	 */
+	ret = pru_vring_interrupt_setup(rproc);
+	if (ret && pru->mapped_irq)
+		pru_dispose_irq_mapping(pru);
+
+	/* pru interrupts already configured. clear the cached map */
+	pru->pru_interrupt_map = NULL;
+	pru->pru_interrupt_map_sz = 0;
+
+	/* Release/enable the PRU execution */
+	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
+	val |= CTRL_CTRL_EN;
+	pru_control_write_reg(pru, PRU_CTRL_CTRL, val);
+
+	return ret;
+}
+
 static int pru_rproc_start(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 	u32 val;
 	int ret;
 
 	dev_dbg(dev, "starting %s%d: entry-point = 0x%llx\n",
-		names[pru->data->type], pru->id, (rproc->bootaddr >> 2));
+		pru_names[pru->data->type], pru->id, (rproc->bootaddr >> 2));
 
 	ret = pru_handle_intrmap(rproc);
 	/*
@@ -726,10 +746,9 @@ static int pru_rproc_stop(struct rproc *rproc)
 {
 	struct device *dev = &rproc->dev;
 	struct pru_rproc *pru = rproc->priv;
-	const char *names[PRU_TYPE_MAX] = { "PRU", "RTU", "Tx_PRU" };
 	u32 val;
 
-	dev_dbg(dev, "stopping %s%d\n", names[pru->data->type], pru->id);
+	dev_dbg(dev, "stopping %s%d\n", pru_names[pru->data->type], pru->id);
 
 	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
 	val &= ~CTRL_CTRL_EN;
@@ -770,11 +789,11 @@ static void *pru_d_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
 	dram0 = pruss->mem_regions[PRUSS_MEM_DRAM0];
 	dram1 = pruss->mem_regions[PRUSS_MEM_DRAM1];
 	/* PRU1 has its local RAM addresses reversed */
-	if (pru->id == 1)
+	if (pru->id == PRUSS_PRU1)
 		swap(dram0, dram1);
 	shrd_ram = pruss->mem_regions[PRUSS_MEM_SHRD_RAM2];
 
-	if (da >= PRU_PDRAM_DA && da + len <= PRU_PDRAM_DA + dram0.size) {
+	if (da + len <= PRU_PDRAM_DA + dram0.size) {
 		offset = da - PRU_PDRAM_DA;
 		va = (__force void *)(dram0.va + offset);
 	} else if (da >= PRU_SDRAM_DA &&
@@ -823,8 +842,7 @@ static void *pru_i_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
 	 */
 	da &= 0xfffff;
 
-	if (da >= PRU_IRAM_DA &&
-	    da + len <= PRU_IRAM_DA + pru->mem_regions[PRU_IOMEM_IRAM].size) {
+	if (da + len <= PRU_IRAM_DA + pru->mem_regions[PRU_IOMEM_IRAM].size) {
 		offset = da - PRU_IRAM_DA;
 		va = (__force void *)(pru->mem_regions[PRU_IOMEM_IRAM].va +
 				      offset);
@@ -838,7 +856,7 @@ static void *pru_i_da_to_va(struct pru_rproc *pru, u32 da, size_t len)
  * core for any PRU client drivers. The PRU Instruction RAM access is restricted
  * only to the PRU loader code.
  */
-static void *pru_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len)
+static void *pru_rproc_da_to_va(struct rproc *rproc, u64 da, size_t len, bool *is_iomem)
 {
 	struct pru_rproc *pru = rproc->priv;
 
@@ -859,12 +877,6 @@ static void *pru_da_to_va(struct rproc *rproc, u64 da, size_t len, bool is_iram)
 	return va;
 }
 
-static struct rproc_ops pru_rproc_ops = {
-	.start		= pru_rproc_start,
-	.stop		= pru_rproc_stop,
-	.kick		= pru_rproc_kick,
-	.da_to_va	= pru_rproc_da_to_va,
-};
 
 /*
  * Custom memory copy implementation for ICSSG PRU/RTU/Tx_PRU Cores
@@ -1067,6 +1079,112 @@ static int pru_rproc_parse_fw(struct rproc *rproc, const struct firmware *fw)
 }
 
 /*
+ * This function gets called in IPC only mode. Resource table pointer
+ * is retrieved during 'prepare' and cached locally.
+ */
+static struct resource_table *pru_get_loaded_rsc_table(struct rproc *rproc,
+							size_t *rsc_table_sz)
+{
+	struct pru_rproc *pru = rproc->priv;
+
+	*rsc_table_sz = rproc->table_sz;
+	return pru->rsc_tbl;
+}
+/*
+ * is_pru_running - local utility function to check PRU status
+ * @pru: PRU device pointer used for checking core status
+ */
+static u32 is_pru_running(struct pru_rproc *pru)
+{
+	u32 val;
+
+	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
+	return (val & CTRL_CTRL_RUNSTATE);
+}
+
+/*
+ * For PRU cores, prepare function is used in IPC only mode. Remote proc
+ * core driver calls 'prepare' to facilitate enabling the configuraiton
+ * needed before attaching to the remote processor. In prepare the PRU
+ * is paused from fetching instruction stream, so that the vring and
+ * interrupts are configured before attaching to the PRU unit.
+ */
+static int pru_rproc_prepare(struct rproc *rproc)
+{
+	struct device *dev = &rproc->dev;
+	struct pru_rproc *pru = rproc->priv;
+	int ret = 0;
+	u32 stat = 0;
+	u32 val;
+	const struct firmware *firmware_p;
+
+	/*
+	 * For PRU cores, prepare is used only in IPC mode to pause and
+	 * configure vrings.
+	 */
+	if (rproc->state != RPROC_DETACHED)
+		return ret;
+
+	if (!rproc->firmware) {
+		dev_err(dev, "PRU FW needed to get PRU resource table\n");
+		return -EINVAL;
+	}
+
+	ret = request_firmware(&firmware_p, rproc->firmware, dev);
+	if (ret < 0) {
+		dev_err(dev, "request_firmware failed: %d\n", ret);
+		return ret;
+	}
+
+	/* Pause the PRU execution, while vring buffers are configured */
+	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
+	val &= ~CTRL_CTRL_EN;
+	pru_control_write_reg(pru, PRU_CTRL_CTRL, val);
+
+	ret = readx_poll_timeout(is_pru_running, pru, stat, !stat, 200, 2000);
+	if (ret) {
+		dev_err(dev, "timeout waiting for PRU to halt\n");
+		return ret;
+	}
+
+	/* parse the FW for INTR maps and resource table */
+	pru_rproc_parse_fw(rproc, firmware_p);
+
+	/* configure the interrupt map */
+	pru_handle_intrmap(rproc);
+
+	/* cache resource table pointer */
+	pru->rsc_tbl = rproc_elf_find_loaded_rsc_table(rproc, firmware_p);
+
+	release_firmware(firmware_p);
+
+	return ret;
+}
+
+/*
+ * Detach from a running remote processor (IPC-only mode)
+ * This callback is for any cleanup operations on detach for later
+ * state changes like re-attach. PRU IRQ mappings are removed here.
+ */
+static int pru_rproc_detach(struct rproc *rproc)
+{
+	struct pru_rproc *pru = rproc->priv;
+
+	if (!list_empty(&pru->rproc->rvdevs) && pru->irq_vring > 0)
+		free_irq(pru->irq_vring, pru);
+
+	pru_dispose_irq_mapping(pru);
+
+	/* dispose vring mapping as well */
+	if (pru->irq_vring > 0)
+		irq_dispose_mapping(pru->irq_vring);
+
+	pru->rsc_tbl = NULL;
+
+	return 0;
+}
+
+/*
  * Compute PRU id based on the IRAM addresses. The PRU IRAMs are
  * always at a particular offset within the PRUSS address space.
  */
@@ -1096,6 +1214,17 @@ static int pru_rproc_set_id(struct pru_rproc *pru)
 	return ret;
 }
 
+static struct rproc_ops pru_rproc_ops = {
+	.start		= pru_rproc_start,
+	.stop		= pru_rproc_stop,
+	.kick		= pru_rproc_kick,
+	.da_to_va	= pru_rproc_da_to_va,
+	.prepare	= pru_rproc_prepare,
+	.attach		= pru_rproc_attach,
+	.detach		= pru_rproc_detach,
+	.get_loaded_rsc_table	= pru_get_loaded_rsc_table,
+};
+
 static int pru_rproc_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1108,6 +1237,7 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	int i, ret;
 	const struct pru_private_data *data;
 	const char *mem_names[PRU_IOMEM_MAX] = { "iram", "control", "debug" };
+	u32 val;
 
 	data = of_device_get_match_data(&pdev->dev);
 	if (!data)
@@ -1149,6 +1279,7 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	pru->pruss = platform_get_drvdata(ppdev);
 	pru->rproc = rproc;
 	pru->fw_name = fw_name;
+	pru->client_np = NULL;
 	spin_lock_init(&pru->rmw_lock);
 	mutex_init(&pru->lock);
 
@@ -1176,6 +1307,18 @@ static int pru_rproc_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, rproc);
 
+	val = pru_control_read_reg(pru, PRU_CTRL_CTRL);
+	if (val & CTRL_CTRL_EN) {
+		/*
+		 * Configure for IPC only mode. 'stop' and 'start' callbacks
+		 * are not allowed in this mode.
+		 */
+		dev_dbg(dev, "Configure PRU IPC only mode.\n");
+		rproc->state = RPROC_DETACHED;
+		rproc->ops->stop = NULL;
+		rproc->ops->start = NULL;
+	}
+
 	ret = devm_rproc_add(dev, pru->rproc);
 	if (ret) {
 		dev_err(dev, "rproc_add failed: %d\n", ret);
@@ -1189,14 +1332,12 @@ static int pru_rproc_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int pru_rproc_remove(struct platform_device *pdev)
+static void pru_rproc_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct rproc *rproc = platform_get_drvdata(pdev);
 
 	dev_dbg(dev, "%s: removing rproc %s\n", __func__, rproc->name);
-
-	return 0;
 }
 
 static const struct pru_private_data pru_data = {
@@ -1222,6 +1363,9 @@ static const struct of_device_id pru_rproc_match[] = {
 	{ .compatible = "ti,am3356-pru",	.data = &pru_data },
 	{ .compatible = "ti,am4376-pru",	.data = &pru_data },
 	{ .compatible = "ti,am5728-pru",	.data = &pru_data },
+	{ .compatible = "ti,am642-pru",		.data = &k3_pru_data },
+	{ .compatible = "ti,am642-rtu",		.data = &k3_rtu_data },
+	{ .compatible = "ti,am642-tx-pru",	.data = &k3_tx_pru_data },
 	{ .compatible = "ti,k2g-pru",		.data = &pru_data },
 	{ .compatible = "ti,am654-pru",		.data = &k3_pru_data },
 	{ .compatible = "ti,am654-rtu",		.data = &k3_rtu_data },
@@ -1229,9 +1373,6 @@ static const struct of_device_id pru_rproc_match[] = {
 	{ .compatible = "ti,j721e-pru",		.data = &k3_pru_data },
 	{ .compatible = "ti,j721e-rtu",		.data = &k3_rtu_data },
 	{ .compatible = "ti,j721e-tx-pru",	.data = &k3_tx_pru_data },
-	{ .compatible = "ti,am642-pru",		.data = &k3_pru_data },
-	{ .compatible = "ti,am642-rtu",		.data = &k3_rtu_data },
-	{ .compatible = "ti,am642-tx-pru",	.data = &k3_tx_pru_data },
 	{ .compatible = "ti,am625-pru",		.data = &k3_pru_data },
 	{},
 };
@@ -1239,17 +1380,19 @@ MODULE_DEVICE_TABLE(of, pru_rproc_match);
 
 static struct platform_driver pru_rproc_driver = {
 	.driver = {
-		.name = PRU_RPROC_DRVNAME,
+		.name   = PRU_RPROC_DRVNAME,
 		.of_match_table = pru_rproc_match,
 		.suppress_bind_attrs = true,
 	},
 	.probe  = pru_rproc_probe,
-	.remove = pru_rproc_remove,
+	.remove_new = pru_rproc_remove,
 };
 module_platform_driver(pru_rproc_driver);
 
 MODULE_AUTHOR("Suman Anna <s-anna@ti.com>");
 MODULE_AUTHOR("Andrew F. Davis <afd@ti.com>");
 MODULE_AUTHOR("Grzegorz Jaszczyk <grzegorz.jaszczyk@linaro.org>");
+MODULE_AUTHOR("Puranjay Mohan <p-mohan@ti.com>");
+MODULE_AUTHOR("Md Danish Anwar <danishanwar@ti.com>");
 MODULE_DESCRIPTION("PRU-ICSS Remote Processor Driver");
 MODULE_LICENSE("GPL v2");

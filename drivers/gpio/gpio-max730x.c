@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
-/**
+/*
  * Copyright (C) 2006 Juergen Beisert, Pengutronix
  * Copyright (C) 2008 Guennadi Liakhovetski, Pengutronix
  * Copyright (C) 2009 Wolfram Sang, Pengutronix
@@ -220,18 +220,14 @@ exit_destroy:
 }
 EXPORT_SYMBOL_GPL(__max730x_probe);
 
-int __max730x_remove(struct device *dev)
+void __max730x_remove(struct device *dev)
 {
 	struct max7301 *ts = dev_get_drvdata(dev);
-
-	if (ts == NULL)
-		return -ENODEV;
 
 	/* Power down the chip and disable IRQ output */
 	ts->write(dev, 0x04, 0x00);
 	gpiochip_remove(&ts->chip);
 	mutex_destroy(&ts->lock);
-	return 0;
 }
 EXPORT_SYMBOL_GPL(__max730x_remove);
 

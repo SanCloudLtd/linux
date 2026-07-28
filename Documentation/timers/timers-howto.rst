@@ -19,7 +19,7 @@ it really need to delay in atomic context?" If so...
 
 ATOMIC CONTEXT:
 	You must use the `*delay` family of functions. These
-	functions use the jiffie estimation of clock speed
+	functions use the jiffy estimation of clock speed
 	and will busy wait for enough loop cycles to achieve
 	the desired delay:
 
@@ -75,7 +75,7 @@ NON-ATOMIC CONTEXT:
 
 		- Why not msleep for (1ms - 20ms)?
 			Explained originally here:
-				http://lkml.org/lkml/2007/8/3/250
+				https://lore.kernel.org/r/15327.1186166232@lwn.net
 
 			msleep(1~20) may not do what the caller intends, and
 			will often sleep longer (~20 ms actual sleep for any

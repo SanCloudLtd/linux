@@ -2,12 +2,17 @@
 /*
  * For transport using shared mem structure.
  *
- * Copyright (C) 2019 ARM Ltd.
+ * Copyright (C) 2019-2024 ARM Ltd.
  */
 
+#include <linux/ktime.h>
 #include <linux/io.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/processor.h>
 #include <linux/types.h>
+
+#include <linux/bug.h>
 
 #include "common.h"
 
@@ -29,17 +34,38 @@ struct scmi_shared_mem {
 	u8 msg_payload[];
 };
 
-void shmem_tx_prepare(struct scmi_shared_mem __iomem *shmem,
-		      struct scmi_xfer *xfer)
+static void shmem_tx_prepare(struct scmi_shared_mem __iomem *shmem,
+			     struct scmi_xfer *xfer,
+			     struct scmi_chan_info *cinfo)
 {
+	ktime_t stop;
+
 	/*
 	 * Ideally channel must be free by now unless OS timeout last
 	 * request and platform continued to process the same, wait
 	 * until it releases the shared memory, otherwise we may endup
-	 * overwriting its response with new message payload or vice-versa
+	 * overwriting its response with new message payload or vice-versa.
+	 * Giving up anyway after twice the expected channel timeout so as
+	 * not to bail-out on intermittent issues where the platform is
+	 * occasionally a bit slower to answer.
+	 *
+	 * Note that after a timeout is detected we bail-out and carry on but
+	 * the transport functionality is probably permanently compromised:
+	 * this is just to ease debugging and avoid complete hangs on boot
+	 * due to a misbehaving SCMI firmware.
 	 */
-	spin_until_cond(ioread32(&shmem->channel_status) &
-			SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE);
+	stop = ktime_add_ms(ktime_get(), 2 * cinfo->rx_timeout_ms);
+	spin_until_cond((ioread32(&shmem->channel_status) &
+			 SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE) ||
+			 ktime_after(ktime_get(), stop));
+	if (!(ioread32(&shmem->channel_status) &
+	      SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE)) {
+		WARN_ON_ONCE(1);
+		dev_err(cinfo->dev,
+			"Timeout waiting for a free TX channel !\n");
+		return;
+	}
+
 	/* Mark channel busy + clear error */
 	iowrite32(0x0, &shmem->channel_status);
 	iowrite32(xfer->hdr.poll_completion ? 0 : SCMI_SHMEM_FLAG_INTR_ENABLED,
@@ -50,13 +76,13 @@ void shmem_tx_prepare(struct scmi_shared_mem __iomem *shmem,
 		memcpy_toio(shmem->msg_payload, xfer->tx.buf, xfer->tx.len);
 }
 
-u32 shmem_read_header(struct scmi_shared_mem __iomem *shmem)
+static u32 shmem_read_header(struct scmi_shared_mem __iomem *shmem)
 {
 	return ioread32(&shmem->msg_header);
 }
 
-void shmem_fetch_response(struct scmi_shared_mem __iomem *shmem,
-			  struct scmi_xfer *xfer)
+static void shmem_fetch_response(struct scmi_shared_mem __iomem *shmem,
+				 struct scmi_xfer *xfer)
 {
 	size_t len = ioread32(&shmem->length);
 
@@ -68,8 +94,8 @@ void shmem_fetch_response(struct scmi_shared_mem __iomem *shmem,
 	memcpy_fromio(xfer->rx.buf, shmem->msg_payload + 4, xfer->rx.len);
 }
 
-void shmem_fetch_notification(struct scmi_shared_mem __iomem *shmem,
-			      size_t max_len, struct scmi_xfer *xfer)
+static void shmem_fetch_notification(struct scmi_shared_mem __iomem *shmem,
+				     size_t max_len, struct scmi_xfer *xfer)
 {
 	size_t len = ioread32(&shmem->length);
 
@@ -80,13 +106,13 @@ void shmem_fetch_notification(struct scmi_shared_mem __iomem *shmem,
 	memcpy_fromio(xfer->rx.buf, shmem->msg_payload, xfer->rx.len);
 }
 
-void shmem_clear_channel(struct scmi_shared_mem __iomem *shmem)
+static void shmem_clear_channel(struct scmi_shared_mem __iomem *shmem)
 {
 	iowrite32(SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE, &shmem->channel_status);
 }
 
-bool shmem_poll_done(struct scmi_shared_mem __iomem *shmem,
-		     struct scmi_xfer *xfer)
+static bool shmem_poll_done(struct scmi_shared_mem __iomem *shmem,
+			    struct scmi_xfer *xfer)
 {
 	u16 xfer_id;
 
@@ -98,4 +124,71 @@ bool shmem_poll_done(struct scmi_shared_mem __iomem *shmem,
 	return ioread32(&shmem->channel_status) &
 		(SCMI_SHMEM_CHAN_STAT_CHANNEL_ERROR |
 		 SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE);
+}
+
+static bool shmem_channel_free(struct scmi_shared_mem __iomem *shmem)
+{
+	return (ioread32(&shmem->channel_status) &
+			SCMI_SHMEM_CHAN_STAT_CHANNEL_FREE);
+}
+
+static bool shmem_channel_intr_enabled(struct scmi_shared_mem __iomem *shmem)
+{
+	return ioread32(&shmem->flags) & SCMI_SHMEM_FLAG_INTR_ENABLED;
+}
+
+static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
+				       struct device *dev, bool tx,
+				       struct resource *res)
+{
+	struct device_node *shmem __free(device_node);
+	const char *desc = tx ? "Tx" : "Rx";
+	int ret, idx = tx ? 0 : 1;
+	struct device *cdev = cinfo->dev;
+	struct resource lres = {};
+	resource_size_t size;
+	void __iomem *addr;
+
+	shmem = of_parse_phandle(cdev->of_node, "shmem", idx);
+	if (!shmem)
+		return IOMEM_ERR_PTR(-ENODEV);
+
+	if (!of_device_is_compatible(shmem, "arm,scmi-shmem"))
+		return IOMEM_ERR_PTR(-ENXIO);
+
+	/* Use a local on-stack as a working area when not provided */
+	if (!res)
+		res = &lres;
+
+	ret = of_address_to_resource(shmem, 0, res);
+	if (ret) {
+		dev_err(cdev, "failed to get SCMI %s shared memory\n", desc);
+		return IOMEM_ERR_PTR(ret);
+	}
+
+	size = resource_size(res);
+	addr = devm_ioremap(dev, res->start, size);
+	if (!addr) {
+		dev_err(dev, "failed to ioremap SCMI %s shared memory\n", desc);
+		return IOMEM_ERR_PTR(-EADDRNOTAVAIL);
+	}
+
+	return addr;
+}
+
+static const struct scmi_shared_mem_operations scmi_shmem_ops = {
+	.tx_prepare = shmem_tx_prepare,
+	.read_header = shmem_read_header,
+	.fetch_response = shmem_fetch_response,
+	.fetch_notification = shmem_fetch_notification,
+	.clear_channel = shmem_clear_channel,
+	.poll_done = shmem_poll_done,
+	.channel_free = shmem_channel_free,
+	.channel_intr_enabled = shmem_channel_intr_enabled,
+	.setup_iomap = shmem_setup_iomap,
+};
+
+const struct scmi_shared_mem_operations *scmi_shared_mem_operations_get(void)
+{
+	return &scmi_shmem_ops;
 }

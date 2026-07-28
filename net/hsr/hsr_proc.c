@@ -50,7 +50,7 @@ static int hsr_lre_stats_show(struct seq_file *sfp, void *v)
 	u32 *ptr;
 
 	upper_stats = &priv->lre_stats;
-	if (priv->rx_offloaded) {
+	if (priv->fwd_offloaded) {
 		ret = hsr_lredev_get_lre_stats(priv, &lower_stats);
 		if (ret < 0) {
 			seq_puts(sfp, "Error in retrieving the stats\n");
@@ -62,7 +62,7 @@ static int hsr_lre_stats_show(struct seq_file *sfp, void *v)
 	}
 
 	seq_puts(sfp, "LRE statistics:\n");
-	seq_printf(sfp, "Rx Offloaded: %d\n", priv->rx_offloaded);
+	seq_printf(sfp, "Rx Offloaded: %d\n", priv->fwd_offloaded);
 	for (i = 0; i < ARRAY_SIZE(hsr_lre_stats); i++) {
 		/* for rx_c and tx_c, retrieve stats from hsr/prp device
 		 * lre stats. Rest of the stats are retrieved from
@@ -91,7 +91,7 @@ static int hsr_lre_stats_show(struct seq_file *sfp, void *v)
 
 static int hsr_lre_stats_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, hsr_lre_stats_show, PDE_DATA(inode));
+	return single_open(file, hsr_lre_stats_show, pde_data(inode));
 }
 
 static const struct proc_ops hsr_lre_stats_fops = {
@@ -170,7 +170,7 @@ static int hsr_node_table_show(struct seq_file *sfp, void *v)
 
 static int hsr_node_table_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, hsr_node_table_show, PDE_DATA(inode));
+	return single_open(file, hsr_node_table_show, pde_data(inode));
 }
 
 static const struct proc_ops hsr_node_table_fops = {
@@ -211,7 +211,7 @@ static inline int get_set_param(struct hsr_priv *priv,
 			ret = -EINVAL;
 			goto err;
 		}
-		if (!priv->rx_offloaded) {
+		if (!priv->fwd_offloaded) {
 			priv->hsr_mode = (enum iec62439_3_hsr_modes)val;
 			return 0;
 		}
@@ -223,7 +223,7 @@ static inline int get_set_param(struct hsr_priv *priv,
 			ret = -EINVAL;
 			goto err;
 		}
-		if (!priv->rx_offloaded) {
+		if (!priv->fwd_offloaded) {
 			priv->prp_tr = (enum iec62439_3_tr_modes)val;
 			goto out;
 		}
@@ -235,7 +235,7 @@ static inline int get_set_param(struct hsr_priv *priv,
 			ret = -EINVAL;
 			goto err;
 		}
-		if (!priv->rx_offloaded) {
+		if (!priv->fwd_offloaded) {
 			priv->dd_mode = (enum iec62439_3_dd_modes)val;
 			goto out;
 		}
@@ -243,7 +243,7 @@ static inline int get_set_param(struct hsr_priv *priv,
 		break;
 
 	case LREDEV_ATTR_ID_DLRMT:
-		if (!priv->rx_offloaded) {
+		if (!priv->fwd_offloaded) {
 			priv->dlrmt = val;
 			goto out;
 		}
@@ -255,7 +255,7 @@ static inline int get_set_param(struct hsr_priv *priv,
 			ret = -EINVAL;
 			goto err;
 		}
-		if (!priv->rx_offloaded) {
+		if (!priv->fwd_offloaded) {
 			priv->clear_nt_cmd =
 				(enum iec62439_3_clear_nt_cmd)val;
 			goto out;
@@ -302,7 +302,7 @@ static int hsr_mode_show(struct seq_file *sfp, void *v)
 	struct lredev_attr temp_attr;
 	int err;
 
-	if (!priv->rx_offloaded) {
+	if (!priv->fwd_offloaded) {
 		seq_printf(sfp, "%u\n", priv->hsr_mode);
 		return 0;
 	}
@@ -318,14 +318,14 @@ static int hsr_mode_show(struct seq_file *sfp, void *v)
 
 static int hsr_mode_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, hsr_mode_show, PDE_DATA(inode));
+	return single_open(file, hsr_mode_show, pde_data(inode));
 }
 
 static ssize_t hsr_mode_store(struct file *file,
 			      const char __user *buffer,
 			      size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	int err;
 
 	err = get_set_param(priv, buffer, count, LREDEV_ATTR_ID_HSR_MODE);
@@ -349,7 +349,7 @@ static int prp_tr_show(struct seq_file *sfp, void *v)
 	struct lredev_attr temp_attr;
 	int err;
 
-	if (!priv->rx_offloaded) {
+	if (!priv->fwd_offloaded) {
 		seq_printf(sfp, "%u\n", priv->prp_tr);
 		return 0;
 	}
@@ -365,14 +365,14 @@ static int prp_tr_show(struct seq_file *sfp, void *v)
 
 static int prp_tr_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, prp_tr_show, PDE_DATA(inode));
+	return single_open(file, prp_tr_show, pde_data(inode));
 }
 
 static ssize_t prp_tr_store(struct file *file,
 			    const char __user *buffer,
 			    size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	int err;
 
 	err = get_set_param(priv, buffer, count, LREDEV_ATTR_ID_PRP_TR);
@@ -396,7 +396,7 @@ static int dlrmt_show(struct seq_file *sfp, void *v)
 	struct lredev_attr temp_attr;
 	int err;
 
-	if (!priv->rx_offloaded) {
+	if (!priv->fwd_offloaded) {
 		seq_printf(sfp, "%u\n", priv->dlrmt);
 		return 0;
 	}
@@ -412,14 +412,14 @@ static int dlrmt_show(struct seq_file *sfp, void *v)
 
 static int dlrmt_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, dlrmt_show, PDE_DATA(inode));
+	return single_open(file, dlrmt_show, pde_data(inode));
 }
 
 static ssize_t dlrmt_store(struct file *file,
 			   const char __user *buffer,
 			   size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	int err;
 
 	err = get_set_param(priv, buffer, count, LREDEV_ATTR_ID_DLRMT);
@@ -443,7 +443,7 @@ static int dd_mode_show(struct seq_file *sfp, void *v)
 	struct lredev_attr temp_attr;
 	int err;
 
-	if (!priv->rx_offloaded) {
+	if (!priv->fwd_offloaded) {
 		seq_printf(sfp, "%u\n", priv->dd_mode);
 		return 0;
 	}
@@ -459,14 +459,14 @@ static int dd_mode_show(struct seq_file *sfp, void *v)
 
 static int dd_mode_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, dd_mode_show, PDE_DATA(inode));
+	return single_open(file, dd_mode_show, pde_data(inode));
 }
 
 static ssize_t dd_mode_store(struct file *file,
 			     const char __user *buffer,
 			     size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	int err;
 
 	err = get_set_param(priv, buffer, count, LREDEV_ATTR_ID_DD_MODE);
@@ -490,7 +490,7 @@ static int clear_nt_show(struct seq_file *sfp, void *v)
 	struct lredev_attr temp_attr;
 	int err;
 
-	if (!priv->rx_offloaded) {
+	if (!priv->fwd_offloaded) {
 		seq_printf(sfp, "%u\n", priv->clear_nt_cmd);
 		return 0;
 	}
@@ -506,14 +506,14 @@ static int clear_nt_show(struct seq_file *sfp, void *v)
 
 static int clear_nt_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, clear_nt_show, PDE_DATA(inode));
+	return single_open(file, clear_nt_show, pde_data(inode));
 }
 
 static ssize_t clear_nt_store(struct file *file,
 			      const char __user *buffer,
 			      size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	int err;
 
 	err = get_set_param(priv, buffer, count, LREDEV_ATTR_ID_CLEAR_NT);
@@ -541,14 +541,14 @@ static int disable_sv_show(struct seq_file *sfp, void *v)
 
 static int disable_sv_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, disable_sv_show, PDE_DATA(inode));
+	return single_open(file, disable_sv_show, pde_data(inode));
 }
 
 static ssize_t disable_sv_store(struct file *file,
 				const char __user *buffer,
 				size_t count, loff_t *pos)
 {
-	struct hsr_priv *priv = (struct hsr_priv *)PDE_DATA(file_inode(file));
+	struct hsr_priv *priv = (struct hsr_priv *)pde_data(file_inode(file));
 	char cmd_buffer[BUF_SIZE];
 	int ret = -EINVAL;
 	u32 val;

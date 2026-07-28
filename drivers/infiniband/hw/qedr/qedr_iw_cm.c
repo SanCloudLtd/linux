@@ -83,7 +83,7 @@ static void qedr_iw_free_qp(struct kref *ref)
 {
 	struct qedr_qp *qp = container_of(ref, struct qedr_qp, refcnt);
 
-	kfree(qp);
+	complete(&qp->qp_rel_comp);
 }
 
 static void
@@ -447,7 +447,8 @@ qedr_addr4_resolve(struct qedr_dev *dev,
 	struct rtable *rt = NULL;
 	int rc = 0;
 
-	rt = ip_route_output(&init_net, dst_ip, src_ip, 0, 0);
+	rt = ip_route_output(&init_net, dst_ip, src_ip, 0, 0,
+			     RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt)) {
 		DP_ERR(dev, "ip_route_output returned error\n");
 		return -EINVAL;

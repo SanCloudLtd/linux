@@ -231,14 +231,14 @@ static void lx_message_dump(struct lx_rmh *rmh)
 	u8 idx = rmh->cmd_idx;
 	int i;
 
-	snd_printk(LXRMH "command %s\n", dsp_commands[idx].dcOpName);
+	pr_debug(LXRMH "command %s\n", dsp_commands[idx].dcOpName);
 
 	for (i = 0; i != rmh->cmd_len; ++i)
-		snd_printk(LXRMH "\tcmd[%d] %08x\n", i, rmh->cmd[i]);
+		pr_debug(LXRMH "\tcmd[%d] %08x\n", i, rmh->cmd[i]);
 
 	for (i = 0; i != rmh->stat_len; ++i)
-		snd_printk(LXRMH "\tstat[%d]: %08x\n", i, rmh->stat[i]);
-	snd_printk("\n");
+		pr_debug(LXRMH "\tstat[%d]: %08x\n", i, rmh->stat[i]);
+	pr_debug("\n");
 }
 #else
 static inline void lx_message_dump(struct lx_rmh *rmh)
@@ -316,7 +316,7 @@ polling_successful:
 /* low-level dsp access */
 int lx_dsp_get_version(struct lx6464es *chip, u32 *rdsp_version)
 {
-	u16 ret;
+	int ret;
 
 	mutex_lock(&chip->msg_lock);
 
@@ -330,10 +330,10 @@ int lx_dsp_get_version(struct lx6464es *chip, u32 *rdsp_version)
 
 int lx_dsp_get_clock_frequency(struct lx6464es *chip, u32 *rfreq)
 {
-	u16 ret = 0;
 	u32 freq_raw = 0;
 	u32 freq = 0;
 	u32 frequency = 0;
+	int ret;
 
 	mutex_lock(&chip->msg_lock);
 
@@ -672,10 +672,6 @@ int lx_stream_set_format(struct lx6464es *chip, struct snd_pcm_runtime *runtime,
 	int err;
 	u32 pipe_cmd = PIPE_INFO_TO_CMD(is_capture, pipe);
 	u32 channels = runtime->channels;
-
-	if (runtime->channels != channels)
-		dev_err(chip->card->dev, "channel count mismatch: %d vs %d",
-			   runtime->channels, channels);
 
 	mutex_lock(&chip->msg_lock);
 	lx_message_init(&chip->rmh, CMD_0C_DEF_STREAM);

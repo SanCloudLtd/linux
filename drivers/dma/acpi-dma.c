@@ -75,8 +75,16 @@ static int acpi_dma_parse_resource_group(const struct acpi_csrt_group *grp,
 	    si->mmio_base_high != upper_32_bits(mem))
 		return 0;
 
-	/* Match device by Linux vIRQ */
+	/*
+	 * acpi_gsi_to_irq() can't be used because some platforms do not save
+	 * registered IRQs in the MP table. Instead we just try to register
+	 * the GSI, which is the core part of the above mentioned function.
+	 */
 	ret = acpi_register_gsi(NULL, si->gsi_interrupt, si->interrupt_mode, si->interrupt_polarity);
+	if (ret < 0)
+		return 0;
+
+	/* Match device by Linux vIRQ */
 	if (ret != irq)
 		return 0;
 
@@ -104,7 +112,7 @@ static int acpi_dma_parse_resource_group(const struct acpi_csrt_group *grp,
 }
 
 /**
- * acpi_dma_parse_csrt - parse CSRT to exctract additional DMA resources
+ * acpi_dma_parse_csrt - parse CSRT to extract additional DMA resources
  * @adev:	ACPI device to match with
  * @adma:	struct acpi_dma of the given DMA controller
  *
@@ -297,7 +305,7 @@ EXPORT_SYMBOL_GPL(devm_acpi_dma_controller_free);
  * found.
  *
  * Return:
- * 0, if no information is avaiable, -1 on mismatch, and 1 otherwise.
+ * 0, if no information is available, -1 on mismatch, and 1 otherwise.
  */
 static int acpi_dma_update_dma_spec(struct acpi_dma *adma,
 		struct acpi_dma_spec *dma_spec)

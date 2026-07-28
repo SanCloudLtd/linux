@@ -47,7 +47,7 @@ struct omap_iommu_domain {
 	u32 num_iommus;
 	struct omap_iommu_device *iommus;
 	struct device *dev;
-	struct mutex lock;
+	spinlock_t lock;
 	struct iommu_domain domain;
 };
 
@@ -58,9 +58,8 @@ struct omap_iommu {
 	struct device	*dev;
 	struct iommu_domain *domain;
 	struct dentry	*debug_dir;
-	const char *hwmod_mode;
 
-	struct mutex	iommu_lock;	/* global for this whole object */
+	spinlock_t	iommu_lock;	/* global for this whole object */
 
 	/*
 	 * We don't change iopgd for a situation like pgd for a task,
@@ -81,7 +80,7 @@ struct omap_iommu {
 	u32 id;
 
 	struct iommu_device iommu;
-	struct iommu_group *group;
+	bool has_iommu_driver;
 
 	u8 pwrst;
 };

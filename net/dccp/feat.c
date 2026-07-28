@@ -371,7 +371,7 @@ static int dccp_feat_clone_sp_val(dccp_feat_val *fval, u8 const *val, u8 len)
 		fval->sp.vec = kmemdup(val, len, gfp_any());
 		if (fval->sp.vec == NULL) {
 			fval->sp.len = 0;
-			return -ENOBUFS;
+			return -ENOMEM;
 		}
 	}
 	return 0;
@@ -996,6 +996,8 @@ int dccp_feat_finalise_settings(struct dccp_sock *dp)
 
 /**
  * dccp_feat_server_ccid_dependencies  -  Resolve CCID-dependent features
+ * @dreq: server socket to resolve
+ *
  * It is the server which resolves the dependencies once the CCID has been
  * fully negotiated. If no CCID has been negotiated, it uses the default CCID.
  */
@@ -1033,6 +1035,10 @@ static int dccp_feat_preflist_match(u8 *servlist, u8 slen, u8 *clilist, u8 clen)
 
 /**
  * dccp_feat_prefer  -  Move preferred entry to the start of array
+ * @preferred_value: entry to move to start of array
+ * @array: array of preferred entries
+ * @array_len: size of the array
+ *
  * Reorder the @array_len elements in @array so that @preferred_value comes
  * first. Returns >0 to indicate that @preferred_value does occur in @array.
  */
@@ -1160,8 +1166,12 @@ static u8 dccp_feat_change_recv(struct list_head *fn, u8 is_mandatory, u8 opt,
 			goto not_valid_or_not_known;
 		}
 
-		return dccp_feat_push_confirm(fn, feat, local, &fval);
+		if (dccp_feat_push_confirm(fn, feat, local, &fval)) {
+			kfree(fval.sp.vec);
+			return DCCP_RESET_CODE_TOO_BUSY;
+		}
 
+		return 0;
 	} else if (entry->state == FEAT_UNSTABLE) {	/* 6.6.2 */
 		return 0;
 	}

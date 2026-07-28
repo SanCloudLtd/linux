@@ -4,7 +4,7 @@
 
 #include <linux/bits.h>
 #include <linux/param.h>
-#include <linux/spinlock_types.h>
+#include <linux/spinlock_types_raw.h>
 
 #define DEFAULT_RATELIMIT_INTERVAL	(5 * HZ)
 #define DEFAULT_RATELIMIT_BURST		10
@@ -19,8 +19,8 @@ struct ratelimit_state {
 	int		burst;
 	int		printed;
 	int		missed;
+	unsigned int	flags;
 	unsigned long	begin;
-	unsigned long	flags;
 };
 
 #define RATELIMIT_STATE_INIT_FLAGS(name, interval_init, burst_init, flags_init) { \

@@ -71,9 +71,11 @@ the ``mbus_code`` field is handled differently:
    formats shall not depend on the active configuration of the video device
    or device pipeline.
 
-.. tabularcolumns:: |p{4.4cm}|p{4.4cm}|p{8.7cm}|
-
 .. c:type:: v4l2_fmtdesc
+
+.. cssclass:: longtable
+
+.. tabularcolumns:: |p{4.4cm}|p{4.4cm}|p{8.5cm}|
 
 .. flat-table:: struct v4l2_fmtdesc
     :header-rows:  0
@@ -135,7 +137,9 @@ the ``mbus_code`` field is handled differently:
 	zero.
 
 
-.. tabularcolumns:: |p{6.6cm}|p{2.2cm}|p{8.7cm}|
+.. tabularcolumns:: |p{8.4cm}|p{1.8cm}|p{7.1cm}|
+
+.. cssclass:: longtable
 
 .. _fmtdesc-flags:
 
@@ -223,6 +227,13 @@ the ``mbus_code`` field is handled differently:
 	The application can ask to configure the quantization of the capture
 	device when calling the :ref:`VIDIOC_S_FMT <VIDIOC_G_FMT>` ioctl with
 	:ref:`V4L2_PIX_FMT_FLAG_SET_CSC <v4l2-pix-fmt-flag-set-csc>` set.
+    * - ``V4L2_FMT_FLAG_META_LINE_BASED``
+      - 0x0200
+      - The metadata format is line-based. In this case the ``width``,
+	``height`` and ``bytesperline`` fields of :c:type:`v4l2_meta_format` are
+	valid. The buffer consists of ``height`` lines, each having ``width``
+	Data Units of data and the offset (in bytes) between the beginning of
+	each two consecutive lines is ``bytesperline``.
 
 Return Value
 ============

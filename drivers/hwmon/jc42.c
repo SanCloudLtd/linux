@@ -10,6 +10,7 @@
  */
 
 #include <linux/bitops.h>
+#include <linux/bitfield.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -37,20 +38,19 @@ static const unsigned short normal_i2c[] = {
 #define JC42_REG_SMBUS		0x22 /* NXP and Atmel, possibly others? */
 
 /* Status bits in temperature register */
-#define JC42_ALARM_CRIT_BIT	15
-#define JC42_ALARM_MAX_BIT	14
-#define JC42_ALARM_MIN_BIT	13
+#define JC42_ALARM_CRIT		BIT(15)
+#define JC42_ALARM_MAX		BIT(14)
+#define JC42_ALARM_MIN		BIT(13)
 
 /* Configuration register defines */
-#define JC42_CFG_CRIT_ONLY	(1 << 2)
-#define JC42_CFG_TCRIT_LOCK	(1 << 6)
-#define JC42_CFG_EVENT_LOCK	(1 << 7)
-#define JC42_CFG_SHUTDOWN	(1 << 8)
-#define JC42_CFG_HYST_SHIFT	9
-#define JC42_CFG_HYST_MASK	(0x03 << 9)
+#define JC42_CFG_CRIT_ONLY	BIT(2)
+#define JC42_CFG_TCRIT_LOCK	BIT(6)
+#define JC42_CFG_EVENT_LOCK	BIT(7)
+#define JC42_CFG_SHUTDOWN	BIT(8)
+#define JC42_CFG_HYST_MASK	GENMASK(10, 9)
 
 /* Capabilities */
-#define JC42_CAP_RANGE		(1 << 2)
+#define JC42_CAP_RANGE		BIT(2)
 
 /* Manufacturer IDs */
 #define ADT_MANID		0x11d4  /* Analog Devices */
@@ -64,6 +64,7 @@ static const unsigned short normal_i2c[] = {
 #define STM_MANID		0x104a  /* ST Microelectronics */
 #define GT_MANID		0x1c68	/* Giantec */
 #define GT_MANID2		0x132d	/* Giantec, 2nd mfg ID */
+#define SI_MANID		0x1c85	/* Seiko Instruments */
 
 /* SMBUS register */
 #define SMBUS_STMOUT		BIT(7)  /* SMBus time-out, active low */
@@ -78,19 +79,8 @@ static const unsigned short normal_i2c[] = {
 #define AT30TS00_DEVID		0x8201
 #define AT30TS00_DEVID_MASK	0xffff
 
-#define AT30TSE004_DEVID	0x2200
-#define AT30TSE004_DEVID_MASK	0xffff
-
-/* Giantec */
-#define GT30TS00_DEVID		0x2200
-#define GT30TS00_DEVID_MASK	0xff00
-
 #define GT34TS02_DEVID		0x3300
 #define GT34TS02_DEVID_MASK	0xff00
-
-/* IDT */
-#define TSE2004_DEVID		0x2200
-#define TSE2004_DEVID_MASK	0xff00
 
 #define TS3000_DEVID		0x2900  /* Also matches TSE2002 */
 #define TS3000_DEVID_MASK	0xff00
@@ -115,9 +105,6 @@ static const unsigned short normal_i2c[] = {
 #define MCP98243_DEVID		0x2100
 #define MCP98243_DEVID_MASK	0xfffc
 
-#define MCP98244_DEVID		0x2200
-#define MCP98244_DEVID_MASK	0xfffc
-
 #define MCP9843_DEVID		0x0000	/* Also matches mcp9805 */
 #define MCP9843_DEVID_MASK	0xfffe
 
@@ -135,9 +122,6 @@ static const unsigned short normal_i2c[] = {
 #define CAT34TS02C_DEVID	0x0a00
 #define CAT34TS02C_DEVID_MASK	0xfff0
 
-#define CAT34TS04_DEVID		0x2200
-#define CAT34TS04_DEVID_MASK	0xfff0
-
 /* ST Microelectronics */
 #define STTS424_DEVID		0x0101
 #define STTS424_DEVID_MASK	0xffff
@@ -148,11 +132,12 @@ static const unsigned short normal_i2c[] = {
 #define STTS2002_DEVID		0x0300
 #define STTS2002_DEVID_MASK	0xffff
 
-#define STTS2004_DEVID		0x2201
-#define STTS2004_DEVID_MASK	0xffff
-
 #define STTS3000_DEVID		0x0200
 #define STTS3000_DEVID_MASK	0xffff
+
+/* TSE2004 compliant sensors */
+#define TSE2004_DEVID		0x2200
+#define TSE2004_DEVID_MASK	0xff00
 
 static u16 jc42_hysteresis[] = { 0, 1500, 3000, 6000 };
 
@@ -165,8 +150,8 @@ struct jc42_chips {
 static struct jc42_chips jc42_chips[] = {
 	{ ADT_MANID, ADT7408_DEVID, ADT7408_DEVID_MASK },
 	{ ATMEL_MANID, AT30TS00_DEVID, AT30TS00_DEVID_MASK },
-	{ ATMEL_MANID2, AT30TSE004_DEVID, AT30TSE004_DEVID_MASK },
-	{ GT_MANID, GT30TS00_DEVID, GT30TS00_DEVID_MASK },
+	{ ATMEL_MANID2, TSE2004_DEVID, TSE2004_DEVID_MASK },
+	{ GT_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ GT_MANID2, GT34TS02_DEVID, GT34TS02_DEVID_MASK },
 	{ IDT_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ IDT_MANID, TS3000_DEVID, TS3000_DEVID_MASK },
@@ -176,17 +161,19 @@ static struct jc42_chips jc42_chips[] = {
 	{ MCP_MANID, MCP9808_DEVID, MCP9808_DEVID_MASK },
 	{ MCP_MANID, MCP98242_DEVID, MCP98242_DEVID_MASK },
 	{ MCP_MANID, MCP98243_DEVID, MCP98243_DEVID_MASK },
-	{ MCP_MANID, MCP98244_DEVID, MCP98244_DEVID_MASK },
+	{ MCP_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ MCP_MANID, MCP9843_DEVID, MCP9843_DEVID_MASK },
 	{ NXP_MANID, SE97_DEVID, SE97_DEVID_MASK },
 	{ ONS_MANID, CAT6095_DEVID, CAT6095_DEVID_MASK },
 	{ ONS_MANID, CAT34TS02C_DEVID, CAT34TS02C_DEVID_MASK },
-	{ ONS_MANID, CAT34TS04_DEVID, CAT34TS04_DEVID_MASK },
+	{ ONS_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
+	{ ONS_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ NXP_MANID, SE98_DEVID, SE98_DEVID_MASK },
+	{ SI_MANID,  TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ STM_MANID, STTS424_DEVID, STTS424_DEVID_MASK },
 	{ STM_MANID, STTS424E_DEVID, STTS424E_DEVID_MASK },
 	{ STM_MANID, STTS2002_DEVID, STTS2002_DEVID_MASK },
-	{ STM_MANID, STTS2004_DEVID, STTS2004_DEVID_MASK },
+	{ STM_MANID, TSE2004_DEVID, TSE2004_DEVID_MASK },
 	{ STM_MANID, STTS3000_DEVID, STTS3000_DEVID_MASK },
 };
 
@@ -267,8 +254,8 @@ static int jc42_read(struct device *dev, enum hwmon_sensor_types type,
 			break;
 
 		temp = jc42_temp_from_reg(regval);
-		hyst = jc42_hysteresis[(data->config & JC42_CFG_HYST_MASK)
-						>> JC42_CFG_HYST_SHIFT];
+		hyst = jc42_hysteresis[FIELD_GET(JC42_CFG_HYST_MASK,
+						 data->config)];
 		*val = temp - hyst;
 		break;
 	case hwmon_temp_crit_hyst:
@@ -278,8 +265,8 @@ static int jc42_read(struct device *dev, enum hwmon_sensor_types type,
 			break;
 
 		temp = jc42_temp_from_reg(regval);
-		hyst = jc42_hysteresis[(data->config & JC42_CFG_HYST_MASK)
-						>> JC42_CFG_HYST_SHIFT];
+		hyst = jc42_hysteresis[FIELD_GET(JC42_CFG_HYST_MASK,
+						 data->config)];
 		*val = temp - hyst;
 		break;
 	case hwmon_temp_min_alarm:
@@ -287,21 +274,21 @@ static int jc42_read(struct device *dev, enum hwmon_sensor_types type,
 		if (ret)
 			break;
 
-		*val = (regval >> JC42_ALARM_MIN_BIT) & 1;
+		*val = FIELD_GET(JC42_ALARM_MIN, regval);
 		break;
 	case hwmon_temp_max_alarm:
 		ret = regmap_read(data->regmap, JC42_REG_TEMP, &regval);
 		if (ret)
 			break;
 
-		*val = (regval >> JC42_ALARM_MAX_BIT) & 1;
+		*val = FIELD_GET(JC42_ALARM_MAX, regval);
 		break;
 	case hwmon_temp_crit_alarm:
 		ret = regmap_read(data->regmap, JC42_REG_TEMP, &regval);
 		if (ret)
 			break;
 
-		*val = (regval >> JC42_ALARM_CRIT_BIT) & 1;
+		*val = FIELD_GET(JC42_ALARM_CRIT, regval);
 		break;
 	default:
 		ret = -EOPNOTSUPP;
@@ -360,7 +347,7 @@ static int jc42_write(struct device *dev, enum hwmon_sensor_types type,
 				hyst = 3;	/* 6.0 degrees C */
 		}
 		data->config = (data->config & ~JC42_CFG_HYST_MASK) |
-				(hyst << JC42_CFG_HYST_SHIFT);
+				FIELD_PREP(JC42_CFG_HYST_MASK, hyst);
 		ret = regmap_write(data->regmap, JC42_REG_CONFIG,
 				   data->config);
 		break;
@@ -426,21 +413,27 @@ static int jc42_detect(struct i2c_client *client, struct i2c_board_info *info)
 	if (cap < 0 || config < 0 || manid < 0 || devid < 0)
 		return -ENODEV;
 
-	if ((cap & 0xff00) || (config & 0xf800))
+	if ((cap & 0xff00) || (config & 0xf820))
+		return -ENODEV;
+
+	if ((devid & TSE2004_DEVID_MASK) == TSE2004_DEVID &&
+	    (cap & 0x0062) != 0x0062)
 		return -ENODEV;
 
 	for (i = 0; i < ARRAY_SIZE(jc42_chips); i++) {
 		struct jc42_chips *chip = &jc42_chips[i];
 		if (manid == chip->manid &&
 		    (devid & chip->devid_mask) == chip->devid) {
-			strlcpy(info->type, "jc42", I2C_NAME_SIZE);
+			strscpy(info->type, "jc42", I2C_NAME_SIZE);
 			return 0;
 		}
 	}
 	return -ENODEV;
 }
 
-static const struct hwmon_channel_info *jc42_info[] = {
+static const struct hwmon_channel_info * const jc42_info[] = {
+	HWMON_CHANNEL_INFO(chip,
+			   HWMON_C_REGISTER_TZ | HWMON_C_UPDATE_INTERVAL),
 	HWMON_CHANNEL_INFO(temp,
 			   HWMON_T_INPUT | HWMON_T_MIN | HWMON_T_MAX |
 			   HWMON_T_CRIT | HWMON_T_MAX_HYST |
@@ -485,7 +478,7 @@ static const struct regmap_config jc42_regmap_config = {
 	.writeable_reg = jc42_writable_reg,
 	.readable_reg = jc42_readable_reg,
 	.volatile_reg = jc42_volatile_reg,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 };
 
 static int jc42_probe(struct i2c_client *client)
@@ -543,7 +536,7 @@ static int jc42_probe(struct i2c_client *client)
 	return PTR_ERR_OR_ZERO(hwmon_dev);
 }
 
-static int jc42_remove(struct i2c_client *client)
+static void jc42_remove(struct i2c_client *client)
 {
 	struct jc42_data *data = i2c_get_clientdata(client);
 
@@ -556,7 +549,6 @@ static int jc42_remove(struct i2c_client *client)
 		  | (data->config & JC42_CFG_HYST_MASK);
 		regmap_write(data->regmap, JC42_REG_CONFIG, config);
 	}
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -598,7 +590,7 @@ static const struct dev_pm_ops jc42_dev_pm_ops = {
 #endif /* CONFIG_PM */
 
 static const struct i2c_device_id jc42_id[] = {
-	{ "jc42", 0 },
+	{ "jc42" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, jc42_id);
@@ -612,13 +604,13 @@ MODULE_DEVICE_TABLE(of, jc42_of_ids);
 #endif
 
 static struct i2c_driver jc42_driver = {
-	.class		= I2C_CLASS_SPD | I2C_CLASS_HWMON,
+	.class		= I2C_CLASS_HWMON,
 	.driver = {
 		.name	= "jc42",
 		.pm = JC42_DEV_PM_OPS,
 		.of_match_table = of_match_ptr(jc42_of_ids),
 	},
-	.probe_new	= jc42_probe,
+	.probe		= jc42_probe,
 	.remove		= jc42_remove,
 	.id_table	= jc42_id,
 	.detect		= jc42_detect,

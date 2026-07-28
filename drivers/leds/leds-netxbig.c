@@ -204,9 +204,9 @@ static void netxbig_led_set(struct led_classdev *led_cdev,
 	spin_unlock_irqrestore(&led_dat->lock, flags);
 }
 
-static ssize_t netxbig_led_sata_store(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buff, size_t count)
+static ssize_t sata_store(struct device *dev,
+			  struct device_attribute *attr,
+			  const char *buff, size_t count)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct netxbig_led_data *led_dat =
@@ -255,8 +255,8 @@ exit_unlock:
 	return ret;
 }
 
-static ssize_t netxbig_led_sata_show(struct device *dev,
-				     struct device_attribute *attr, char *buf)
+static ssize_t sata_show(struct device *dev,
+			 struct device_attribute *attr, char *buf)
 {
 	struct led_classdev *led_cdev = dev_get_drvdata(dev);
 	struct netxbig_led_data *led_dat =
@@ -265,7 +265,7 @@ static ssize_t netxbig_led_sata_show(struct device *dev,
 	return sprintf(buf, "%d\n", led_dat->sata);
 }
 
-static DEVICE_ATTR(sata, 0644, netxbig_led_sata_show, netxbig_led_sata_store);
+static DEVICE_ATTR_RW(sata);
 
 static struct attribute *netxbig_led_attrs[] = {
 	&dev_attr_sata.attr,
@@ -423,7 +423,6 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 	struct device_node *gpio_ext_np;
 	struct platform_device *gpio_ext_pdev;
 	struct device *gpio_ext_dev;
-	struct device_node *child;
 	struct netxbig_gpio_ext *gpio_ext;
 	struct netxbig_led_timer *timers;
 	struct netxbig_led *leds, *led;
@@ -440,6 +439,7 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 	}
 	gpio_ext_pdev = of_find_device_by_node(gpio_ext_np);
 	if (!gpio_ext_pdev) {
+		of_node_put(gpio_ext_np);
 		dev_err(dev, "Failed to find platform device for gpio-ext\n");
 		return -ENODEV;
 	}
@@ -507,7 +507,7 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 	}
 
 	led = leds;
-	for_each_available_child_of_node(np, child) {
+	for_each_available_child_of_node_scoped(np, child) {
 		const char *string;
 		int *mode_val;
 		int num_modes;
@@ -515,17 +515,17 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 		ret = of_property_read_u32(child, "mode-addr",
 					   &led->mode_addr);
 		if (ret)
-			goto err_node_put;
+			goto put_device;
 
 		ret = of_property_read_u32(child, "bright-addr",
 					   &led->bright_addr);
 		if (ret)
-			goto err_node_put;
+			goto put_device;
 
 		ret = of_property_read_u32(child, "max-brightness",
 					   &led->bright_max);
 		if (ret)
-			goto err_node_put;
+			goto put_device;
 
 		mode_val =
 			devm_kcalloc(dev,
@@ -533,7 +533,7 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 				     GFP_KERNEL);
 		if (!mode_val) {
 			ret = -ENOMEM;
-			goto err_node_put;
+			goto put_device;
 		}
 
 		for (i = 0; i < NETXBIG_LED_MODE_NUM; i++)
@@ -542,12 +542,12 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 		ret = of_property_count_u32_elems(child, "mode-val");
 		if (ret < 0 || ret % 2) {
 			ret = -EINVAL;
-			goto err_node_put;
+			goto put_device;
 		}
 		num_modes = ret / 2;
 		if (num_modes > NETXBIG_LED_MODE_NUM) {
 			ret = -EINVAL;
-			goto err_node_put;
+			goto put_device;
 		}
 
 		for (i = 0; i < num_modes; i++) {
@@ -560,7 +560,7 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 						   "mode-val", 2 * i + 1, &val);
 			if (mode >= NETXBIG_LED_MODE_NUM) {
 				ret = -EINVAL;
-				goto err_node_put;
+				goto put_device;
 			}
 			mode_val[mode] = val;
 		}
@@ -583,8 +583,6 @@ static int netxbig_leds_get_of_pdata(struct device *dev,
 
 	return 0;
 
-err_node_put:
-	of_node_put(child);
 put_device:
 	put_device(gpio_ext_dev);
 	return ret;

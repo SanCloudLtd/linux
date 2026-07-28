@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * imr_selftest.c -- Intel Isolated Memory Region self-test driver
  *
  * Copyright(c) 2013 Intel Corporation.
  * Copyright(c) 2015 Bryan O'Donoghue <pure.logic@nexus-software.ie>
  *
  * IMR self test. The purpose of this module is to run a set of tests on the
- * IMR API to validate it's sanity. We check for overlapping, reserved
+ * IMR API to validate its sanity. We check for overlapping, reserved
  * addresses and setup/teardown sanity.
  *
  */

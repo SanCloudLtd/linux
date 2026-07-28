@@ -345,7 +345,7 @@ static void __init pnv_smp_probe(void)
 	}
 }
 
-static int pnv_system_reset_exception(struct pt_regs *regs)
+noinstr static int pnv_system_reset_exception(struct pt_regs *regs)
 {
 	if (smp_handle_nmi_ipi(regs))
 		return 1;
@@ -434,7 +434,7 @@ void __init pnv_smp_init(void)
 	smp_ops = &pnv_smp_ops;
 
 #ifdef CONFIG_HOTPLUG_CPU
-#ifdef CONFIG_KEXEC_CORE
+#ifdef CONFIG_CRASH_DUMP
 	crash_wake_offline = 1;
 #endif
 #endif

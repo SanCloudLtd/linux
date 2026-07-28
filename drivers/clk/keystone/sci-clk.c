@@ -1,24 +1,15 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * SCI Clock driver for keystone based devices
  *
  * Copyright (C) 2015-2016 Texas Instruments Incorporated - https://www.ti.com/
  *	Tero Kristo <t-kristo@ti.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed "as is" WITHOUT ANY WARRANTY of any
- * kind, whether express or implied; without even the implied warranty
- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 #include <linux/clk-provider.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/module.h>
-#include <linux/of_address.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/soc/ti/ti_sci_protocol.h>
@@ -51,6 +42,8 @@ struct sci_clk_provider {
  * @dev_id:	 Device index
  * @clk_id:	 Clock index
  * @num_parents: Number of parents for this clock
+ * @actual_parent: Actual parent
+ * @rate: Clock rate
  * @provider:	 Master clock provider
  * @flags:	 Flags for the clock
  * @node:	 Link for handling clocks probed via DT
@@ -62,6 +55,8 @@ struct sci_clk {
 	u16 dev_id;
 	u32 clk_id;
 	u32 num_parents;
+	int actual_parent;
+	unsigned long rate;
 	struct sci_clk_provider *provider;
 	u8 flags;
 	struct list_head node;
@@ -219,7 +214,7 @@ static int sci_clk_set_rate(struct clk_hw *hw, unsigned long rate,
 			    unsigned long parent_rate)
 {
 	struct sci_clk *clk = to_sci_clk(hw);
-
+	clk->rate = rate;
 	return clk->provider->ops->set_freq(clk->provider->sci, clk->dev_id,
 					    clk->clk_id, rate / 10 * 9, rate,
 					    rate / 10 * 11);
@@ -261,12 +256,38 @@ static u8 sci_clk_get_parent(struct clk_hw *hw)
 static int sci_clk_set_parent(struct clk_hw *hw, u8 index)
 {
 	struct sci_clk *clk = to_sci_clk(hw);
+	int ret;
 
 	clk->cached_req = 0;
 
-	return clk->provider->ops->set_parent(clk->provider->sci, clk->dev_id,
+	ret = clk->provider->ops->set_parent(clk->provider->sci, clk->dev_id,
 					      clk->clk_id,
 					      index + 1 + clk->clk_id);
+	if (!ret)
+		clk->actual_parent = index;
+
+	return ret;
+}
+
+/**
+ * sci_clk_set_spread_spectrum - Set spread spectrum for a TI SCI clock
+ * @hw: clock to set parent for
+ * @ss_conf: spread spectrum configuration
+ *
+ * Sets the spread spectrum of a TI SCI clock. Return TI SCI protocol status.
+ */
+static int sci_clk_set_spread_spectrum(struct clk_hw *hw, const struct clk_spread_spectrum *ss_conf)
+{
+	struct sci_clk *clk = to_sci_clk(hw);
+
+	clk->cached_req = 0;
+
+	if (clk->provider->ops->set_spread_spectrum)
+		return clk->provider->ops->set_spread_spectrum(clk->provider->sci, clk->dev_id,
+					      clk->clk_id, ss_conf->modfreq_hz, ss_conf->spread_bp,
+					      (u8)ss_conf->method);
+
+	return 0;
 }
 
 static const struct clk_ops sci_clk_ops = {
@@ -278,10 +299,11 @@ static const struct clk_ops sci_clk_ops = {
 	.set_rate = sci_clk_set_rate,
 	.get_parent = sci_clk_get_parent,
 	.set_parent = sci_clk_set_parent,
+	.set_spread_spectrum = sci_clk_set_spread_spectrum,
 };
 
 /**
- * _sci_clk_get - Gets a handle for an SCI clock
+ * _sci_clk_build - Gets a handle for an SCI clock
  * @provider: Handle to SCI clock provider
  * @sci_clk: Handle to the SCI clock to populate
  *
@@ -302,6 +324,8 @@ static int _sci_clk_build(struct sci_clk_provider *provider,
 
 	name = kasprintf(GFP_KERNEL, "clk:%d:%d", sci_clk->dev_id,
 			 sci_clk->clk_id);
+	if (!name)
+		return -ENOMEM;
 
 	init.name = name;
 
@@ -337,6 +361,8 @@ static int _sci_clk_build(struct sci_clk_provider *provider,
 		}
 		init.parent_names = (void *)parent_names;
 	}
+
+	sci_clk->actual_parent = -1;
 
 	init.ops = &sci_clk_ops;
 	init.num_parents = sci_clk->num_parents;
@@ -523,6 +549,7 @@ static int ti_sci_scan_clocks_from_dt(struct sci_clk_provider *provider)
 	struct sci_clk *sci_clk, *prev;
 	int num_clks = 0;
 	int num_parents;
+	bool state;
 	int clk_id;
 	const char * const clk_names[] = {
 		"clocks", "assigned-clocks", "assigned-clock-parents", NULL
@@ -593,6 +620,15 @@ static int ti_sci_scan_clocks_from_dt(struct sci_clk_provider *provider)
 				clk_id = args.args[1] + 1;
 
 				while (num_parents--) {
+					/* Check if this clock id is valid */
+					ret = provider->ops->is_auto(provider->sci,
+						sci_clk->dev_id, clk_id, &state);
+
+					if (ret) {
+						clk_id++;
+						continue;
+					}
+
 					sci_clk = devm_kzalloc(dev,
 							       sizeof(*sci_clk),
 							       GFP_KERNEL);
@@ -635,6 +671,27 @@ static int ti_sci_scan_clocks_from_dt(struct sci_clk_provider *provider)
 	return 0;
 }
 #endif
+
+static int ti_sci_clk_resume_noirq(struct device *dev)
+{
+	struct sci_clk_provider *provider = dev_get_drvdata(dev);
+	struct sci_clk **clocks = provider->clocks;
+	int i;
+
+	if (provider->ops->restore_clk) {
+		for (i = 0; i < provider->num_clocks; i++) {
+			if (clocks[i]->actual_parent >= 0)
+				sci_clk_set_parent(&clocks[i]->hw, clocks[i]->actual_parent);
+
+			if (clocks[i]->rate)
+				sci_clk_set_rate(&clocks[i]->hw, clocks[i]->rate, 0);
+		}
+	}
+
+	return 0;
+}
+
+static DEFINE_NOIRQ_DEV_PM_OPS(sci_clk_pm_ops, NULL, ti_sci_clk_resume_noirq);
 
 /**
  * ti_sci_clk_probe - Probe function for the TI SCI clock driver
@@ -686,6 +743,8 @@ static int ti_sci_clk_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	dev_set_drvdata(dev, provider);
+
 	return of_clk_add_hw_provider(np, sci_clk_get, provider);
 }
 
@@ -697,11 +756,9 @@ static int ti_sci_clk_probe(struct platform_device *pdev)
  * via common clock framework. Any memory allocated for the device will
  * be free'd silently via the devm framework. Returns 0 always.
  */
-static int ti_sci_clk_remove(struct platform_device *pdev)
+static void ti_sci_clk_remove(struct platform_device *pdev)
 {
 	of_clk_del_provider(pdev->dev.of_node);
-
-	return 0;
 }
 
 static struct platform_driver ti_sci_clk_driver = {
@@ -710,6 +767,7 @@ static struct platform_driver ti_sci_clk_driver = {
 	.driver = {
 		.name = "ti-sci-clk",
 		.of_match_table = of_match_ptr(ti_sci_clk_of_match),
+		.pm = pm_sleep_ptr(&sci_clk_pm_ops),
 	},
 };
 module_platform_driver(ti_sci_clk_driver);

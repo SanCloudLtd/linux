@@ -23,13 +23,13 @@
 #include "ubifs.h"
 #include <linux/list_sort.h>
 #include <crypto/hash.h>
-#include <crypto/algapi.h>
 
 /**
  * struct replay_entry - replay list entry.
  * @lnum: logical eraseblock number of the node
  * @offs: node offset
  * @len: node length
+ * @hash: node hash
  * @deletion: non-zero if this entry corresponds to a node deletion
  * @sqnum: node sequence number
  * @list: links the replay list
@@ -106,7 +106,7 @@ static int set_bud_lprops(struct ubifs_info *c, struct bud_entry *b)
 		 * property values should be @lp->free == @c->leb_size and
 		 * @lp->dirty == 0, but that is not the case. The reason is that
 		 * the LEB had been garbage collected before it became the bud,
-		 * and there was not commit inbetween. The garbage collector
+		 * and there was no commit in between. The garbage collector
 		 * resets the free and dirty space without recording it
 		 * anywhere except lprops, so if there was no commit then
 		 * lprops does not have that information.
@@ -296,7 +296,7 @@ static int apply_replay_entry(struct ubifs_info *c, struct replay_entry *r)
  * @b: second replay entry
  *
  * This is a comparios function for 'list_sort()' which compares 2 replay
- * entries @a and @b by comparing their sequence numer.  Returns %1 if @a has
+ * entries @a and @b by comparing their sequence number.  Returns %1 if @a has
  * greater sequence number and %-1 otherwise.
  */
 static int replay_entries_cmp(void *priv, const struct list_head *a,
@@ -366,6 +366,7 @@ static void destroy_replay_list(struct ubifs_info *c)
  * @lnum: node logical eraseblock number
  * @offs: node offset
  * @len: node length
+ * @hash: node hash
  * @key: node key
  * @sqnum: sequence number
  * @deletion: non-zero if this is a deletion
@@ -418,6 +419,7 @@ static int insert_node(struct ubifs_info *c, int lnum, int offs, int len,
  * @lnum: node logical eraseblock number
  * @offs: node offset
  * @len: node length
+ * @hash: node hash
  * @key: node key
  * @name: directory entry name
  * @nlen: directory entry name length
@@ -577,7 +579,7 @@ authenticate_sleb_hash(struct ubifs_info *c,
  * @c: UBIFS file-system description object
  * @sleb: the scan LEB to authenticate
  * @log_hash:
- * @is_last: if true, this is is the last LEB
+ * @is_last: if true, this is the last LEB
  *
  * This function iterates over the buds of a single LEB authenticating all buds
  * with the authentication nodes on this LEB. Authentication nodes are written
@@ -830,7 +832,7 @@ out:
 
 out_dump:
 	ubifs_err(c, "bad node is at LEB %d:%d", lnum, snod->offs);
-	ubifs_dump_node(c, snod->node);
+	ubifs_dump_node(c, snod->node, c->leb_size - snod->offs);
 	ubifs_scan_destroy(sleb);
 	return -EINVAL;
 }
@@ -1126,7 +1128,7 @@ out:
 out_dump:
 	ubifs_err(c, "log error detected while replaying the log at LEB %d:%d",
 		  lnum, offs + snod->offs);
-	ubifs_dump_node(c, snod->node);
+	ubifs_dump_node(c, snod->node, c->leb_size - snod->offs);
 	ubifs_scan_destroy(sleb);
 	return -EINVAL;
 }

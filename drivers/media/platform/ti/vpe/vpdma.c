@@ -942,8 +942,7 @@ int vpdma_hwlist_alloc(struct vpdma_data *vpdma, void *priv)
 	unsigned long flags;
 
 	spin_lock_irqsave(&vpdma->lock, flags);
-	for (i = 0; i < VPDMA_MAX_NUM_LIST &&
-	    vpdma->hwlist_used[i] == true; i++)
+	for (i = 0; i < VPDMA_MAX_NUM_LIST && vpdma->hwlist_used[i]; i++)
 		;
 
 	if (i < VPDMA_MAX_NUM_LIST) {
@@ -1174,4 +1173,5 @@ EXPORT_SYMBOL(vpdma_create);
 
 MODULE_AUTHOR("Texas Instruments Inc.");
 MODULE_FIRMWARE(VPDMA_FIRMWARE);
+MODULE_DESCRIPTION("TI VPDMA helper library");
 MODULE_LICENSE("GPL v2");

@@ -594,29 +594,24 @@ static int pxa3xx_gcu_probe(struct platform_device *pdev)
 	 * container_of(). This isn't really necessary as we have a fixed minor
 	 * number anyway, but this is to avoid statics. */
 
-	priv->misc_dev.minor	= PXA3XX_GCU_MINOR,
-	priv->misc_dev.name	= DRV_NAME,
+	priv->misc_dev.minor	= PXA3XX_GCU_MINOR;
+	priv->misc_dev.name	= DRV_NAME;
 	priv->misc_dev.fops	= &pxa3xx_gcu_miscdev_fops;
 
 	/* handle IO resources */
-	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	priv->mmio_base = devm_ioremap_resource(dev, r);
+	priv->mmio_base = devm_platform_get_and_ioremap_resource(pdev, 0, &r);
 	if (IS_ERR(priv->mmio_base))
 		return PTR_ERR(priv->mmio_base);
 
 	/* enable the clock */
 	priv->clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(priv->clk)) {
-		dev_err(dev, "failed to get clock\n");
-		return PTR_ERR(priv->clk);
-	}
+	if (IS_ERR(priv->clk))
+		return dev_err_probe(dev, PTR_ERR(priv->clk), "failed to get clock\n");
 
 	/* request the IRQ */
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(dev, "no IRQ defined: %d\n", irq);
+	if (irq < 0)
 		return irq;
-	}
 
 	ret = devm_request_irq(dev, irq, pxa3xx_gcu_handle_irq,
 			       0, DRV_NAME, priv);
@@ -680,7 +675,7 @@ err_free_dma:
 	return ret;
 }
 
-static int pxa3xx_gcu_remove(struct platform_device *pdev)
+static void pxa3xx_gcu_remove(struct platform_device *pdev)
 {
 	struct pxa3xx_gcu_priv *priv = platform_get_drvdata(pdev);
 	struct device *dev = &pdev->dev;
@@ -690,8 +685,6 @@ static int pxa3xx_gcu_remove(struct platform_device *pdev)
 	dma_free_coherent(dev, SHARED_SIZE, priv->shared, priv->shared_phys);
 	clk_disable_unprepare(priv->clk);
 	pxa3xx_gcu_free_buffers(dev, priv);
-
-	return 0;
 }
 
 #ifdef CONFIG_OF
@@ -703,10 +696,10 @@ MODULE_DEVICE_TABLE(of, pxa3xx_gcu_of_match);
 #endif
 
 static struct platform_driver pxa3xx_gcu_driver = {
-	.probe	  = pxa3xx_gcu_probe,
-	.remove	 = pxa3xx_gcu_remove,
-	.driver	 = {
-		.name   = DRV_NAME,
+	.probe = pxa3xx_gcu_probe,
+	.remove = pxa3xx_gcu_remove,
+	.driver = {
+		.name = DRV_NAME,
 		.of_match_table = of_match_ptr(pxa3xx_gcu_of_match),
 	},
 };

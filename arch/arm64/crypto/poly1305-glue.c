@@ -8,7 +8,7 @@
 #include <asm/hwcap.h>
 #include <asm/neon.h>
 #include <asm/simd.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 #include <crypto/algapi.h>
 #include <crypto/internal/hash.h>
 #include <crypto/internal/poly1305.h>
@@ -177,7 +177,7 @@ void poly1305_final_arch(struct poly1305_desc_ctx *dctx, u8 *dst)
 	}
 
 	poly1305_emit(&dctx->h, dst, dctx->s);
-	*dctx = (struct poly1305_desc_ctx){};
+	memzero_explicit(dctx, sizeof(*dctx));
 }
 EXPORT_SYMBOL(poly1305_final_arch);
 
@@ -226,6 +226,7 @@ static void __exit neon_poly1305_mod_exit(void)
 module_init(neon_poly1305_mod_init);
 module_exit(neon_poly1305_mod_exit);
 
+MODULE_DESCRIPTION("Poly1305 transform using NEON instructions");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS_CRYPTO("poly1305");
 MODULE_ALIAS_CRYPTO("poly1305-neon");

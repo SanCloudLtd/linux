@@ -67,8 +67,7 @@
 
 static struct irq_domain *aic5_domain;
 
-static asmlinkage void __exception_irq_entry
-aic5_handle(struct pt_regs *regs)
+static void __exception_irq_entry aic5_handle(struct pt_regs *regs)
 {
 	struct irq_chip_generic *bgc = irq_get_domain_generic_chip(aic5_domain, 0);
 	u32 irqnr;
@@ -80,7 +79,7 @@ aic5_handle(struct pt_regs *regs)
 	if (!irqstat)
 		irq_reg_writel(bgc, 0, AT91_AIC5_EOICR);
 	else
-		handle_domain_irq(aic5_domain, irqnr, regs);
+		generic_handle_domain_irq(aic5_domain, irqnr);
 }
 
 static void aic5_mask(struct irq_data *d)

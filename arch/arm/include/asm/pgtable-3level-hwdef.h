@@ -14,6 +14,7 @@
  * + Level 1/2 descriptor
  *   - common
  */
+#define PUD_TABLE_BIT		(_AT(pmdval_t, 1) << 1)
 #define PMD_TYPE_MASK		(_AT(pmdval_t, 3) << 0)
 #define PMD_TYPE_FAULT		(_AT(pmdval_t, 0) << 0)
 #define PMD_TYPE_TABLE		(_AT(pmdval_t, 3) << 0)
@@ -32,11 +33,7 @@
 #define PMD_SECT_CACHEABLE	(_AT(pmdval_t, 1) << 3)
 #define PMD_SECT_USER		(_AT(pmdval_t, 1) << 6)		/* AP[1] */
 #define PMD_SECT_AP2		(_AT(pmdval_t, 1) << 7)		/* read only */
-#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
-#define PMD_SECT_S		(_AT(pmdval_t, 2) << 8)
-#else
 #define PMD_SECT_S		(_AT(pmdval_t, 3) << 8)
-#endif
 #define PMD_SECT_AF		(_AT(pmdval_t, 1) << 10)
 #define PMD_SECT_nG		(_AT(pmdval_t, 1) << 11)
 #define PMD_SECT_PXN		(_AT(pmdval_t, 1) << 53)
@@ -66,12 +63,7 @@
 #define PTE_BUFFERABLE		(_AT(pteval_t, 1) << 2)		/* AttrIndx[0] */
 #define PTE_CACHEABLE		(_AT(pteval_t, 1) << 3)		/* AttrIndx[1] */
 #define PTE_AP2			(_AT(pteval_t, 1) << 7)		/* AP[2] */
-#ifdef CONFIG_KEYSTONE2_DMA_COHERENT
-/* SH[1:0], outer shareable */
-#define PTE_EXT_SHARED		(_AT(pteval_t, 2) << 8)
-#else
 #define PTE_EXT_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
-#endif
 #define PTE_EXT_AF		(_AT(pteval_t, 1) << 10)	/* Access Flag */
 #define PTE_EXT_NG		(_AT(pteval_t, 1) << 11)	/* nG */
 #define PTE_EXT_PXN		(_AT(pteval_t, 1) << 53)	/* PXN */
@@ -83,6 +75,7 @@
 #define PHYS_MASK_SHIFT		(40)
 #define PHYS_MASK		((1ULL << PHYS_MASK_SHIFT) - 1)
 
+#ifndef CONFIG_CPU_TTBR0_PAN
 /*
  * TTBR0/TTBR1 split (PAGE_OFFSET):
  *   0x40000000: T0SZ = 2, T1SZ = 0 (not used)
@@ -102,5 +95,35 @@
 #endif
 
 #define TTBR1_SIZE	(((PAGE_OFFSET >> 30) - 1) << 16)
+#else
+/*
+ * With CONFIG_CPU_TTBR0_PAN enabled, TTBR1 is only used during uaccess
+ * disabled regions when TTBR0 is disabled.
+ */
+#define TTBR1_OFFSET	0			/* pointing to swapper_pg_dir */
+#define TTBR1_SIZE	0			/* TTBR1 size controlled via TTBCR.T0SZ */
+#endif
+
+/*
+ * TTBCR register bits.
+ *
+ * The ORGN0 and IRGN0 bits enables different forms of caching when
+ * walking the translation table. Clearing these bits (which is claimed
+ * to be the reset default) means "normal memory, [outer|inner]
+ * non-cacheable"
+ */
+#define TTBCR_EAE		(1 << 31)
+#define TTBCR_IMP		(1 << 30)
+#define TTBCR_SH1_MASK		(3 << 28)
+#define TTBCR_ORGN1_MASK	(3 << 26)
+#define TTBCR_IRGN1_MASK	(3 << 24)
+#define TTBCR_EPD1		(1 << 23)
+#define TTBCR_A1		(1 << 22)
+#define TTBCR_T1SZ_MASK		(7 << 16)
+#define TTBCR_SH0_MASK		(3 << 12)
+#define TTBCR_ORGN0_MASK	(3 << 10)
+#define TTBCR_IRGN0_MASK	(3 << 8)
+#define TTBCR_EPD0		(1 << 7)
+#define TTBCR_T0SZ_MASK		(7 << 0)
 
 #endif

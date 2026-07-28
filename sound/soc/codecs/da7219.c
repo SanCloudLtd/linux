@@ -12,7 +12,7 @@
 #include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/i2c.h>
-#include <linux/of_device.h>
+#include <linux/of.h>
 #include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
@@ -1167,16 +1167,19 @@ static int da7219_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 	struct da7219_priv *da7219 = snd_soc_component_get_drvdata(component);
 	int ret = 0;
 
-	if ((da7219->clk_src == clk_id) && (da7219->mclk_rate == freq))
+	mutex_lock(&da7219->pll_lock);
+
+	if ((da7219->clk_src == clk_id) && (da7219->mclk_rate == freq)) {
+		mutex_unlock(&da7219->pll_lock);
 		return 0;
+	}
 
 	if ((freq < 2000000) || (freq > 54000000)) {
+		mutex_unlock(&da7219->pll_lock);
 		dev_err(codec_dai->dev, "Unsupported MCLK value %d\n",
 			freq);
 		return -EINVAL;
 	}
-
-	mutex_lock(&da7219->pll_lock);
 
 	switch (clk_id) {
 	case DA7219_CLKSRC_MCLK_SQR:
@@ -1698,9 +1701,9 @@ static struct snd_soc_dai_driver da7219_dai = {
 		.formats = DA7219_FORMATS,
 	},
 	.ops = &da7219_dai_ops,
-	.symmetric_rates = 1,
+	.symmetric_rate = 1,
 	.symmetric_channels = 1,
-	.symmetric_samplebits = 1,
+	.symmetric_sample_bits = 1,
 };
 
 
@@ -1708,11 +1711,13 @@ static struct snd_soc_dai_driver da7219_dai = {
  * DT/ACPI
  */
 
+#ifdef CONFIG_OF
 static const struct of_device_id da7219_of_match[] = {
 	{ .compatible = "dlg,da7219", },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, da7219_of_match);
+#endif
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id da7219_acpi_match[] = {
@@ -2631,11 +2636,20 @@ static int da7219_resume(struct snd_soc_component *component)
 #define da7219_resume NULL
 #endif
 
+static int da7219_set_jack(struct snd_soc_component *component, struct snd_soc_jack *jack,
+			   void *data)
+{
+	da7219_aad_jack_det(component, jack);
+
+	return 0;
+}
+
 static const struct snd_soc_component_driver soc_component_dev_da7219 = {
 	.probe			= da7219_probe,
 	.remove			= da7219_remove,
 	.suspend		= da7219_suspend,
 	.resume			= da7219_resume,
+	.set_jack		= da7219_set_jack,
 	.set_bias_level		= da7219_set_bias_level,
 	.controls		= da7219_snd_controls,
 	.num_controls		= ARRAY_SIZE(da7219_snd_controls),
@@ -2646,7 +2660,6 @@ static const struct snd_soc_component_driver soc_component_dev_da7219 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 
@@ -2654,8 +2667,7 @@ static const struct snd_soc_component_driver soc_component_dev_da7219 = {
  * I2C layer
  */
 
-static int da7219_i2c_probe(struct i2c_client *i2c,
-			    const struct i2c_device_id *id)
+static int da7219_i2c_probe(struct i2c_client *i2c)
 {
 	struct device *dev = &i2c->dev;
 	struct da7219_priv *da7219;
@@ -2693,11 +2705,6 @@ static int da7219_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static int da7219_i2c_remove(struct i2c_client *client)
-{
-	return 0;
-}
-
 static const struct i2c_device_id da7219_i2c_id[] = {
 	{ "da7219", },
 	{ }
@@ -2711,7 +2718,6 @@ static struct i2c_driver da7219_i2c_driver = {
 		.acpi_match_table = ACPI_PTR(da7219_acpi_match),
 	},
 	.probe		= da7219_i2c_probe,
-	.remove		= da7219_i2c_remove,
 	.id_table	= da7219_i2c_id,
 };
 

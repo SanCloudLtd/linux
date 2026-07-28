@@ -13,6 +13,7 @@
  */
 #include <linux/clk.h>
 #include <linux/io.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
@@ -40,8 +41,8 @@
 #define PWM_SIFIVE_DEFAULT_PERIOD	10000000
 
 struct pwm_sifive_ddata {
-	struct pwm_chip	chip;
-	struct mutex lock; /* lock to protect user_count */
+	struct device *parent;
+	struct mutex lock; /* lock to protect user_count and approx_period */
 	struct notifier_block notifier;
 	struct clk *clk;
 	void __iomem *regs;
@@ -51,9 +52,9 @@ struct pwm_sifive_ddata {
 };
 
 static inline
-struct pwm_sifive_ddata *pwm_sifive_chip_to_ddata(struct pwm_chip *c)
+struct pwm_sifive_ddata *pwm_sifive_chip_to_ddata(struct pwm_chip *chip)
 {
-	return container_of(c, struct pwm_sifive_ddata, chip);
+	return pwmchip_get_drvdata(chip);
 }
 
 static int pwm_sifive_request(struct pwm_chip *chip, struct pwm_device *pwm)
@@ -76,6 +77,7 @@ static void pwm_sifive_free(struct pwm_chip *chip, struct pwm_device *pwm)
 	mutex_unlock(&ddata->lock);
 }
 
+/* Called holding ddata->lock */
 static void pwm_sifive_update_clock(struct pwm_sifive_ddata *ddata,
 				    unsigned long rate)
 {
@@ -100,12 +102,12 @@ static void pwm_sifive_update_clock(struct pwm_sifive_ddata *ddata,
 	/* As scale <= 15 the shift operation cannot overflow. */
 	num = (unsigned long long)NSEC_PER_SEC << (PWM_SIFIVE_CMPWIDTH + scale);
 	ddata->real_period = div64_ul(num, rate);
-	dev_dbg(ddata->chip.dev,
+	dev_dbg(ddata->parent,
 		"New real_period = %u ns\n", ddata->real_period);
 }
 
-static void pwm_sifive_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
-				 struct pwm_state *state)
+static int pwm_sifive_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
+				struct pwm_state *state)
 {
 	struct pwm_sifive_ddata *ddata = pwm_sifive_chip_to_ddata(chip);
 	u32 duty, val;
@@ -122,23 +124,6 @@ static void pwm_sifive_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	state->duty_cycle =
 		(u64)duty * ddata->real_period >> PWM_SIFIVE_CMPWIDTH;
 	state->polarity = PWM_POLARITY_INVERSED;
-}
-
-static int pwm_sifive_enable(struct pwm_chip *chip, bool enable)
-{
-	struct pwm_sifive_ddata *ddata = pwm_sifive_chip_to_ddata(chip);
-	int ret;
-
-	if (enable) {
-		ret = clk_enable(ddata->clk);
-		if (ret) {
-			dev_err(ddata->chip.dev, "Enable clk failed\n");
-			return ret;
-		}
-	}
-
-	if (!enable)
-		clk_disable(ddata->clk);
 
 	return 0;
 }
@@ -157,13 +142,6 @@ static int pwm_sifive_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	if (state->polarity != PWM_POLARITY_INVERSED)
 		return -EINVAL;
 
-	ret = clk_enable(ddata->clk);
-	if (ret) {
-		dev_err(ddata->chip.dev, "Enable clk failed\n");
-		return ret;
-	}
-
-	mutex_lock(&ddata->lock);
 	cur_state = pwm->state;
 	enabled = cur_state.enabled;
 
@@ -182,24 +160,42 @@ static int pwm_sifive_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	/* The hardware cannot generate a 100% duty cycle */
 	frac = min(frac, (1U << PWM_SIFIVE_CMPWIDTH) - 1);
 
+	mutex_lock(&ddata->lock);
 	if (state->period != ddata->approx_period) {
-		if (ddata->user_count != 1) {
-			ret = -EBUSY;
-			goto exit;
+		/*
+		 * Don't let a 2nd user change the period underneath the 1st user.
+		 * However if ddate->approx_period == 0 this is the first time we set
+		 * any period, so let whoever gets here first set the period so other
+		 * users who agree on the period won't fail.
+		 */
+		if (ddata->user_count != 1 && ddata->approx_period) {
+			mutex_unlock(&ddata->lock);
+			return -EBUSY;
 		}
 		ddata->approx_period = state->period;
 		pwm_sifive_update_clock(ddata, clk_get_rate(ddata->clk));
 	}
+	mutex_unlock(&ddata->lock);
+
+	/*
+	 * If the PWM is enabled the clk is already on. So only enable it
+	 * conditionally to have it on exactly once afterwards independent of
+	 * the PWM state.
+	 */
+	if (!enabled) {
+		ret = clk_enable(ddata->clk);
+		if (ret) {
+			dev_err(pwmchip_parent(chip), "Enable clk failed\n");
+			return ret;
+		}
+	}
 
 	writel(frac, ddata->regs + PWM_SIFIVE_PWMCMP(pwm->hwpwm));
 
-	if (state->enabled != enabled)
-		pwm_sifive_enable(chip, state->enabled);
+	if (!state->enabled)
+		clk_disable(ddata->clk);
 
-exit:
-	clk_disable(ddata->clk);
-	mutex_unlock(&ddata->lock);
-	return ret;
+	return 0;
 }
 
 static const struct pwm_ops pwm_sifive_ops = {
@@ -207,7 +203,6 @@ static const struct pwm_ops pwm_sifive_ops = {
 	.free = pwm_sifive_free,
 	.get_state = pwm_sifive_get_state,
 	.apply = pwm_sifive_apply,
-	.owner = THIS_MODULE,
 };
 
 static int pwm_sifive_clock_notifier(struct notifier_block *nb,
@@ -231,35 +226,29 @@ static int pwm_sifive_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct pwm_sifive_ddata *ddata;
 	struct pwm_chip *chip;
-	struct resource *res;
 	int ret;
 	u32 val;
 	unsigned int enabled_pwms = 0, enabled_clks = 1;
 
-	ddata = devm_kzalloc(dev, sizeof(*ddata), GFP_KERNEL);
-	if (!ddata)
-		return -ENOMEM;
+	chip = devm_pwmchip_alloc(dev, 4, sizeof(*ddata));
+	if (IS_ERR(chip))
+		return PTR_ERR(chip);
 
+	ddata = pwm_sifive_chip_to_ddata(chip);
+	ddata->parent = dev;
 	mutex_init(&ddata->lock);
-	chip = &ddata->chip;
-	chip->dev = dev;
 	chip->ops = &pwm_sifive_ops;
-	chip->of_xlate = of_pwm_xlate_with_flags;
-	chip->of_pwm_n_cells = 3;
-	chip->base = -1;
-	chip->npwm = 4;
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	ddata->regs = devm_ioremap_resource(dev, res);
+	ddata->regs = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(ddata->regs))
 		return PTR_ERR(ddata->regs);
 
-	ddata->clk = devm_clk_get(dev, NULL);
+	ddata->clk = devm_clk_get_prepared(dev, NULL);
 	if (IS_ERR(ddata->clk))
 		return dev_err_probe(dev, PTR_ERR(ddata->clk),
 				     "Unable to find controller clock\n");
 
-	ret = clk_prepare_enable(ddata->clk);
+	ret = clk_enable(ddata->clk);
 	if (ret) {
 		dev_err(dev, "failed to enable clock for pwm: %d\n", ret);
 		return ret;
@@ -306,7 +295,7 @@ static int pwm_sifive_probe(struct platform_device *pdev)
 		goto unregister_clk;
 	}
 
-	platform_set_drvdata(pdev, ddata);
+	platform_set_drvdata(pdev, chip);
 	dev_dbg(dev, "SiFive PWM chip registered %d PWMs\n", chip->npwm);
 
 	return 0;
@@ -318,29 +307,25 @@ disable_clk:
 		clk_disable(ddata->clk);
 		--enabled_clks;
 	}
-	clk_unprepare(ddata->clk);
 
 	return ret;
 }
 
-static int pwm_sifive_remove(struct platform_device *dev)
+static void pwm_sifive_remove(struct platform_device *dev)
 {
-	struct pwm_sifive_ddata *ddata = platform_get_drvdata(dev);
+	struct pwm_chip *chip = platform_get_drvdata(dev);
+	struct pwm_sifive_ddata *ddata = pwm_sifive_chip_to_ddata(chip);
 	struct pwm_device *pwm;
 	int ch;
 
-	pwmchip_remove(&ddata->chip);
+	pwmchip_remove(chip);
 	clk_notifier_unregister(ddata->clk, &ddata->notifier);
 
-	for (ch = 0; ch < ddata->chip.npwm; ch++) {
-		pwm = &ddata->chip.pwms[ch];
+	for (ch = 0; ch < chip->npwm; ch++) {
+		pwm = &chip->pwms[ch];
 		if (pwm->state.enabled)
 			clk_disable(ddata->clk);
 	}
-
-	clk_unprepare(ddata->clk);
-
-	return 0;
 }
 
 static const struct of_device_id pwm_sifive_of_match[] = {

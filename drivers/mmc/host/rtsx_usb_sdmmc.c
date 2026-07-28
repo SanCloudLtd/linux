@@ -21,7 +21,7 @@
 #include <linux/pm_runtime.h>
 
 #include <linux/rtsx_usb.h>
-#include <asm/unaligned.h>
+#include <linux/unaligned.h>
 
 #if defined(CONFIG_LEDS_CLASS) || (defined(CONFIG_LEDS_CLASS_MODULE) && \
 		defined(CONFIG_MMC_REALTEK_USB_MODULE))
@@ -1032,9 +1032,7 @@ static int sd_set_power_mode(struct rtsx_usb_sdmmc *host,
 		err = sd_power_on(host);
 	}
 
-	if (!err)
-		host->power_mode = power_mode;
-
+	host->power_mode = power_mode;
 	return err;
 }
 
@@ -1042,7 +1040,6 @@ static int sd_set_timing(struct rtsx_usb_sdmmc *host,
 		unsigned char timing, bool *ddr_mode)
 {
 	struct rtsx_ucr *ucr = host->ucr;
-	int err;
 
 	*ddr_mode = false;
 
@@ -1097,9 +1094,7 @@ static int sd_set_timing(struct rtsx_usb_sdmmc *host,
 		break;
 	}
 
-	err = rtsx_usb_send_cmd(ucr, MODE_C, 100);
-
-	return err;
+	return rtsx_usb_send_cmd(ucr, MODE_C, 100);
 }
 
 static void sdmmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
@@ -1382,13 +1377,13 @@ static int rtsx_usb_sdmmc_drv_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int rtsx_usb_sdmmc_drv_remove(struct platform_device *pdev)
+static void rtsx_usb_sdmmc_drv_remove(struct platform_device *pdev)
 {
 	struct rtsx_usb_sdmmc *host = platform_get_drvdata(pdev);
 	struct mmc_host *mmc;
 
 	if (!host)
-		return 0;
+		return;
 
 	mmc = host->mmc;
 	host->host_removal = true;
@@ -1418,8 +1413,6 @@ static int rtsx_usb_sdmmc_drv_remove(struct platform_device *pdev)
 
 	dev_dbg(&(pdev->dev),
 		": Realtek USB SD/MMC module has been removed\n");
-
-	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -1458,7 +1451,7 @@ MODULE_DEVICE_TABLE(platform, rtsx_usb_sdmmc_ids);
 
 static struct platform_driver rtsx_usb_sdmmc_driver = {
 	.probe		= rtsx_usb_sdmmc_drv_probe,
-	.remove		= rtsx_usb_sdmmc_drv_remove,
+	.remove_new	= rtsx_usb_sdmmc_drv_remove,
 	.id_table       = rtsx_usb_sdmmc_ids,
 	.driver		= {
 		.name	= "rtsx_usb_sdmmc",

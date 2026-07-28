@@ -124,16 +124,10 @@ static int aq_pci_func_init(struct pci_dev *pdev)
 {
 	int err;
 
-	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(64));
-	if (!err)
-		err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(64));
+	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
+	if (err)
+		err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
 	if (err) {
-		err = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
-		if (!err)
-			err = pci_set_consistent_dma_mask(pdev,
-							  DMA_BIT_MASK(32));
-	}
-	if (err != 0) {
 		err = -ENOSR;
 		goto err_exit;
 	}
@@ -206,7 +200,7 @@ unsigned int aq_pci_func_get_irq_type(struct aq_nic_s *self)
 	if (self->pdev->msi_enabled)
 		return AQ_HW_IRQ_MSI;
 
-	return AQ_HW_IRQ_LEGACY;
+	return AQ_HW_IRQ_INTX;
 }
 
 static void aq_pci_free_irq_vectors(struct aq_nic_s *self)
@@ -304,11 +298,8 @@ static int aq_pci_probe(struct pci_dev *pdev,
 
 	numvecs += AQ_HW_SERVICE_IRQS;
 	/*enable interrupts */
-#if !AQ_CFG_FORCE_LEGACY_INT
-	err = pci_alloc_irq_vectors(self->pdev, 1, numvecs,
-				    PCI_IRQ_MSIX | PCI_IRQ_MSI |
-				    PCI_IRQ_LEGACY);
-
+#if !AQ_CFG_FORCE_INTX
+	err = pci_alloc_irq_vectors(self->pdev, 1, numvecs, PCI_IRQ_ALL_TYPES);
 	if (err < 0)
 		goto err_hwinit;
 	numvecs = err;
@@ -385,6 +376,7 @@ static void aq_pci_shutdown(struct pci_dev *pdev)
 	}
 }
 
+#ifdef CONFIG_PM
 static int aq_suspend_common(struct device *dev)
 {
 	struct aq_nic_s *nic = pci_get_drvdata(to_pci_dev(dev));
@@ -469,6 +461,7 @@ static const struct dev_pm_ops aq_pm_ops = {
 	.restore = aq_pm_resume_restore,
 	.thaw = aq_pm_thaw,
 };
+#endif
 
 static struct pci_driver aq_pci_ops = {
 	.name = AQ_CFG_DRV_NAME,

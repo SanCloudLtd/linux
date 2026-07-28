@@ -59,9 +59,6 @@ struct snd_seq_queue *snd_seq_queue_alloc(int client, int locked, unsigned int f
 /* delete queue (destructor) */
 int snd_seq_queue_delete(int client, int queueid);
 
-/* notification that client has left the system */
-void snd_seq_queue_client_termination(int client);
-
 /* final stage */
 void snd_seq_queue_client_leave(int client);
 
@@ -87,7 +84,6 @@ void snd_seq_check_queue(struct snd_seq_queue *q, int atomic, int hop);
 int snd_seq_queue_check_access(int queueid, int client);
 int snd_seq_queue_timer_set_tempo(int queueid, int client, struct snd_seq_queue_tempo *info);
 int snd_seq_queue_set_owner(int queueid, int client, int locked);
-int snd_seq_queue_set_locked(int queueid, int client, int locked);
 int snd_seq_queue_timer_open(int queueid);
 int snd_seq_queue_timer_close(int queueid);
 int snd_seq_queue_use(int queueid, int client, int use);

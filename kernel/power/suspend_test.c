@@ -129,7 +129,7 @@ static int __init has_wakealarm(struct device *dev, const void *data)
 {
 	struct rtc_device *candidate = to_rtc_device(dev);
 
-	if (!candidate->ops->set_alarm)
+	if (!test_bit(RTC_FEATURE_ALARM, candidate->features))
 		return 0;
 	if (!device_may_wakeup(candidate->dev.parent))
 		return 0;
@@ -201,7 +201,7 @@ static int __init test_suspend(void)
 	}
 
 	/* RTCs have initialized by now too ... can we use one? */
-	dev = class_find_device(rtc_class, NULL, NULL, has_wakealarm);
+	dev = class_find_device(&rtc_class, NULL, NULL, has_wakealarm);
 	if (dev) {
 		rtc = rtc_class_open(dev_name(dev));
 		put_device(dev);

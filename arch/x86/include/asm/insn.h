@@ -7,8 +7,11 @@
  * Copyright (C) IBM Corporation, 2009
  */
 
+#include <asm/byteorder.h>
 /* insn_attr_t is defined in inat.h */
 #include <asm/inat.h> /* __ignore_sync_check__ */
+
+#if defined(__BYTE_ORDER) ? __BYTE_ORDER == __LITTLE_ENDIAN : defined(__LITTLE_ENDIAN)
 
 struct insn_field {
 	union {
@@ -19,6 +22,48 @@ struct insn_field {
 	unsigned char got;
 	unsigned char nbytes;
 };
+
+static inline void insn_field_set(struct insn_field *p, insn_value_t v,
+				  unsigned char n)
+{
+	p->value = v;
+	p->nbytes = n;
+}
+
+static inline void insn_set_byte(struct insn_field *p, unsigned char n,
+				 insn_byte_t v)
+{
+	p->bytes[n] = v;
+}
+
+#else
+
+struct insn_field {
+	insn_value_t value;
+	union {
+		insn_value_t little;
+		insn_byte_t bytes[4];
+	};
+	/* !0 if we've run insn_get_xxx() for this field */
+	unsigned char got;
+	unsigned char nbytes;
+};
+
+static inline void insn_field_set(struct insn_field *p, insn_value_t v,
+				  unsigned char n)
+{
+	p->value = v;
+	p->little = __cpu_to_le32(v);
+	p->nbytes = n;
+}
+
+static inline void insn_set_byte(struct insn_field *p, unsigned char n,
+				 insn_byte_t v)
+{
+	p->bytes[n] = v;
+	p->value = __le32_to_cpu(p->little);
+}
+#endif
 
 struct insn {
 	struct insn_field prefixes;	/*
@@ -67,10 +112,15 @@ struct insn {
 #define X86_SIB_INDEX(sib) (((sib) & 0x38) >> 3)
 #define X86_SIB_BASE(sib) ((sib) & 0x07)
 
-#define X86_REX_W(rex) ((rex) & 8)
-#define X86_REX_R(rex) ((rex) & 4)
-#define X86_REX_X(rex) ((rex) & 2)
-#define X86_REX_B(rex) ((rex) & 1)
+#define X86_REX2_M(rex) ((rex) & 0x80)	/* REX2 M0 */
+#define X86_REX2_R(rex) ((rex) & 0x40)	/* REX2 R4 */
+#define X86_REX2_X(rex) ((rex) & 0x20)	/* REX2 X4 */
+#define X86_REX2_B(rex) ((rex) & 0x10)	/* REX2 B4 */
+
+#define X86_REX_W(rex) ((rex) & 8)	/* REX or REX2 W */
+#define X86_REX_R(rex) ((rex) & 4)	/* REX or REX2 R3 */
+#define X86_REX_X(rex) ((rex) & 2)	/* REX or REX2 X3 */
+#define X86_REX_B(rex) ((rex) & 1)	/* REX or REX2 B3 */
 
 /* VEX bit flags  */
 #define X86_VEX_W(vex)	((vex) & 0x80)	/* VEX3 Byte2 */
@@ -79,7 +129,7 @@ struct insn {
 #define X86_VEX_B(vex)	((vex) & 0x20)	/* VEX3 Byte1 */
 #define X86_VEX_L(vex)	((vex) & 0x04)	/* VEX3 Byte2, VEX2 Byte1 */
 /* VEX bit fields */
-#define X86_EVEX_M(vex)	((vex) & 0x03)		/* EVEX Byte1 */
+#define X86_EVEX_M(vex)	((vex) & 0x07)		/* EVEX Byte1 */
 #define X86_VEX3_M(vex)	((vex) & 0x1f)		/* VEX3 Byte1 */
 #define X86_VEX2_M	1			/* VEX2.M always 1 */
 #define X86_VEX_V(vex)	(((vex) & 0x78) >> 3)	/* VEX3 Byte2, VEX2 Byte1 */
@@ -116,15 +166,16 @@ static inline void insn_get_attribute(struct insn *insn)
 /* Instruction uses RIP-relative addressing */
 extern int insn_rip_relative(struct insn *insn);
 
-/* Init insn for kernel text */
-static inline void kernel_insn_init(struct insn *insn,
-				    const void *kaddr, int buf_len)
+static inline int insn_is_rex2(struct insn *insn)
 {
-#ifdef CONFIG_X86_64
-	insn_init(insn, kaddr, buf_len, 1);
-#else /* CONFIG_X86_32 */
-	insn_init(insn, kaddr, buf_len, 0);
-#endif
+	if (!insn->prefixes.got)
+		insn_get_prefixes(insn);
+	return insn->rex_prefix.nbytes == 2;
+}
+
+static inline insn_byte_t insn_rex2_m_bit(struct insn *insn)
+{
+	return X86_REX2_M(insn->rex_prefix.bytes[1]);
 }
 
 static inline int insn_is_avx(struct insn *insn)
@@ -146,13 +197,6 @@ static inline int insn_has_emulate_prefix(struct insn *insn)
 	return !!insn->emulate_prefix_size;
 }
 
-/* Ensure this instruction is decoded completely */
-static inline int insn_complete(struct insn *insn)
-{
-	return insn->opcode.got && insn->modrm.got && insn->sib.got &&
-		insn->displacement.got && insn->immediate.got;
-}
-
 static inline insn_byte_t insn_vex_m_bits(struct insn *insn)
 {
 	if (insn->vex_prefix.nbytes == 2)	/* 2 bytes VEX */
@@ -169,6 +213,13 @@ static inline insn_byte_t insn_vex_p_bits(struct insn *insn)
 		return X86_VEX_P(insn->vex_prefix.bytes[1]);
 	else
 		return X86_VEX_P(insn->vex_prefix.bytes[2]);
+}
+
+static inline insn_byte_t insn_vex_w_bit(struct insn *insn)
+{
+	if (insn->vex_prefix.nbytes < 3)
+		return 0;
+	return X86_VEX_W(insn->vex_prefix.bytes[2]);
 }
 
 /* Get the last prefix id from last prefix or VEX prefix */

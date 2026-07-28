@@ -18,11 +18,11 @@ module_param(irq_chk_intv, int, 0644);
 MODULE_PARM_DESC(irq_chk_intv, "set the interval for IRQ streaming watchdog.");
 
 #ifdef CONFIG_DVB_B2C2_FLEXCOP_DEBUG
-#define dprintk(level,args...) \
-	do { if ((debug & level)) printk(args); } while (0)
+#define dprintk(level, args...) \
+	do { if ((debug & (level))) printk(args); } while (0)
 #define DEBSTATUS ""
 #else
-#define dprintk(level,args...)
+#define dprintk(level, args...) no_printk(args)
 #define DEBSTATUS " (debugging is not enabled)"
 #endif
 
@@ -411,7 +411,7 @@ static void flexcop_pci_remove(struct pci_dev *pdev)
 	struct flexcop_pci *fc_pci = pci_get_drvdata(pdev);
 
 	if (irq_chk_intv > 0)
-		cancel_delayed_work(&fc_pci->irq_check_work);
+		cancel_delayed_work_sync(&fc_pci->irq_check_work);
 
 	flexcop_pci_dma_exit(fc_pci);
 	flexcop_device_exit(fc_pci->fc_dev);
