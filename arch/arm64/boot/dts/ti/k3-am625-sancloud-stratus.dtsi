@@ -247,10 +247,10 @@
 	};
 
 };
-
-//&crypto {
-// 	status = "disabled";
-//};
+//on version 6.12 iwd has problem comment or delete this lines on next 
+&crypto {
+ 	status = "disabled";
+};
 
 &mcu_pmx0 {
 	i2c_qwiic_pins_default: i2c-qwiic-pins-default {
